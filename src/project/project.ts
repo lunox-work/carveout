@@ -48,6 +48,10 @@ export const MOCK_RUNTIME_PATH = `${HARNESS_DIR}/mock.js`;
 export const AMBIENT_PATH = `${HARNESS_DIR}/ambient.d.ts`;
 export const RUN_PATH = `${HARNESS_DIR}/run.ts`;
 export const TEST_RUNNER_PATH = `${HARNESS_DIR}/test.js`;
+/** The last node:test run, as TAP: what `check` reads the baseline from. */
+export const LAST_RUN_PATH = `${HARNESS_DIR}/.last-run.tap`;
+/** The tests that failed when the folder was first checked: they fail on the mocks. */
+export const BASELINE_PATH = `${HARNESS_DIR}/baseline.json`;
 export const ENV_FILE = "carveout.env";
 export const ASSETS_LOADER_PATH = `${HARNESS_DIR}/assets.js`;
 
@@ -955,8 +959,31 @@ function testRunnerScript(coverage: CoverageGate | undefined): string {
     "  const result = spawnSync(command, args, { stdio: \"inherit\" });",
     "  if (result.status !== 0) failed = true;",
     "};",
-    "if (node.length > 0)",
-    `  run(process.execPath, ["--env-file=${ENV_FILE}", "--import=./${ASSETS_LOADER_PATH}", "--test", ...gate, ...node]);`,
+    "if (node.length > 0) {",
+    "  // A TAP copy of the run beside the usual output, for the baseline.",
+    "  const result = spawnSync(process.execPath, [",
+    `    "--env-file=${ENV_FILE}", "--import=./${ASSETS_LOADER_PATH}", "--test",`,
+    '    "--test-reporter=spec", "--test-reporter-destination=stdout",',
+    `    "--test-reporter=tap", "--test-reporter-destination=${LAST_RUN_PATH}",`,
+    "    ...gate, ...node,",
+    '  ], { stdio: "inherit" });',
+    "  if (result.status !== 0) {",
+    `    const tap = existsSync(${JSON.stringify(LAST_RUN_PATH)}) ? readFileSync(${JSON.stringify(LAST_RUN_PATH)}, "utf8") : "";`,
+    "    const failing = [...new Set([...tap.matchAll(/^\\s*not ok \\d+ - (.+?)(?: # .*)?$/gm)].map((m) => m[1]))];",
+    "    const gateFailed = /coverage does not meet threshold/.test(tap);",
+    `    const baseline = existsSync(${JSON.stringify(BASELINE_PATH)}) ? new Set(JSON.parse(readFileSync(${JSON.stringify(BASELINE_PATH)}, "utf8")).failing) : null;`,
+    "    const fresh = failing.filter((name) => baseline === null || !baseline.has(name));",
+    "    if (baseline !== null && failing.length > 0 && fresh.length === 0 && !gateFailed)",
+    "      process.stdout.write(",
+    `        \`\\n\${failing.length} test(s) failed as they did when the folder was checked: they fail on the mocks, not on your change (${BASELINE_PATH}). Not counted:\\n\${failing.map((name) => \`  \${name}\`).join("\\n")}\\n\`,`,
+    "      );",
+    "    else {",
+    "      failed = true;",
+    "      if (baseline !== null && fresh.length > 0 && fresh.length < failing.length)",
+    "        process.stdout.write(`\\nFailing now and not when the folder was checked:\\n${fresh.map((name) => `  ${name}`).join(\"\\n\")}\\n`);",
+    "    }",
+    "  }",
+    "}",
     "if (vitest.length > 0) {",
     '  const bin = join("node_modules", ".bin", "vitest");',
     "  if (existsSync(bin)) run(bin, [\"run\", ...vitest]);",

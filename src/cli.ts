@@ -356,7 +356,8 @@ async function main(argv: readonly string[]) {
       else {
         for (const step of steps) {
           process.stdout.write(`${step.ok ? "ok  " : "FAIL"} ${step.command}\n`);
-          if (!step.ok) process.stdout.write(`${step.output}\n`);
+          if (!step.ok || step.baseline !== undefined)
+            process.stdout.write(`${step.output}\n`);
         }
         const record = readRecord(dir);
         const missing = new Set(
@@ -374,10 +375,13 @@ async function main(argv: readonly string[]) {
               ? `${name} is an optional peer the repository installs: cut again with --install ${name}.\n`
               : `${name} is not installed: cut again with --install ${name} if the repository installs it, or --mock ${name}.\n`,
           );
+        const baseline = steps.find((step) => step.baseline !== undefined)?.baseline;
         process.stdout.write(
-          ok
-            ? "The slice installs, builds and tests on its own.\n"
-            : "The slice does not stand on its own yet.\n",
+          !ok
+            ? "The slice does not stand on its own yet.\n"
+            : baseline === undefined
+              ? "The slice installs, builds and tests on its own.\n"
+              : `The slice installs, builds and tests on its own, but for ${baseline.length} test(s) that fail on the mocks (carveout/baseline.json).\n`,
         );
       }
       if (!ok) process.exitCode = 2;

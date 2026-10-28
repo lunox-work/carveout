@@ -5,7 +5,7 @@
  */
 
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   cpSync,
   mkdtempSync,
@@ -278,4 +278,50 @@ test("a slice holds the repository's checks and its coverage of added code", asy
     { folder: "packages/core", lines: 90, branches: 85 },
   );
   assert.equal(coverageGateOf("", "vitest run"), null);
+});
+
+test("npm test does not count the tests that failed when the folder was checked", async () => {
+  // A test that needs the real money module: on its mock it fails.
+  const work = clone("baseline-repo");
+  writeFileSync(
+    join(work, "apps/shop/src/total.test.ts"),
+    'import assert from "node:assert/strict";\nimport { test } from "node:test";\nimport { total } from "./cart";\n\ntest("a total is formatted", () => assert.equal(total([{ cents: 100, quantity: 1 }], "usd"), "1.10 USD"));\n',
+  );
+  git(work, ["add", "-A"]);
+  git(work, ["commit", "-q", "-m", "a test"]);
+  const out = (
+    await cutSlice({
+      repo: work,
+      out: join(scratch, "baseline"),
+      entryPoints: [ENTRY],
+      budget: { maxFiles: 40, maxDepth: 1 },
+      offline: true,
+      tests: true,
+    })
+  ).out;
+  execFileSync(
+    "npm",
+    ["install", "--offline", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"],
+    { cwd: out, stdio: "pipe" },
+  );
+  // Node's types, which the folder installs as a dev dependency.
+  cpSync(resolve(import.meta.dirname, "../../node_modules/@types/node"), join(out, "node_modules/@types/node"), { recursive: true });
+  execFileSync(process.execPath, [TSC, "-p", "tsconfig.json"], { cwd: out, stdio: "pipe" });
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== "NODE_TEST_CONTEXT"));
+  const run = () => spawnSync(process.execPath, ["carveout/test.js"], { cwd: out, env, encoding: "utf8" });
+  assert.equal(run().status, 1);
+  writeFileSync(join(out, "carveout/baseline.json"), JSON.stringify({ failing: ["a total is formatted"] }));
+  const counted = run();
+  assert.equal(counted.status, 0, counted.stdout);
+  assert.match(counted.stdout, /1 test\(s\) failed as they did when the folder was checked/);
+  writeFileSync(
+    join(out, "apps/shop/src/late.test.ts"),
+    'import assert from "node:assert/strict";\nimport { test } from "node:test";\ntest("a new failure", () => assert.equal(1, 2));\n',
+  );
+  execFileSync(process.execPath, [TSC, "-p", "tsconfig.json"], { cwd: out, stdio: "pipe" });
+  const fresh = run();
+  assert.equal(fresh.status, 1);
+  assert.match(fresh.stdout, /Failing now and not when the folder was checked:\n {2}a new failure/);
+  // The baseline is the folder's own: the patch leaves it out.
+  assert.doesNotMatch((await patchProject(out)).diff, /baseline\.json/);
 });

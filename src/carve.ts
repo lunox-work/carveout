@@ -17,7 +17,9 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, posix, relative, resolve } from "node:path";
 import { command } from "./command.js";
 import {
+  BASELINE_PATH,
   IMPORT_LITERAL,
+  LAST_RUN_PATH,
   SLICE_BUDGET_DEFAULTS,
   coverageGateOf,
   declarationPath,
@@ -842,6 +844,39 @@ export interface CheckStep {
   readonly command: string;
   readonly ok: boolean;
   readonly output: string;
+  /** Tests that failed in an unedited folder, recorded as its baseline. */
+  readonly baseline?: readonly string[];
+}
+
+/**
+ * The first check of a folder: the tests that fail before any edit fail
+ * on the mocks, and are written to its baseline. Only when nothing else
+ * failed (the build, the coverage gate) and the folder has no edits nor a
+ * baseline yet; null otherwise.
+ */
+async function recordBaseline(
+  source: string,
+  work: string,
+): Promise<string[] | null> {
+  if (existsSync(join(source, BASELINE_PATH))) return null;
+  const tap = existsSync(join(work, LAST_RUN_PATH))
+    ? readFileSync(join(work, LAST_RUN_PATH), "utf8")
+    : "";
+  const failing = [
+    ...new Set(
+      [...tap.matchAll(/^\s*not ok \d+ - (.+?)(?: # .*)?$/gm)].map(
+        (match) => match[1] ?? "",
+      ),
+    ),
+  ].sort(compare);
+  if (failing.length === 0 || /coverage does not meet threshold/.test(tap))
+    return null;
+  if ((await patchProject(source)).diff !== "") return null;
+  await writeFile(
+    join(source, BASELINE_PATH),
+    `${JSON.stringify({ failing }, null, 2)}\n`,
+  );
+  return failing;
 }
 
 /**
@@ -868,6 +903,7 @@ export async function checkProject(
     ["npm", "run", "build"],
     ["npm", "test"],
   ];
+  await rm(join(work, LAST_RUN_PATH), { force: true });
   for (const argv of run) {
     const [executable = "npm", ...args] = argv;
     try {
@@ -877,12 +913,20 @@ export async function checkProject(
       });
       steps.push({ command: argv.join(" "), ok: true, output });
     } catch (error) {
-      steps.push({
-        command: argv.join(" "),
-        ok: false,
-        output: error instanceof Error ? error.message : String(error),
-      });
-      break;
+      const output = error instanceof Error ? error.message : String(error);
+      const baseline =
+        argv[1] === "test" ? await recordBaseline(source, work) : null;
+      steps.push(
+        baseline === null
+          ? { command: argv.join(" "), ok: false, output }
+          : {
+              command: argv.join(" "),
+              ok: true,
+              output: `${baseline.length} test(s) fail with nothing changed: they fail on the mocks. Recorded in ${BASELINE_PATH}, which npm test reads so they are not counted:\n${baseline.map((name) => `  ${name}`).join("\n")}`,
+              baseline,
+            },
+      );
+      if (baseline === null) break;
     }
   }
   if (work !== source)

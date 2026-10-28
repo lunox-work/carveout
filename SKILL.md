@@ -131,6 +131,13 @@ package is missing at runtime, the check says which `--install` to cut again
 with. Report the result to the person as it is. A failed step is not "mostly
 working".
 
+The first check of an unedited folder records the tests that fail with
+nothing changed: they fail on the mocks, because they need the real
+behaviour of a module the slice cuts. They go in `carveout/baseline.json`,
+and the check reports them. From then on `npm test` names them but does
+not count them, and still fails on any other test, on the coverage gate,
+or on the build. Tell the person how many there are.
+
 `npm test` finds the folder's tests when it runs, so tests written after
 the cut run too. When the package's own test sets coverage thresholds
 (`--test-coverage-lines` and the like), it holds the source files added
