@@ -102,11 +102,10 @@ export interface ReachOptions {
 }
 
 /** `x.test.ts`, `x.spec.tsx`, or anything under `__tests__/`. */
+export const TEST_PATH_PATTERN = /\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)__tests__\//;
+
 export function isTestPath(path: string): boolean {
-  return (
-    /\.(test|spec)\.[cm]?[jt]sx?$/.test(path) ||
-    /(^|\/)__tests__\//.test(path)
-  );
+  return TEST_PATH_PATTERN.test(path);
 }
 
 /** The test runner a test file imports, when carveout can run it. */

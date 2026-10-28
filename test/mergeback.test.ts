@@ -215,3 +215,34 @@ test("merge applies the edits in a named checkout and runs the verify command th
   assert.deepEqual(again.steps.at(-1), { step: "verify", ok: false, output: "" });
   await assert.rejects(mergeProject(out, { into: scratch }), /not the root of a Git checkout/);
 });
+
+test("npm test runs a test added after the cut, and patch carries it", async () => {
+  const out = await cut("late-test");
+  writeFileSync(
+    join(out, "apps/shop/src/late.test.ts"),
+    [
+      'import assert from "node:assert/strict";',
+      'import { test } from "node:test";',
+      'import { subtotal } from "./cart.js";',
+      'test("added after the cut", () => assert.equal(subtotal([{ cents: 2, quantity: 3 }]), 6));',
+      "",
+    ].join("\n"),
+  );
+  execFileSync(
+    "npm",
+    ["install", "--offline", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"],
+    { cwd: out, stdio: "pipe" },
+  );
+  execFileSync(process.execPath, [TSC, "-p", "tsconfig.json"], { cwd: out, stdio: "pipe" });
+  const output = execFileSync(process.execPath, ["carveout/test.js"], {
+    cwd: out,
+    stdio: "pipe",
+    env: Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => key !== "NODE_TEST_CONTEXT"),
+    ),
+  }).toString("utf8");
+  assert.match(output, /added after the cut/);
+  const patch = await patchProject(out);
+  assert.deepEqual(patch.added, ["apps/shop/src/late.test.ts"]);
+  assert.match(patch.diff, /^\+import \{ subtotal \} from "\.\/cart";$/m);
+});
