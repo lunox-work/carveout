@@ -11,18 +11,41 @@ import { existsSync } from "node:fs";
 import { join, posix } from "node:path";
 import { IMPORT_LITERAL, relativeSpecifier, type ImportRewrite } from "./core.js";
 
-/** `text` with the folder's import rewrites put back as the source wrote them. */
+/**
+ * `text` with the folder's import rewrites put back as the source wrote
+ * them. Two specifiers the cut rewrote to one (`@/lib/format` and
+ * `../../lib/format` both to `../../lib/format.js`) are told apart by
+ * `original`, the file as the cut read it: they come back in the order it
+ * wrote them. Without it, the last recorded wins.
+ */
 export function undoRewrites(
   text: string,
   rewrites: readonly ImportRewrite[],
+  original: string | null = null,
 ): string {
   if (rewrites.length === 0) return text;
-  const back = new Map(rewrites.map((rewrite) => [rewrite.to, rewrite.from]));
+  const froms = new Map<string, string[]>();
+  for (const rewrite of rewrites) {
+    const list = froms.get(rewrite.to) ?? [];
+    if (!list.includes(rewrite.from)) list.push(rewrite.from);
+    froms.set(rewrite.to, list);
+  }
+  // Each ambiguous target's originals, in the order the source has them.
+  const queues = new Map<string, string[]>();
+  if (original !== null)
+    for (const match of original.matchAll(IMPORT_LITERAL)) {
+      const specifier = match[3] ?? "";
+      for (const [to, list] of froms)
+        if (list.length > 1 && list.includes(specifier))
+          queues.set(to, [...(queues.get(to) ?? []), specifier]);
+    }
   return text.replace(
     IMPORT_LITERAL,
     (whole, prefix: string, quote: string, specifier: string) => {
-      const from = back.get(specifier);
-      return from === undefined ? whole : `${prefix}${quote}${from}${quote}`;
+      const list = froms.get(specifier);
+      if (list === undefined) return whole;
+      const from = queues.get(specifier)?.shift() ?? list.at(-1) ?? specifier;
+      return `${prefix}${quote}${from}${quote}`;
     },
   );
 }
@@ -88,7 +111,7 @@ export function restoreImports(
   rewrites: readonly ImportRewrite[],
   context: ImportContext,
 ): RestoredImports {
-  const undone = undoRewrites(text, rewrites);
+  const undone = undoRewrites(text, rewrites, original);
   const kept = original === null ? new Set<string>() : specifiersOf(original);
   const crossPackage: string[] = [];
   const restored = undone.replace(
@@ -125,9 +148,14 @@ function spellingOf(
   const here = context.packageOf(file);
   const there = context.packageOf(target);
   const counts = new Map<string, number>();
+  let relative = 0;
   for (const edge of context.edges) {
-    if (edge.to !== target || isRelative(edge.specifier)) continue;
+    if (edge.to !== target) continue;
     const from = context.packageOf(edge.from);
+    if (isRelative(edge.specifier)) {
+      if (from === here) relative += 1;
+      continue;
+    }
     // An alias resolves the same within its package; a package name from
     // anywhere but the package itself.
     if (from === here || (from !== there && here !== there))
@@ -136,7 +164,8 @@ function spellingOf(
   const bare = [...counts.entries()].sort(
     ([a, m], [b, n]) => n - m || (a < b ? -1 : a > b ? 1 : 0),
   )[0];
-  if (bare !== undefined) return bare[0];
+  // Within a package, the spelling more of the target's importers use.
+  if (bare !== undefined && (here !== there || bare[1] > relative)) return bare[0];
   return here === there ? relativeIn(file, target, context) : null;
 }
 

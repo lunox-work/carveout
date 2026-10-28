@@ -28,7 +28,12 @@ import {
   type ComputedCut,
   type Patch,
 } from "./carve.js";
-import { isTestPath, runtimePath } from "./core.js";
+import {
+  isTestPath,
+  runtimePath,
+  type ImportRewrite,
+  type IncludedFile,
+} from "./core.js";
 import { symbolDiff } from "./status.js";
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -129,6 +134,8 @@ export async function applyPatch(
     const added: string[] = [];
     const deleted: string[] = [];
     const outside: string[] = [];
+    const grown: IncludedFile[] = [];
+    const rewrites: ImportRewrite[] = [];
     for (const [path, status] of [...touched.entries()].sort(([a], [b]) => compare(a, b))) {
       if (status === "D") {
         if (included.has(path)) {
@@ -145,23 +152,50 @@ export async function applyPatch(
         outside.push(path);
         continue;
       }
-      await mkdir(dirname(join(root, path)), { recursive: true });
-      if (cut.binaries.includes(path)) await copyFile(join(repo, path), join(root, path));
-      else {
-        const text = cut.files.find((item) => item.path === path)?.text;
-        if (text === undefined) {
-          outside.push(path);
-          continue;
-        }
-        await writeFile(join(root, path), text);
+      const text = cut.binaries.includes(path)
+        ? null
+        : cut.files.find((item) => item.path === path)?.text;
+      if (text === undefined) {
+        outside.push(path);
+        continue;
       }
-      (included.has(path) ? changed : added).push(path);
+      await mkdir(dirname(join(root, path)), { recursive: true });
+      if (text === null) await copyFile(join(repo, path), join(root, path));
+      else await writeFile(join(root, path), text);
+      if (!included.has(path) && status === "M") {
+        // A repository file the slice did not hold: it joins the slice at
+        // the bytes of the cut's commit, so `patch` diffs it from there.
+        grown.push(includedAt(repo, path));
+        rewrites.push(...cut.record.importRewrites.filter((rewrite) => rewrite.file === path));
+      }
+      (included.has(path) || status === "M" ? changed : added).push(path);
     }
     const stubs = await neededStubs(root, record, cuts, options.stubs === true);
+    if (grown.length > 0) {
+      const current = readRecord(root);
+      const updated: CarveoutRecord = {
+        ...current,
+        manifest: {
+          ...current.manifest,
+          included: [...current.manifest.included, ...grown].sort((a, b) => compare(a.path, b.path)),
+        },
+        importRewrites: [...current.importRewrites, ...rewrites].sort((a, b) =>
+          compare(`${a.file}\n${a.from}`, `${b.file}\n${b.from}`),
+        ),
+      };
+      await writeFile(join(root, RECORD_PATH), `${JSON.stringify(updated, null, 2)}\n`);
+    }
     return { changed, added, deleted, outside, stubs };
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }
+}
+
+/** A file as the slice's record holds it, at the clone's HEAD (the cut's commit). */
+function includedAt(repo: string, path: string): IncludedFile {
+  const bytes = execFileSync("git", ["show", `HEAD:${path}`], { cwd: repo, maxBuffer: 256 * 1024 * 1024 });
+  const [mode = "100644", , blobId = ""] = git(repo, ["ls-tree", "HEAD", "--", path]).trim().split(/\s+/);
+  return { path, blobId, sha256: sha256(bytes), mode, sizeBytes: bytes.length, operations: ["edit"] };
 }
 
 /** Stubs the cuts write that the folder's record says it does not hold. */

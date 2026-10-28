@@ -902,10 +902,23 @@ function runScript(entries: readonly string[]): string {
     "",
   ];
   if (entries.length === 0) lines.push('console.log("No entry points.");');
-  for (const entry of entries)
+  else {
+    // Imported by name at run time, so an entry point the folder's edits
+    // removed is reported here rather than failing the build.
+    lines.push("const entries: [string, string][] = [");
+    for (const entry of entries)
+      lines.push(`  [${escapeJs(entry)}, ${escapeJs(relativeSpecifier(RUN_PATH, entry))}],`);
     lines.push(
-      `console.log(${escapeJs(entry)}, Object.keys(await import(${escapeJs(relativeSpecifier(RUN_PATH, entry))})));`,
+      "];",
+      "for (const [entry, specifier] of entries) {",
+      "  try {",
+      "    console.log(entry, Object.keys(await import(specifier)));",
+      "  } catch (error) {",
+      "    console.log(entry, \"does not load:\", error instanceof Error ? error.message : error);",
+      "  }",
+      "}",
     );
+  }
   return `${lines.join("\n")}\n`;
 }
 

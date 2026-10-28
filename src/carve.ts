@@ -17,6 +17,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, posix, relative, resolve } from "node:path";
 import { command } from "./command.js";
 import {
+  IMPORT_LITERAL,
   SLICE_BUDGET_DEFAULTS,
   declarationPath,
   detectExternals,
@@ -616,11 +617,34 @@ export async function computeCut(
       return version === null ? [] : [{ name, version }];
     })
     .sort((a, b) => compare(a.name, b.name));
+  // Node's own types, at the repository's version, when the slice's
+  // sources import a Node built-in: untyped, `assert.ok` narrows nothing
+  // and `import.meta.url` is unknown, so the folder would not type-check
+  // as the repository does.
+  const nodeTypes = sources.some((source) =>
+    [...source.text.matchAll(IMPORT_LITERAL)].some((match) =>
+      isNodeBuiltin(match[3] ?? ""),
+    ),
+  )
+    ? repositoryVersion(repo, "@types/node", includedPaths)
+    : null;
+  if (
+    nodeTypes !== null &&
+    !typesPackages.some((types) => types.name === "@types/node")
+  )
+    typesPackages.push({ name: "@types/node", version: nodeTypes });
   const sorted = (record: Record<string, string>) =>
     Object.fromEntries(
       Object.entries(record).sort(([a], [b]) => compare(a, b)),
     );
   const projectFiles = project.files.map((file) => {
+    if (file.path === "tsconfig.json" && nodeTypes !== null) {
+      const config = JSON.parse(file.text) as {
+        compilerOptions: Record<string, unknown>;
+      };
+      config.compilerOptions["types"] = ["node"];
+      return { ...file, text: `${JSON.stringify(config, null, 2)}\n` };
+    }
     if (
       file.path !== "package.json" ||
       peers.length + typesPackages.length === 0
@@ -1000,6 +1024,10 @@ export async function patchProject(dir: string): Promise<Patch> {
       .filter((dependency) => dependency.kind === "module")
       .map((dependency) => dependency.name),
   ]);
+  // Stubs `apply --stubs` wrote for modules the change needs.
+  for (const file of record.generated)
+    if (/\.d\.ts$/.test(file.path) && !file.path.startsWith("carveout/"))
+      stubModules.add(file.path.replace(/\.d\.ts$/, ".ts"));
   const stubFiles = new Map<string, string>();
   for (const module of stubModules) {
     stubFiles.set(declarationPath(module), module);
@@ -1062,20 +1090,32 @@ export async function patchProject(dir: string): Promise<Patch> {
    * checkout still has them there, else the checkout's file if it has not
    * moved; otherwise null, and the patch is against what the cut copied.
    */
-  const baseOf = (path: string, original: string) => {
+  const readBase = (path: string, original: string) => {
     const repoPath = join(record.repo, path);
     const current = existsSync(repoPath) ? readFileSync(repoPath) : null;
-    if (current === null || sha256(current) !== original) drifted.push(path);
     const committed =
       record.manifest.sourceCommitSha === null
         ? null
         : gitShow(record.repo, record.manifest.sourceCommitSha, path);
-    // `--3way` finds the base by its blob id, which only a committed
-    // base has; nothing is ever written to the repository's objects.
-    if (committed === null || sha256(committed) !== original)
-      noThreeWay.push(path);
-    return current !== null && sha256(current) === original ? current : committed;
+    const moved = current === null || sha256(current) !== original;
+    return {
+      moved,
+      // `--3way` finds the base by its blob id, which only a committed
+      // base has; nothing is ever written to the repository's objects.
+      threeWay: committed !== null && sha256(committed) === original,
+      bytes: moved ? committed : current,
+    };
   };
+  const baseOf = (path: string, original: string) => {
+    const base = readBase(path, original);
+    if (base.moved) drifted.push(path);
+    if (!base.threeWay) noThreeWay.push(path);
+    return base.bytes;
+  };
+  /** Whether two of the file's specifiers were rewritten to one. */
+  const ambiguous = (rewrites: readonly ImportRewrite[]) =>
+    new Set(rewrites.map((rewrite) => rewrite.to)).size <
+    new Set(rewrites.map((rewrite) => `${rewrite.to}\n${rewrite.from}`)).size;
   try {
     for (const path of tree) {
       if (
@@ -1114,9 +1154,20 @@ export async function patchProject(dir: string): Promise<Patch> {
         await writeFile(join(scratch, "b", path), content);
         continue;
       }
+      const rewrites = rewritesOf.get(path) ?? [];
       if (isBinaryPath(path)) {
         if (sha256(bytes) === original) continue;
-      } else if (sha256(undoRewrites(text, rewritesOf.get(path) ?? [])) === original)
+      } else if (
+        sha256(
+          undoRewrites(
+            text,
+            rewrites,
+            ambiguous(rewrites)
+              ? (readBase(path, original).bytes?.toString("utf8") ?? null)
+              : null,
+          ),
+        ) === original
+      )
         continue;
       const base = baseOf(path, original);
       let restored: Buffer = bytes;
@@ -1125,7 +1176,7 @@ export async function patchProject(dir: string): Promise<Patch> {
           path,
           text,
           base === null ? null : base.toString("utf8"),
-          rewritesOf.get(path) ?? [],
+          rewrites,
           context,
         );
         if (sha256(result.text) === original) continue;

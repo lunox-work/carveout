@@ -17,7 +17,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, before, test } from "node:test";
-import { cutSlice, patchProject } from "../src/carve.js";
+import { cutSlice, patchProject, undoRewrites } from "../src/carve.js";
 import { applyPatch, mergeProject } from "../src/mergeback.js";
 
 const FIXTURE = resolve(import.meta.dirname, "../../test/fixtures/shop");
@@ -63,6 +63,11 @@ before(() => {
   scratch = mkdtempSync(join(tmpdir(), "carveout-mergeback-"));
   repo = join(scratch, "repo");
   cpSync(FIXTURE, repo, { recursive: true });
+  // A test outside the slice (cuts here do not bring tests along).
+  writeFileSync(
+    join(repo, "apps/shop/src/cart.test.ts"),
+    'import assert from "node:assert/strict";\nimport { test } from "node:test";\nimport { subtotal } from "./cart";\n\ntest("subtotal", () => assert.equal(subtotal([]), 0));\n',
+  );
   git(repo, ["init", "-q"]);
   git(repo, ["add", "-A"]);
   git(repo, ["commit", "-q", "-m", "fixture"]);
@@ -89,7 +94,7 @@ test("a patch carries deletions, new files and new imports as the repository wri
   rmSync(join(src, "cart.css"));
   // A test against the mocks, which the repository cannot run.
   writeFileSync(
-    join(src, "cart.test.ts"),
+    join(src, "cart.mock.test.ts"),
     'import { recordedCalls } from "../../../carveout/mock.js";\nrecordedCalls();\n',
   );
   edit(
@@ -103,7 +108,7 @@ test("a patch carries deletions, new files and new imports as the repository wri
   assert.deepEqual(patch.changed, [CART]);
   assert.deepEqual(patch.added, ["apps/shop/src/discount.ts"]);
   assert.deepEqual(patch.deleted, ["apps/shop/src/cart.css"]);
-  assert.deepEqual(patch.sliceOnly, ["apps/shop/src/cart.test.ts"]);
+  assert.deepEqual(patch.sliceOnly, ["apps/shop/src/cart.mock.test.ts"]);
   assert.deepEqual(patch.crossPackage, []);
   assert.deepEqual(
     patch.boundary.map((item) => [item.kind, item.path]),
@@ -152,11 +157,13 @@ test("apply brings a repository change into the slice, and patch gives it back",
     "export function parse(text: string): number {\n  return Math.round(Number(text) * 100);\n}\n\nexport function format",
   );
   edit(join(work, "apps/shop/src/checkout.ts"), "Total: ", "Total due: ");
+  // An existing test the slice did not hold: it joins the slice.
+  edit(join(work, "apps/shop/src/cart.test.ts"), "subtotal([]), 0", "subtotal([{ cents: 1, quantity: 2 }]), 2");
   git(work, ["add", "-A"]);
   const change = git(work, ["diff", "--cached", "--full-index"]);
 
   const needs = await applyPatch(out, change);
-  assert.deepEqual(needs.changed, [CART]);
+  assert.deepEqual(needs.changed, ["apps/shop/src/cart.test.ts", CART]);
   assert.deepEqual(needs.added, ["apps/shop/src/discount.ts"]);
   assert.deepEqual(needs.outside, ["apps/shop/src/checkout.ts", "packages/money/src/index.ts"]);
   assert.deepEqual(
@@ -180,13 +187,13 @@ test("apply brings a repository change into the slice, and patch gives it back",
   // Back out: the slice's part of the change, byte for byte.
   const patch = await patchProject(out);
   assert.deepEqual(patch.boundary, []);
-  assert.deepEqual(patch.changed, [CART]);
+  assert.deepEqual(patch.changed, ["apps/shop/src/cart.test.ts", CART]);
   assert.deepEqual(patch.added, ["apps/shop/src/discount.ts"]);
   const into = clone("applied-into");
   const file = join(scratch, "applied.patch");
   writeFileSync(file, patch.diff);
   git(into, ["apply", file]);
-  for (const path of [CART, "apps/shop/src/discount.ts"])
+  for (const path of [CART, "apps/shop/src/discount.ts", "apps/shop/src/cart.test.ts"])
     assert.equal(
       readFileSync(join(into, path), "utf8"),
       readFileSync(join(work, path), "utf8"),
@@ -245,4 +252,14 @@ test("npm test runs a test added after the cut, and patch carries it", async () 
   const patch = await patchProject(out);
   assert.deepEqual(patch.added, ["apps/shop/src/late.test.ts"]);
   assert.match(patch.diff, /^\+import \{ subtotal \} from "\.\/cart";$/m);
+});
+
+test("two imports rewritten to one come back as the source wrote each", () => {
+  const original = 'import { a } from "@/lib/format";\nimport { b } from "../lib/format";\n';
+  const cut = 'import { a } from "../lib/format.js";\nimport { b } from "../lib/format.js";\n';
+  const rewrites = [
+    { file: "src/x/y.ts", from: "../lib/format", to: "../lib/format.js" },
+    { file: "src/x/y.ts", from: "@/lib/format", to: "../lib/format.js" },
+  ];
+  assert.equal(undoRewrites(cut, rewrites, original), original);
 });
