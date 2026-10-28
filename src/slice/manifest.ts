@@ -456,10 +456,6 @@ export function renderBoundaryMarkdown(
   const lines: string[] = [
     "# Slice boundary",
     "",
-    contract.sourceCommitSha === null
-      ? "Source read outside Git."
-      : `Source commit \`${contract.sourceCommitSha}\`.`,
-    "",
     `Entry points: ${manifest.entryPoints.map((entry) => `\`${entry}\``).join(", ")}. Budget: ${manifest.budget.maxFiles} files, depth ${manifest.budget.maxDepth}.`,
     "",
     `Declaration coverage: **${contract.stubCoverage}**. ${readiness.ready ? "No blockers." : "It has blockers: the project may not build or run until they are fixed."}`,
@@ -541,7 +537,7 @@ export function renderPublicSurfaceMarkdown(
   return [
     "# Public surface",
     "",
-    `Symbols outside code imports from the slice${contract.sourceCommitSha === null ? "" : ` at commit \`${contract.sourceCommitSha}\``}. A change that keeps the names but not these types will not fit back into the repository.`,
+    `Symbols outside code imports from the slice. A change that keeps the names but not these types will not fit back into the repository.`,
     "",
     ...renderModules(contract.inbound, "Nothing outside the slice imports it."),
   ].join("\n");

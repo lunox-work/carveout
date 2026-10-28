@@ -170,10 +170,6 @@ const ASSETS_LOADER = [
 export interface ProjectOrigin {
   /** The repository folder's name. */
   readonly repository: string;
-  /** The commit the source was read at, or null outside Git. */
-  readonly commit: string | null;
-  /** Whether the checkout had uncommitted changes to included files. */
-  readonly dirty: boolean;
   /** The project's package name. */
   readonly name: string;
 }
@@ -864,14 +860,13 @@ function readme(input: {
 }): string {
   const list = (items: readonly string[], empty: string) =>
     items.length === 0 ? [empty] : items.map((item) => `- \`${item}\``);
-  const at =
-    input.origin.commit === null
-      ? "outside Git"
-      : `at \`${input.origin.commit.slice(0, 12)}\`${input.origin.dirty ? " with uncommitted changes" : ""}`;
+  // The commit is in carveout.json only: what the folder holds is a
+  // function of the slice's content, so a cut at a later commit that
+  // changed nothing of it writes the same files.
   return `${[
     `# ${input.origin.name}`,
     "",
-    `A slice of \`${input.origin.repository}\`, ${at}, carved out by carveout. It holds only the files below; every module it imports from the rest of the repository is a stub with a recording mock behind it.`,
+    `A slice of \`${input.origin.repository}\`, carved out by carveout (\`carveout.json\` names the commit). It holds only the files below; every module it imports from the rest of the repository is a stub with a recording mock behind it.`,
     "",
     "## Run it",
     "",

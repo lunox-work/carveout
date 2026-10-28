@@ -2,7 +2,7 @@
 /**
  * carveout <command>: plan, cut, check and patch slices of a repository.
  * Exit codes: 0 done, 1 refused or failed, 2 written with blockers (cut)
- * or a step failed (check), 3 nothing to patch.
+ * or a step failed (check), 3 nothing to patch, 4 stale (status).
  */
 
 import { writeFileSync } from "node:fs";
@@ -18,6 +18,7 @@ import {
   readRecord,
 } from "./carve.js";
 import { SLICE_BUDGET_DEFAULTS, type DependencyChoice } from "./core.js";
+import { statusProject } from "./status.js";
 
 const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript repository.
 
@@ -33,6 +34,9 @@ const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript r
 
   carveout check <dir> [--in-place] [--json]
       npm ci, npm run build and npm test in a scratch copy of <dir>.
+
+  carveout status <dir> [--json]
+      Whether <dir> still matches the repository, and what changed if not.
 
   carveout patch <dir> [--output <file>]
       The edits made in <dir> as a patch for the repository (git apply).
@@ -322,6 +326,39 @@ async function main(argv: readonly string[]) {
       return;
     }
 
+    case "status": {
+      const [dir] = positionals;
+      if (dir === undefined) fail("status needs the folder a cut wrote.");
+      const status = await statusProject(dir, {
+        ...(values.repo === undefined ? {} : { repo }),
+      });
+      if (values.json === true) print(status);
+      else {
+        process.stdout.write(
+          status.current
+            ? `current: a cut now would write the same files.\n`
+            : `stale: a cut now would differ in ${status.stale.length} place${status.stale.length === 1 ? "" : "s"}.\n${list(
+                status.stale.map(
+                  (item) => `${item.cause}${item.path === null ? "" : ` ${item.path}`}: ${item.detail}`,
+                ),
+              )}\n`,
+        );
+        if (status.importers.added.length + status.importers.removed.length > 0)
+          process.stdout.write(
+            `Importers of the slice: ${[
+              ...status.importers.added.map((path) => `+${path}`),
+              ...status.importers.removed.map((path) => `-${path}`),
+            ].join(", ")}\n`,
+          );
+        if (status.inputsChanged.length > 0)
+          process.stdout.write(
+            `Changed since the cut, read by it: ${status.inputsChanged.join(", ")}\n`,
+          );
+      }
+      if (!status.current) process.exitCode = 4;
+      return;
+    }
+
     case "patch": {
       const [dir] = positionals;
       if (dir === undefined) fail("patch needs the folder a cut wrote.");
@@ -333,6 +370,15 @@ async function main(argv: readonly string[]) {
         ...patch.drifted.map(
           (path) =>
             `${path} changed in the repository since the cut; the patch is against the commit it was cut at.`,
+        ),
+        ...(patch.drifted.length === 0
+          ? []
+          : [
+              "apply it with git apply --3way, which merges the moved files against the cut's commit.",
+            ]),
+        ...patch.noThreeWay.map(
+          (path) =>
+            `${path} was cut from uncommitted changes, so --3way cannot merge it; apply it by hand if git apply refuses.`,
         ),
       ];
       for (const note of notes) process.stderr.write(`carveout: ${note}\n`);

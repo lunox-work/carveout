@@ -12,8 +12,9 @@ npx -y carveout plan  apps/api/src/billing --depth 1
 npx -y carveout cut   apps/api/src/billing --depth 1 --out ../billing-slice
 npx -y carveout check ../billing-slice          # npm ci, build, test
 # ...work in ../billing-slice...
+npx -y carveout status ../billing-slice         # still matches the repository?
 npx -y carveout patch ../billing-slice --output billing.patch
-git apply billing.patch
+git apply --3way billing.patch
 ```
 
 Use it to:
@@ -64,12 +65,13 @@ and resolves a lockfile; `--offline` skips both.
 
 ## Commands
 
-| Command                               | Does                                                                                  |
-| ------------------------------------- | ------------------------------------------------------------------------------------- |
-| `carveout plan <entry>...`            | Lists the files, cuts, importers, packages, environment and blockers. Writes nothing. |
-| `carveout cut <entry>... --out <dir>` | Writes the folder. Exits 2 if it was written with blockers.                           |
-| `carveout check <dir>`                | Runs `npm ci`, `npm run build` and `npm test` in a scratch copy.                      |
-| `carveout patch <dir>`                | Prints the edits as a patch for the repository (`--output <file>`).                   |
+| Command                               | Does                                                                                                           |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `carveout plan <entry>...`            | Lists the files, cuts, importers, packages, environment and blockers. Writes nothing.                          |
+| `carveout cut <entry>... --out <dir>` | Writes the folder. Exits 2 if it was written with blockers.                                                    |
+| `carveout check <dir>`                | Runs `npm ci`, `npm run build` and `npm test` in a scratch copy.                                               |
+| `carveout status <dir>`               | Says whether a cut now would write the same folder, and names what changed. Exits 4 if stale.                  |
+| `carveout patch <dir>`                | Prints the edits as a patch for the repository (`--output <file>`), with full blob ids for `git apply --3way`. |
 
 Options for `plan` and `cut`:
 
@@ -98,6 +100,22 @@ One needed a second cut. An auth module's installed package loads an
 optional peer at runtime, `drizzle-orm`. The first cut listed it among the
 optional peers and `check` named it; cutting again with
 `--install drizzle-orm` passed.
+
+## Experiments
+
+`experiments/` holds four pre-registered experiments and their data
+([RESULTS.md](experiments/RESULTS.md)).
+
+- **`status` (E1).** Over 345 later commits it never said `current` when a
+  fresh cut differed.
+- **Three-way patches (E2).** Applied to a repository that had moved, a
+  patch applied plain in 27% of cases and with `git apply --3way` in 89%.
+  Every three-way result typechecked.
+- **Co-change hints in `plan` (E3).** Precision was too low, so they were
+  dropped.
+- **Graph time (E4).** The graph of a 24k-file monorepo takes 12 s, down
+  from 7.5 minutes before a fix that leaves the graph identical. A cache
+  across runs was not built: it could not reach a 3× speedup.
 
 ## Limits
 

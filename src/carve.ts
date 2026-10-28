@@ -14,7 +14,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { command } from "./command.js";
 import {
   SLICE_BUDGET_DEFAULTS,
@@ -212,6 +212,19 @@ export interface CarveoutRecord {
     readonly detail: string;
   }[];
   readonly ready: boolean;
+  /** What the cut was asked, so `status` can ask it again. */
+  readonly request: {
+    readonly entryPoints: readonly string[];
+    readonly budget: SliceBudget;
+    readonly choices: Readonly<Record<string, DependencyChoice>>;
+    readonly offline: boolean;
+    readonly widenLiterals: boolean;
+  };
+  /**
+   * The repository's files the cut resolved with, beyond the slice: compiler
+   * and package configuration, workspace manifests and lockfiles.
+   */
+  readonly inputs: readonly { path: string; sha256: string | null }[];
 }
 
 export interface CutResult {
@@ -360,16 +373,52 @@ export function repositoryVersion(
   return null;
 }
 
-export async function cutSlice(request: CutRequest): Promise<CutResult> {
+/** A cut held in memory: every file it writes, and its record but the lockfile. */
+export interface ComputedCut {
+  readonly files: readonly GeneratedFile[];
+  /** Included files copied as bytes. */
+  readonly binaries: readonly string[];
+  readonly record: Omit<CarveoutRecord, "generated" | "lockfile">;
+  readonly contract: BoundaryContract;
+}
+
+/** The repository files a cut resolved with, by path, hashed; see `inputs`. */
+function resolutionInputs(
+  repo: string,
+  configs: readonly string[],
+): { path: string; sha256: string | null }[] {
+  const paths = new Set<string>(configs);
+  for (const name of [
+    "package.json",
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "yarn.lock",
+    ".npmrc",
+  ])
+    paths.add(name);
+  for (const directory of workspacePackages(repo).values()) {
+    const rel = relative(repo, directory).replaceAll("\\", "/");
+    paths.add(rel === "" ? "package.json" : `${rel}/package.json`);
+  }
+  return [...paths].sort(compare).map((path) => {
+    const absolute = join(repo, path);
+    return {
+      path,
+      sha256: existsSync(absolute) ? sha256(readFileSync(absolute)) : null,
+    };
+  });
+}
+
+/** Everything a cut writes, without writing it or resolving a lockfile. */
+export async function computeCut(
+  request: Omit<CutRequest, "out">,
+): Promise<ComputedCut> {
   const repo = resolve(request.repo);
-  const out = resolve(request.out);
   const log = request.log ?? (() => {});
   const budget = request.budget ?? SLICE_BUDGET_DEFAULTS;
   const entryPoints = entriesOf(request);
-  if (existsSync(out) && readdirSync(out).length > 0)
-    throw new Error(`${out} is not empty; give an empty or new folder.`);
-  if (out === repo)
-    throw new Error("The output folder cannot be the repository itself.");
   const built = buildGraph(repo);
   log(`Read the imports of ${built.files.length} files.`);
   const commitSha = git(repo, ["rev-parse", "HEAD"]);
@@ -445,8 +494,6 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
   const project = generateProject({
     origin: {
       repository: basename(repo),
-      commit: commitSha,
-      dirty: manifest.sourceDirty,
       name: projectName(repo, entryPoints),
     },
     manifest,
@@ -578,12 +625,82 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
     },
     {
       path: CONTRACT_PATH,
-      text: `${JSON.stringify(JSON.parse(contractJson), null, 2)}\n`,
+      text: `${JSON.stringify(withoutCommit(JSON.parse(contractJson)), null, 2)}\n`,
       class: "config",
       public: true,
     },
   ];
   const files = [...projectFiles, ...extra];
+  const blockers: CarveoutRecord["blockers"] = [
+    ...manifest.blockers.map(({ code, file, detail }) => ({
+      code,
+      file,
+      detail,
+    })),
+    ...scope.blockers
+      .filter((blocker) => blocker.code === "dependency_unresolved")
+      .map(({ code, detail }) => ({ code, file: null, detail })),
+    ...project.blockers.map(({ code, file, detail }: ProjectBlocker) => ({
+      code,
+      file,
+      detail,
+    })),
+  ];
+  return {
+    files,
+    binaries,
+    contract,
+    record: {
+      schemaVersion: RECORD_SCHEMA_VERSION,
+      carveoutVersion: CARVEOUT_VERSION,
+      repo,
+      manifest,
+      dependencies: [
+        ...dependencies,
+        ...typesPackages.map((types) => ({
+          name: types.name,
+          kind: "package" as const,
+          version: types.version,
+          resolution: "approved-package" as const,
+          detail: "The types of an installed package, at the version the repository pins.",
+        })),
+      ].sort((a, b) => compare(`${a.kind}:${a.name}`, `${b.kind}:${b.name}`)),
+      optionalPeers: optionalPeers.map(({ name, version, of }) => ({
+        name,
+        version,
+        of,
+      })),
+      importRewrites: project.importRewrites,
+      blockers,
+      ready: analysis.ready && blockers.length === 0,
+      request: {
+        entryPoints,
+        budget,
+        choices: request.choices ?? {},
+        offline: request.offline === true,
+        widenLiterals: request.widenLiterals === true,
+      },
+      inputs: resolutionInputs(repo, manifest.requiredBuildInputs.configs),
+    },
+  };
+}
+
+/** The contract as the folder holds it: its commit is in carveout.json. */
+function withoutCommit(contract: Record<string, unknown>): Record<string, unknown> {
+  const copy = { ...contract };
+  delete copy["sourceCommitSha"];
+  return copy;
+}
+
+export async function cutSlice(request: CutRequest): Promise<CutResult> {
+  const repo = resolve(request.repo);
+  const out = resolve(request.out);
+  const log = request.log ?? (() => {});
+  if (existsSync(out) && readdirSync(out).length > 0)
+    throw new Error(`${out} is not empty; give an empty or new folder.`);
+  if (out === repo)
+    throw new Error("The output folder cannot be the repository itself.");
+  const { files, binaries, record: computed, contract } = await computeCut(request);
   for (const file of files) {
     const path = join(out, file.path);
     await mkdir(dirname(path), { recursive: true });
@@ -629,47 +746,7 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
   ]
     .map((file) => ({ path: file.path, sha256: sha256(file.text) }))
     .sort((a, b) => compare(a.path, b.path));
-  const blockers: CarveoutRecord["blockers"] = [
-    ...manifest.blockers.map(({ code, file, detail }) => ({
-      code,
-      file,
-      detail,
-    })),
-    ...scope.blockers
-      .filter((blocker) => blocker.code === "dependency_unresolved")
-      .map(({ code, detail }) => ({ code, file: null, detail })),
-    ...project.blockers.map(({ code, file, detail }: ProjectBlocker) => ({
-      code,
-      file,
-      detail,
-    })),
-  ];
-  const record: CarveoutRecord = {
-    schemaVersion: RECORD_SCHEMA_VERSION,
-    carveoutVersion: CARVEOUT_VERSION,
-    repo,
-    manifest,
-    dependencies: [
-      ...dependencies,
-      ...typesPackages.map((types) => ({
-        name: types.name,
-        kind: "package" as const,
-        version: types.version,
-        resolution: "approved-package" as const,
-        detail: "The types of an installed package, at the version the repository pins.",
-      })),
-    ].sort((a, b) => compare(`${a.kind}:${a.name}`, `${b.kind}:${b.name}`)),
-    optionalPeers: optionalPeers.map(({ name, version, of }) => ({
-      name,
-      version,
-      of,
-    })),
-    importRewrites: project.importRewrites,
-    generated,
-    lockfile,
-    blockers,
-    ready: analysis.ready && blockers.length === 0,
-  };
+  const record: CarveoutRecord = { ...computed, generated, lockfile };
   await writeFile(
     join(out, RECORD_PATH),
     `${JSON.stringify(record, null, 2)}\n`,
@@ -767,6 +844,11 @@ export interface Patch {
   readonly generatedEdits: readonly string[];
   /** Whether the repository's copy moved since the cut. */
   readonly drifted: readonly string[];
+  /**
+   * Changed files whose base is no blob of the cut's commit (the cut read
+   * uncommitted bytes), so `git apply --3way` cannot merge them.
+   */
+  readonly noThreeWay: readonly string[];
 }
 
 function listTree(root: string, dir = "", into: string[] = []): string[] {
@@ -807,6 +889,7 @@ export async function patchProject(dir: string): Promise<Patch> {
   const added: string[] = [];
   const generatedEdits: string[] = [];
   const drifted: string[] = [];
+  const noThreeWay: string[] = [];
   try {
     for (const path of listTree(root).sort(compare)) {
       if (
@@ -841,12 +924,16 @@ export async function patchProject(dir: string): Promise<Patch> {
       const repoPath = join(record.repo, path);
       const current = existsSync(repoPath) ? readFileSync(repoPath) : null;
       if (current === null || sha256(current) !== original) drifted.push(path);
+      const committed =
+        record.manifest.sourceCommitSha === null
+          ? null
+          : gitShow(record.repo, record.manifest.sourceCommitSha, path);
+      // `--3way` finds the base by its blob id, which only a committed
+      // base has; nothing is ever written to the repository's objects.
+      if (committed === null || sha256(committed) !== original)
+        noThreeWay.push(path);
       const base =
-        current !== null && sha256(current) === original
-          ? current
-          : record.manifest.sourceCommitSha === null
-            ? null
-            : gitShow(record.repo, record.manifest.sourceCommitSha, path);
+        current !== null && sha256(current) === original ? current : committed;
       await mkdir(dirname(join(scratch, "a", path)), { recursive: true });
       await mkdir(dirname(join(scratch, "b", path)), { recursive: true });
       await writeFile(join(scratch, "a", path), base ?? "");
@@ -888,9 +975,18 @@ export async function patchProject(dir: string): Promise<Patch> {
         await writeFile(join(repoDir, path), readFileSync(join(scratch, "b", path)));
       }
       run(["add", "-A"]);
-      diff = run(["diff", "--cached", "--no-color", "--no-renames", "--binary"]);
+      // Full blob ids on the index lines: `git apply --3way` merges with
+      // them against the commit the cut read when the file has moved.
+      diff = run([
+        "diff",
+        "--cached",
+        "--no-color",
+        "--no-renames",
+        "--binary",
+        "--full-index",
+      ]);
     }
-    return { diff, changed, added, generatedEdits, drifted };
+    return { diff, changed, added, generatedEdits, drifted, noThreeWay };
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }

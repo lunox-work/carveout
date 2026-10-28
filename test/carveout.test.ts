@@ -20,6 +20,7 @@ import {
   type CutResult,
 } from "../src/carve.js";
 import { buildGraph, globMatches } from "../src/graph.js";
+import { statusProject, symbolDiff } from "../src/status.js";
 import { scanSecrets } from "../src/project/secrets.js";
 
 const FIXTURE = resolve(import.meta.dirname, "../../test/fixtures/shop");
@@ -192,6 +193,61 @@ test("the folder builds and its tests pass on its own", () => {
   assert.match(output, /# fail 0\n/);
 });
 
+test("status is current until the repository changes what a cut writes", async () => {
+  const fresh = await cutSlice({
+    repo,
+    out: join(scratch, "status"),
+    entryPoints: [ENTRY],
+    budget: { maxFiles: 40, maxDepth: 1 },
+    offline: true,
+  });
+  assert.equal((await statusProject(fresh.out)).current, true);
+  // A body change in a cut module leaves its stub, and the folder, alone.
+  const money = join(repo, "packages/money/src/index.ts");
+  const before = readFileSync(money, "utf8");
+  writeFileSync(money, before.replace("toFixed(2)", "toFixed(3)"));
+  assert.equal((await statusProject(fresh.out)).current, true);
+  // A signature change does not.
+  writeFileSync(
+    money,
+    before.replace(
+      "currency: Currency): string",
+      "currency: Currency, locale?: string): string",
+    ),
+  );
+  const changed = await statusProject(fresh.out);
+  assert.equal(changed.current, false);
+  const stub = changed.stale.find((item) => item.cause === "stub_changed");
+  assert.equal(stub?.path, "packages/money/src/index.d.ts");
+  assert.equal(stub?.detail, "changed format");
+  assert.ok(changed.inputsChanged.length === 0);
+  writeFileSync(money, before);
+  const tax = join(repo, "apps/shop/src/tax.ts");
+  const taxBefore = readFileSync(tax, "utf8");
+  writeFileSync(tax, `${taxBefore}// moved\n`);
+  const source = await statusProject(fresh.out);
+  assert.deepEqual(
+    source.stale.map((item) => [item.cause, item.path]),
+    // BOUNDARY.md gives the slice's size, which the edit changed too.
+    [
+      ["surface_changed", "BOUNDARY.md"],
+      ["source_changed", "apps/shop/src/tax.ts"],
+    ],
+  );
+  writeFileSync(tax, taxBefore);
+  assert.equal((await statusProject(fresh.out)).current, true);
+});
+
+test("a symbol diff names what was added, removed and changed", () => {
+  assert.equal(
+    symbolDiff(
+      "export declare function a(): void;\nexport declare const b: number;\n",
+      "export declare function a(x: string): void;\nexport interface C {}\n",
+    ),
+    "added C; removed b; changed a",
+  );
+});
+
 test("a patch carries edits back with the rewrites undone", async () => {
   const cart = join(cut.out, "apps/shop/src/cart.ts");
   writeFileSync(
@@ -212,6 +268,9 @@ test("a patch carries edits back with the rewrites undone", async () => {
   // Only the edit: no import of the folder's makes it back.
   assert.doesNotMatch(patch.diff, /packages\/money\/src\/index\.js/);
   assert.match(patch.diff, /^\+\s+return Math\.max\(0, lines\.reduce\(/m);
+  // Full blob ids, so `git apply --3way` can find the base.
+  assert.match(patch.diff, /^index [0-9a-f]{40}\.\.[0-9a-f]{40} /m);
+  assert.deepEqual(patch.noThreeWay, []);
   const file = join(scratch, "edit.patch");
   writeFileSync(file, patch.diff);
   git(["apply", "--check", file]);

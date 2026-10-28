@@ -121,11 +121,32 @@ answer, import from `carveout/mock.js`:
 it to exercise the slice. Everything under `carveout/` is generated, as are
 the stubs and the root configuration.
 
-## 5. Patch
+## 5. Status
+
+```sh
+carveout status <folder>
+```
+
+It makes the cut again in memory, from the request `carveout.json`
+records, and compares every file it would write with what the folder
+holds. It writes nothing. It prints `current` and exits 0, or prints what is
+stale and exits 4. The causes it names:
+
+- a slice file that changed, or one the walk now reaches or no longer does;
+- a cut module whose declarations changed, naming the symbols added,
+  removed or changed;
+- generated configuration and boundary files.
+
+A change only to a cut module's function bodies leaves its stub, and so the
+folder, current. Status takes about as long as a cut. Use it to learn what
+moved before deciding to cut again, not to save the time of a cut.
+
+## 6. Patch
 
 ```sh
 carveout patch <folder> --output change.patch
-git apply change.patch      # at the repository's root
+git apply change.patch           # at the repository's root
+git apply --3way change.patch    # when patch says files moved since the cut
 ```
 
 The patch holds:
@@ -133,9 +154,13 @@ The patch holds:
 - every edited slice file, with the import rewrites undone;
 - every new file outside `carveout/`.
 
-It leaves out edits to generated files and says so. It also warns when the
-repository's copy moved since the cut; the patch is then against the commit
-the cut read. Exit code 3 means there was nothing to patch.
+It leaves out edits to generated files and says so. Its `index` lines
+carry the full blob ids of the cut commit's files. When a file moved since
+the cut, `patch` says so: apply with `git apply --3way`, which merges
+against that commit. In the experiments, plain apply carried 27% of such
+patches and `--3way` 89%. A file cut from uncommitted changes has no blob
+to merge against, and `patch` names it. Exit code 3 means there was nothing
+to patch.
 
 ## Limits
 
