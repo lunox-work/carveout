@@ -142,7 +142,10 @@ or on the build. Tell the person how many there are.
 the cut run too. When the package's own test sets coverage thresholds
 (`--test-coverage-lines` and the like), it holds the source files added
 after the cut to them. It loads each such file, so one no test imports
-counts as uncovered.
+counts as uncovered. When coverage falls short, `npm test` says so in a line
+of its own. A test added where the package's script would not run it (the
+script's `--test` pattern, such as `test/*.test.ts`) fails `npm test`, which
+names it to move, because in the repository it would cover nothing.
 
 ## 4. Work in the folder
 

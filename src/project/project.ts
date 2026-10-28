@@ -230,6 +230,12 @@ export interface CoverageGate {
   readonly lines?: number;
   readonly branches?: number;
   readonly functions?: number;
+  /**
+   * The test sources the package's script runs, relative to `folder`
+   * (`test/*.test.ts` for `--test dist-test/test/*.test.js`): a test
+   * elsewhere never runs in the repository, and never covers anything.
+   */
+  readonly tests?: string;
 }
 
 /** The thresholds a package's test script passes to `node --test`, if any. */
@@ -241,8 +247,15 @@ export function coverageGateOf(folder: string, script: string): CoverageGate | n
   };
   const gate = { lines: read("lines"), branches: read("branches"), functions: read("functions") };
   if (gate.lines === undefined && gate.branches === undefined && gate.functions === undefined) return null;
+  // The script runs compiled tests: its glob, back at the sources.
+  const glob = /\s--test\s+["']?([^\s"'-][^\s"']*)/.exec(script)?.[1];
+  const tests =
+    glob === undefined
+      ? undefined
+      : glob.replace(/^dist[^/]*\//, "").replace(/\.js$/, ".ts");
   return {
     folder,
+    ...(tests === undefined ? {} : { tests }),
     ...(gate.lines === undefined ? {} : { lines: gate.lines }),
     ...(gate.branches === undefined ? {} : { branches: gate.branches }),
     ...(gate.functions === undefined ? {} : { functions: gate.functions }),
@@ -919,6 +932,17 @@ function testRunnerScript(coverage: CoverageGate | undefined): string {
           "  // as uncovered rather than unseen.",
           "  ...covered.map((path) => `--import=./${path}`),",
           "];",
+          ...(coverage.tests === undefined
+            ? ["const unrun = [];"]
+            : [
+                `const pattern = new RegExp("^" + ${JSON.stringify(coverage.tests)}.split("**/").map((part) => part.split("*").map((text) => text.replace(/[.+?^\${}()|[\\]\\\\]/g, "\\\\$&")).join("[^/]*")).join("(?:.*/)?") + "$");`,
+                "// Added tests the repository's script would not run: they cover",
+                "// nothing there.",
+                "const unrun = node",
+                '  .map((path) => path.replace(/\\.js$/, ".ts"))',
+                "  .filter((path) => path.startsWith(`${folder}/`) && !copied.has(path))",
+                "  .filter((path) => !pattern.test(path.slice(folder.length + 1)));",
+              ]),
         ];
   return `${[
     "// \`npm test\`, after \`npm run build\`: finds the folder's tests now, the",
@@ -981,6 +1005,10 @@ function testRunnerScript(coverage: CoverageGate | undefined): string {
     "      failed = true;",
     "      if (baseline !== null && fresh.length > 0 && fresh.length < failing.length)",
     "        process.stdout.write(`\\nFailing now and not when the folder was checked:\\n${fresh.map((name) => `  ${name}`).join(\"\\n\")}\\n`);",
+    "      if (gateFailed)",
+    "        process.stdout.write(",
+    `          "\\nnpm test fails on coverage: the files you added are below the coverage the repository's own test requires (the report above). Test them; the repository fails them too.\\n",`,
+    "        );",
     "    }",
     "  }",
     "}",
@@ -989,6 +1017,10 @@ function testRunnerScript(coverage: CoverageGate | undefined): string {
     "  if (existsSync(bin)) run(bin, [\"run\", ...vitest]);",
     "  else",
     "    process.stderr.write(`vitest is not installed, so ${vitest.length} Vitest test file(s) did not run.\\n`);",
+    "}",
+    "if (typeof unrun !== \"undefined\" && unrun.length > 0) {",
+    "  failed = true;",
+    `  process.stdout.write(\`\\nThe repository's npm test runs only \${folder}/${coverage?.tests ?? ""}, so it would not run these, and they would cover nothing there. Move them:\\n\${unrun.map((path) => \`  \${path}\`).join("\\n")}\\n\`);`,
     "}",
     "process.exitCode = failed ? 1 : 0;",
   ].join("\n")}\n`;

@@ -275,7 +275,7 @@ test("a slice holds the repository's checks and its coverage of added code", asy
       "packages/core",
       "tsc -p tsconfig.test.json && node --experimental-test-coverage --test-coverage-lines=90 --test-coverage-branches=85 --test dist-test/test/*.test.js",
     ),
-    { folder: "packages/core", lines: 90, branches: 85 },
+    { folder: "packages/core", tests: "test/*.test.ts", lines: 90, branches: 85 },
   );
   assert.equal(coverageGateOf("", "vitest run"), null);
 });
