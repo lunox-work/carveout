@@ -60,7 +60,9 @@ data.
 
 `--with-tests` also brings the test files outside the slice that import it
 (`*.test.*`, `*.spec.*`, `__tests__/`), when they run on `node:test` or
-Vitest. The plan lists tests on other runners as left behind.
+Vitest. The plan lists as left behind the tests on other runners, and those
+that make an import no slice can carry: a computed dynamic import, or one
+that resolves to no file.
 
 ## 2. Cut
 

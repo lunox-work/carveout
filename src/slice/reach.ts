@@ -87,8 +87,9 @@ export interface ReachResult {
   /** Of the included files, the tests brought along, sorted. */
   readonly tests: readonly string[];
   /**
-   * Tests of the slice left behind because they run on neither `node:test`
-   * nor Vitest, sorted.
+   * Tests of the slice left behind, sorted: they run on neither `node:test`
+   * nor Vitest, or make an import no slice can carry (a computed dynamic
+   * import, one that resolves to nothing, a path read of no file).
    */
   readonly untestable: readonly string[];
 }
@@ -376,7 +377,14 @@ export function reach(
         if (!depthOf.has(edge.from) && isTestPath(edge.from))
           candidates.add(edge.from);
     for (const file of [...candidates].sort(compare)) {
-      if (testRunnerOf(packagesOf.get(file) ?? []) === null) {
+      // A test is left behind when it runs on neither runner, or reads what
+      // no slice can carry: one such test would block the whole folder.
+      if (
+        testRunnerOf(packagesOf.get(file) ?? []) === null ||
+        (dependencyEdges.get(file) ?? []).some(
+          (dependency) => dependency.status !== "external",
+        )
+      ) {
         untestable.add(file);
         continue;
       }
