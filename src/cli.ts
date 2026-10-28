@@ -2,10 +2,11 @@
 /**
  * carveout <command>: plan, cut, check and patch slices of a repository.
  * Exit codes: 0 done, 1 refused or failed, 2 written with blockers (cut)
- * or a step failed (check), 3 nothing to patch, 4 stale (status).
+ * or a step failed (check, merge), 3 nothing to patch, 4 stale (status),
+ * 5 the edits reach past the slice (patch, merge).
  */
 
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import {
@@ -18,6 +19,7 @@ import {
   readRecord,
 } from "./carve.js";
 import { SLICE_BUDGET_DEFAULTS, type DependencyChoice } from "./core.js";
+import { applyPatch, mergeProject } from "./mergeback.js";
 import { statusProject } from "./status.js";
 
 const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript repository.
@@ -39,8 +41,16 @@ const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript r
   carveout status <dir> [--json]
       Whether <dir> still matches the repository, and what changed if not.
 
-  carveout patch <dir> [--output <file>]
+  carveout patch <dir> [--output <file>] [--json]
       The edits made in <dir> as a patch for the repository (git apply).
+
+  carveout apply <dir> <patch-file> [--stubs] [--json]
+      Brings a patch for the repository at the cut's commit into <dir>, with its
+      imports rewritten as a cut writes them. --stubs also writes the stubs the
+      change needs from the modules the slice cuts.
+
+  carveout merge <dir> --into <checkout> [--verify <command>] [--json]
+      patch, then git apply --3way in <checkout>, then <command> at its root.
 
   carveout where
       The folder fetched package types are cached in (CARVEOUT_HOME).
@@ -96,6 +106,9 @@ async function main(argv: readonly string[]) {
       "widen-literals": { type: "boolean" },
       "with-tests": { type: "boolean" },
       "in-place": { type: "boolean" },
+      stubs: { type: "boolean" },
+      into: { type: "string" },
+      verify: { type: "string" },
       json: { type: "boolean" },
     },
   });
@@ -408,9 +421,19 @@ async function main(argv: readonly string[]) {
       const [dir] = positionals;
       if (dir === undefined) fail("patch needs the folder a cut wrote.");
       const patch = await patchProject(dir);
+      const boundary = new Set(patch.boundary.map((edit) => edit.path));
       const notes = [
-        ...patch.generatedEdits.map(
-          (path) => `${path} is generated; its edit is not in the patch.`,
+        ...patch.generatedEdits
+          .filter((path) => !boundary.has(path))
+          .map((path) => `${path} is generated; its edit is not in the patch.`),
+        ...patch.boundary.map((edit) => `boundary: ${edit.detail}`),
+        ...patch.sliceOnly.map(
+          (path) =>
+            `${path} imports the folder's carveout/ harness, which the repository does not have; it is not in the patch.`,
+        ),
+        ...patch.crossPackage.map(
+          ({ file, specifier }) =>
+            `${file} imports ${specifier} across packages, and nothing in the slice names that module another way; check the import after applying.`,
         ),
         ...patch.drifted.map(
           (path) =>
@@ -426,18 +449,72 @@ async function main(argv: readonly string[]) {
             `${path} was cut from uncommitted changes, so --3way cannot merge it; apply it by hand if git apply refuses.`,
         ),
       ];
+      // The change needs more than the slice: the patch alone is short of it.
+      const code = patch.boundary.length > 0 ? 5 : patch.diff === "" ? 3 : 0;
+      if (values.json === true) {
+        if (values.output !== undefined) writeFileSync(values.output, patch.diff);
+        print(patch);
+        process.exitCode = code;
+        return;
+      }
       for (const note of notes) process.stderr.write(`carveout: ${note}\n`);
+      process.exitCode = code;
       if (patch.diff === "") {
         process.stderr.write("carveout: no edits to the slice.\n");
-        process.exitCode = 3;
         return;
       }
       if (values.output !== undefined) {
         writeFileSync(values.output, patch.diff);
         process.stderr.write(
-          `carveout: ${patch.changed.length} changed and ${patch.added.length} new files in ${values.output}; apply it at the repository's root with git apply.\n`,
+          `carveout: ${patch.changed.length} changed, ${patch.added.length} new and ${patch.deleted.length} deleted files in ${values.output}; apply it at the repository's root with git apply.\n`,
         );
       } else process.stdout.write(patch.diff);
+      return;
+    }
+
+    case "apply": {
+      const [dir, file] = positionals;
+      if (dir === undefined || file === undefined)
+        fail("apply needs the folder a cut wrote and a patch file.");
+      const applied = await applyPatch(dir, readFileSync(file, "utf8"), {
+        ...(values.stubs === true ? { stubs: true } : {}),
+      });
+      if (values.json === true) print(applied);
+      else {
+        process.stdout.write(
+          `${applied.changed.length} changed, ${applied.added.length} new and ${applied.deleted.length} deleted slice files.\n`,
+        );
+        if (applied.outside.length > 0)
+          process.stdout.write(`Outside the slice, not applied:\n${list(applied.outside)}\n`);
+        if (applied.stubs.length > 0)
+          process.stdout.write(
+            `${applied.stubs.some((stub) => stub.written) ? "Stubs written" : "Stubs the change needs (apply with --stubs to write them)"}:\n${list(
+              applied.stubs.map((stub) => `${stub.path}: ${stub.detail}`),
+            )}\n`,
+          );
+      }
+      if (applied.stubs.some((stub) => !stub.written)) process.exitCode = 5;
+      return;
+    }
+
+    case "merge": {
+      const [dir] = positionals;
+      if (dir === undefined) fail("merge needs the folder a cut wrote.");
+      if (values.into === undefined)
+        fail("merge needs --into <checkout>: the checkout to apply the edits in.");
+      const merge = await mergeProject(dir, {
+        into: values.into,
+        ...(values.verify === undefined ? {} : { verify: values.verify }),
+      });
+      if (values.json === true) print(merge);
+      else {
+        for (const edit of merge.patch.boundary)
+          process.stderr.write(`carveout: boundary: ${edit.detail}\n`);
+        for (const step of merge.steps) {
+          process.stdout.write(`${step.ok ? "ok  " : "FAIL"} ${step.step}: ${step.ok && step.step === "verify" ? "" : step.output}\n`);
+        }
+      }
+      process.exitCode = !merge.ok ? 2 : merge.patch.boundary.length > 0 ? 5 : 0;
       return;
     }
 

@@ -14,17 +14,19 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, posix, relative, resolve } from "node:path";
 import { command } from "./command.js";
 import {
-  IMPORT_LITERAL,
   SLICE_BUDGET_DEFAULTS,
+  declarationPath,
   detectExternals,
   generateProject,
+  isScript,
   isSecretPath,
   packageNameOf,
   renderBoundaryMarkdown,
   resolveScope,
+  runtimePath,
   type BoundaryContract,
   type DependencyChoice,
   type GeneratedFile,
@@ -45,6 +47,14 @@ import { packageModules, packageUses } from "./extract/fixture.js";
 import { npmPackageTypes, typesPackageOf } from "./extract/package-types.js";
 import { NODE_BUILTINS, isNodeBuiltin } from "./extract/typescript.js";
 import { walkGraph } from "./graph.js";
+import {
+  extensionlessPackages,
+  packageFolder,
+  restoreImports,
+  specifiersOf,
+  undoRewrites,
+  type ImportContext,
+} from "./imports.js";
 
 export const CARVEOUT_VERSION = "0.1.0";
 export const RECORD_PATH = "carveout.json";
@@ -836,20 +846,19 @@ export async function checkProject(
   return steps;
 }
 
-/** `text` with the folder's import rewrites put back as the source wrote them. */
-export function undoRewrites(
-  text: string,
-  rewrites: readonly ImportRewrite[],
-): string {
-  if (rewrites.length === 0) return text;
-  const back = new Map(rewrites.map((rewrite) => [rewrite.to, rewrite.from]));
-  return text.replace(
-    IMPORT_LITERAL,
-    (whole, prefix: string, quote: string, specifier: string) => {
-      const from = back.get(specifier);
-      return from === undefined ? whole : `${prefix}${quote}${from}${quote}`;
-    },
-  );
+
+export { undoRewrites } from "./imports.js";
+
+/** An edit the patch cannot carry: the change reaches past the slice. */
+export interface BoundaryEdit {
+  readonly path: string;
+  /**
+   * `stub`: a cut module's declarations or its mock; `dependency`: the
+   * folder's package.json; `config`: its compiler or runtime
+   * configuration; `mock`: the mock runtime or a mock package.
+   */
+  readonly kind: "stub" | "dependency" | "config" | "mock";
+  readonly detail: string;
 }
 
 export interface Patch {
@@ -857,8 +866,19 @@ export interface Patch {
   readonly diff: string;
   readonly changed: readonly string[];
   readonly added: readonly string[];
+  /** Slice files the folder no longer holds, deleted by the patch. */
+  readonly deleted: readonly string[];
   /** Generated files that were edited, which the patch leaves out. */
   readonly generatedEdits: readonly string[];
+  /** Of those, the edits that mean the change needs more than the slice. */
+  readonly boundary: readonly BoundaryEdit[];
+  /**
+   * New or changed files that import the folder's harness (`carveout/`),
+   * which the repository does not have; the patch leaves them out.
+   */
+  readonly sliceOnly: readonly string[];
+  /** New imports restored as relative paths across packages: no importer names the target. */
+  readonly crossPackage: readonly { file: string; specifier: string }[];
   /** Whether the repository's copy moved since the cut. */
   readonly drifted: readonly string[];
   /**
@@ -879,11 +899,84 @@ function listTree(root: string, dir = "", into: string[] = []): string[] {
   return into;
 }
 
+/** The folder files a cut writes beside its stubs that only the folder runs. */
+const HARNESS_FILES = new Set([
+  "carveout/mock.js",
+  "carveout/mock.d.ts",
+  "carveout/assets.js",
+  "carveout/ambient.d.ts",
+]);
+const CONFIG_FILES = new Set([
+  "tsconfig.json",
+  ".npmrc",
+  ".nvmrc",
+  "carveout.env",
+]);
+
+/** What an edit to a generated file means for the patch, if anything. */
+function boundaryEdit(
+  root: string,
+  path: string,
+  record: CarveoutRecord,
+  stubFiles: ReadonlyMap<string, string>,
+): BoundaryEdit | null {
+  const module = stubFiles.get(path);
+  if (module !== undefined)
+    return {
+      path,
+      kind: "stub",
+      detail: `${module} is cut: the edit to its stub stays in the folder, and the patch does not change ${module}.`,
+    };
+  if (path === "package.json") {
+    let names: string[] = [];
+    try {
+      const manifest = JSON.parse(readFileSync(join(root, path), "utf8")) as Record<
+        string,
+        Record<string, unknown> | undefined
+      >;
+      const known = new Set([
+        "typescript",
+        ...record.dependencies.map((dependency) => dependency.name),
+      ]);
+      names = [
+        ...Object.keys(manifest["dependencies"] ?? {}),
+        ...Object.keys(manifest["devDependencies"] ?? {}),
+      ]
+        .filter((name) => !known.has(name))
+        .sort(compare);
+    } catch {
+      // Not JSON any more: reported as edited.
+    }
+    return {
+      path,
+      kind: "dependency",
+      detail:
+        names.length === 0
+          ? "package.json was edited; the repository's package files are not patched."
+          : `adds ${names.join(", ")}, which the repository's package files do not get.`,
+    };
+  }
+  if (CONFIG_FILES.has(path))
+    return {
+      path,
+      kind: "config",
+      detail: `${path} is the folder's own; the repository's configuration is not patched.`,
+    };
+  if (HARNESS_FILES.has(path) || path.startsWith("carveout/packages/"))
+    return {
+      path,
+      kind: "mock",
+      detail: `${path} is a mock; what it stands in for is outside the slice.`,
+    };
+  return null;
+}
+
 /**
  * The edits made in the folder as a patch for the repository: each slice
- * file that changed, with the import rewrites undone, and each new script
- * file outside `carveout/`. Built outputs, the generated files and the
- * lockfile are not part of it.
+ * file that changed or is gone, and each new file outside `carveout/`, with
+ * their imports as the repository writes them (`restoreImports`). Built
+ * outputs, the generated files and the lockfile are not part of it; edits
+ * to generated files that the change needed are reported as `boundary`.
  */
 export async function patchProject(dir: string): Promise<Patch> {
   const root = resolve(dir);
@@ -901,14 +994,90 @@ export async function patchProject(dir: string): Promise<Patch> {
   const ignored = new Set(
     readFileSync(join(root, ".gitignore"), "utf8").split("\n").filter(Boolean),
   );
+  const stubModules = new Set([
+    ...record.manifest.cuts.outbound.map((edge) => edge.to),
+    ...record.dependencies
+      .filter((dependency) => dependency.kind === "module")
+      .map((dependency) => dependency.name),
+  ]);
+  const stubFiles = new Map<string, string>();
+  for (const module of stubModules) {
+    stubFiles.set(declarationPath(module), module);
+    stubFiles.set(runtimePath(module), module);
+  }
+  const tree = listTree(root).sort(compare);
+  const present = new Set(tree);
+  const sources = new Set(
+    tree.filter(
+      (path) =>
+        !generated.has(path) &&
+        !path.startsWith("carveout/") &&
+        path !== RECORD_PATH,
+    ),
+  );
+  const packageOf = packageFolder(record.repo);
+  const edges = [
+    ...record.manifest.internalImports,
+    ...record.manifest.cuts.outbound,
+    ...record.manifest.cuts.inbound,
+  ].flatMap((edge) =>
+    edge.specifier === null
+      ? []
+      : [{ from: edge.from, to: edge.to, specifier: edge.specifier }],
+  );
+  const context: ImportContext = {
+    edges,
+    files: sources,
+    stubs: stubModules,
+    packageOf,
+    extensionless: extensionlessPackages(edges, packageOf),
+  };
+  // What `npm run build` wrote for a source the folder's edits added.
+  const emitted = (path: string) =>
+    /\.[cm]?js$/.test(path) &&
+    ["ts", "tsx", "mts", "cts"].some((ext) =>
+      present.has(path.replace(/\.[cm]?js$/, `.${ext}`)),
+    );
+  /** Imports a restored text still makes of the folder's harness. */
+  const harnessImport = (path: string, text: string) =>
+    [...specifiersOf(text)].some(
+      (specifier) =>
+        specifier.startsWith(".") &&
+        posix
+          .normalize(posix.join(posix.dirname(path), specifier))
+          .startsWith("carveout/"),
+    );
   const scratch = mkdtempSync(join(tmpdir(), "carveout-patch-"));
   const changed: string[] = [];
   const added: string[] = [];
+  const deleted: string[] = [];
   const generatedEdits: string[] = [];
+  const boundary: BoundaryEdit[] = [];
+  const sliceOnly: string[] = [];
+  const crossPackage: { file: string; specifier: string }[] = [];
   const drifted: string[] = [];
   const noThreeWay: string[] = [];
+  /**
+   * The bytes the cut read for an included file, from the commit when the
+   * checkout still has them there, else the checkout's file if it has not
+   * moved; otherwise null, and the patch is against what the cut copied.
+   */
+  const baseOf = (path: string, original: string) => {
+    const repoPath = join(record.repo, path);
+    const current = existsSync(repoPath) ? readFileSync(repoPath) : null;
+    if (current === null || sha256(current) !== original) drifted.push(path);
+    const committed =
+      record.manifest.sourceCommitSha === null
+        ? null
+        : gitShow(record.repo, record.manifest.sourceCommitSha, path);
+    // `--3way` finds the base by its blob id, which only a committed
+    // base has; nothing is ever written to the repository's objects.
+    if (committed === null || sha256(committed) !== original)
+      noThreeWay.push(path);
+    return current !== null && sha256(current) === original ? current : committed;
+  };
   try {
-    for (const path of listTree(root).sort(compare)) {
+    for (const path of tree) {
       if (
         path === RECORD_PATH ||
         path === "package-lock.json" ||
@@ -919,45 +1088,72 @@ export async function patchProject(dir: string): Promise<Patch> {
       const text = bytes.toString("utf8");
       const hash = generated.get(path);
       if (hash !== undefined) {
-        if (sha256(text) !== hash) generatedEdits.push(path);
+        if (sha256(text) !== hash) {
+          generatedEdits.push(path);
+          const edit = boundaryEdit(root, path, record, stubFiles);
+          if (edit !== null) boundary.push(edit);
+        }
         continue;
       }
       const original = included.get(path);
       if (original === undefined) {
-        if (path.startsWith("carveout/")) continue;
+        if (path.startsWith("carveout/") || emitted(path)) continue;
+        let content: Buffer = bytes;
+        if (isScript(path)) {
+          const restored = restoreImports(path, text, null, [], context);
+          if (harnessImport(path, restored.text)) {
+            sliceOnly.push(path);
+            continue;
+          }
+          for (const specifier of restored.crossPackage)
+            crossPackage.push({ file: path, specifier });
+          content = Buffer.from(restored.text);
+        }
         added.push(path);
         await mkdir(dirname(join(scratch, "b", path)), { recursive: true });
-        await writeFile(join(scratch, "b", path), bytes);
+        await writeFile(join(scratch, "b", path), content);
         continue;
       }
-      const restored = isBinaryPath(path)
-        ? bytes
-        : Buffer.from(undoRewrites(text, rewritesOf.get(path) ?? []));
-      if (sha256(restored) === original) continue;
+      if (isBinaryPath(path)) {
+        if (sha256(bytes) === original) continue;
+      } else if (sha256(undoRewrites(text, rewritesOf.get(path) ?? [])) === original)
+        continue;
+      const base = baseOf(path, original);
+      let restored: Buffer = bytes;
+      if (!isBinaryPath(path)) {
+        const result = restoreImports(
+          path,
+          text,
+          base === null ? null : base.toString("utf8"),
+          rewritesOf.get(path) ?? [],
+          context,
+        );
+        if (sha256(result.text) === original) continue;
+        if (harnessImport(path, result.text)) {
+          sliceOnly.push(path);
+          continue;
+        }
+        for (const specifier of result.crossPackage)
+          crossPackage.push({ file: path, specifier });
+        restored = Buffer.from(result.text);
+      }
       changed.push(path);
-      // The original is the bytes the cut read, from the commit when the
-      // checkout still has them there, else the checkout's file if it has
-      // not moved; otherwise the patch is against what the cut copied.
-      const repoPath = join(record.repo, path);
-      const current = existsSync(repoPath) ? readFileSync(repoPath) : null;
-      if (current === null || sha256(current) !== original) drifted.push(path);
-      const committed =
-        record.manifest.sourceCommitSha === null
-          ? null
-          : gitShow(record.repo, record.manifest.sourceCommitSha, path);
-      // `--3way` finds the base by its blob id, which only a committed
-      // base has; nothing is ever written to the repository's objects.
-      if (committed === null || sha256(committed) !== original)
-        noThreeWay.push(path);
-      const base =
-        current !== null && sha256(current) === original ? current : committed;
       await mkdir(dirname(join(scratch, "a", path)), { recursive: true });
       await mkdir(dirname(join(scratch, "b", path)), { recursive: true });
       await writeFile(join(scratch, "a", path), base ?? "");
       await writeFile(join(scratch, "b", path), restored);
     }
+    for (const [path, original] of [...included.entries()].sort(([a], [b]) =>
+      compare(a, b),
+    )) {
+      if (present.has(path)) continue;
+      deleted.push(path);
+      const base = baseOf(path, original);
+      await mkdir(dirname(join(scratch, "a", path)), { recursive: true });
+      await writeFile(join(scratch, "a", path), base ?? "");
+    }
     let diff = "";
-    if (changed.length + added.length > 0) {
+    if (changed.length + added.length + deleted.length > 0) {
       // A scratch repository holding the bases, with the edits staged on
       // top: its diff names every path as the repository does.
       const repoDir = join(scratch, "repo");
@@ -981,7 +1177,7 @@ export async function patchProject(dir: string): Promise<Patch> {
         ).toString("utf8");
       await mkdir(repoDir, { recursive: true });
       run(["init", "-q"]);
-      for (const path of changed) {
+      for (const path of [...changed, ...deleted]) {
         await mkdir(dirname(join(repoDir, path)), { recursive: true });
         await writeFile(join(repoDir, path), readFileSync(join(scratch, "a", path)));
       }
@@ -991,9 +1187,11 @@ export async function patchProject(dir: string): Promise<Patch> {
         await mkdir(dirname(join(repoDir, path)), { recursive: true });
         await writeFile(join(repoDir, path), readFileSync(join(scratch, "b", path)));
       }
+      for (const path of deleted) await rm(join(repoDir, path));
       run(["add", "-A"]);
       // Full blob ids on the index lines: `git apply --3way` merges with
-      // them against the commit the cut read when the file has moved.
+      // them against the commit the cut read when the file has moved. A
+      // rename is a deletion and an addition, which `--3way` takes.
       diff = run([
         "diff",
         "--cached",
@@ -1003,7 +1201,18 @@ export async function patchProject(dir: string): Promise<Patch> {
         "--full-index",
       ]);
     }
-    return { diff, changed, added, generatedEdits, drifted, noThreeWay };
+    return {
+      diff,
+      changed,
+      added,
+      deleted,
+      generatedEdits,
+      boundary,
+      sliceOnly,
+      crossPackage,
+      drifted,
+      noThreeWay,
+    };
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }

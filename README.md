@@ -15,6 +15,7 @@ npx -y carveout check ../billing-slice          # npm ci, build, test
 npx -y carveout status ../billing-slice         # still matches the repository?
 npx -y carveout patch ../billing-slice --output billing.patch
 git apply --3way billing.patch
+# or both, with a check: carveout merge ../billing-slice --into . --verify "npm test"
 ```
 
 Use it to:
@@ -84,13 +85,15 @@ are found by name first, and the compiler confirms each one.
 
 ## Commands
 
-| Command                               | Does                                                                                                           |
-| ------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `carveout plan <entry>...`            | Lists the files, cuts, importers, packages, environment and blockers. Writes nothing.                          |
-| `carveout cut <entry>... --out <dir>` | Writes the folder. Exits 2 if it was written with blockers.                                                    |
-| `carveout check <dir>`                | Runs `npm ci`, `npm run build` and `npm test` in a scratch copy.                                               |
-| `carveout status <dir>`               | Says whether a cut now would write the same folder, and names what changed. Exits 4 if stale.                  |
-| `carveout patch <dir>`                | Prints the edits as a patch for the repository (`--output <file>`), with full blob ids for `git apply --3way`. |
+| Command                                  | Does                                                                                                           |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `carveout plan <entry>...`               | Lists the files, cuts, importers, packages, environment and blockers. Writes nothing.                          |
+| `carveout cut <entry>... --out <dir>`    | Writes the folder. Exits 2 if it was written with blockers.                                                    |
+| `carveout check <dir>`                   | Runs `npm ci`, `npm run build` and `npm test` in a scratch copy.                                               |
+| `carveout status <dir>`                  | Says whether a cut now would write the same folder, and names what changed. Exits 4 if stale.                  |
+| `carveout patch <dir>`                   | Prints the edits as a patch for the repository (`--output <file>`), with full blob ids for `git apply --3way`. |
+| `carveout merge <dir> --into <checkout>` | Patches, applies with `--3way` in the checkout you name, and runs `--verify <cmd>` there.                      |
+| `carveout apply <dir> <patch>`           | Brings a patch for the repository into the folder, imports rewritten; `--stubs` adds the stubs it needs.       |
 
 Options for `plan` and `cut`:
 

@@ -172,16 +172,51 @@ git apply --3way change.patch    # when patch says files moved since the cut
 
 The patch holds:
 
-- every edited slice file, with the import rewrites undone;
-- every new file outside `carveout/`.
+- every edited slice file, and every deleted one;
+- every new file outside `carveout/`, without what `npm run build` wrote
+  beside it.
 
-It leaves out edits to generated files and says so. Its `index` lines
-carry the full blob ids of the cut commit's files. When a file moved since
-the cut, `patch` says so: apply with `git apply --3way`, which merges
-against that commit. In the experiments, plain apply carried 27% of such
-patches and `--3way` 89%. A file cut from uncommitted changes has no blob
-to merge against, and `patch` names it. Exit code 3 means there was nothing
-to patch.
+Imports come back as the repository writes them. The cut's rewrites are
+undone. A new import is spelled the way the slice already names its target
+(an alias, a workspace package), or else as a relative path in the
+package's own extension style. A new import across packages that nothing
+names is restored as a relative path, and `patch` says so.
+
+It leaves out, and names:
+
+- **Boundary edits** (exit code 5): an edit to a stub or a mock, or a
+  dependency added to the folder's package.json. The change needs more
+  than the slice holds, so the patch alone is short of it. Cut again with
+  more entries, or make that part of the change in the repository.
+- **Slice-only files**: a new or edited file that imports `carveout/`,
+  such as a test against the mocks. The repository has no `carveout/`.
+- Edits to other generated files.
+
+Its `index` lines carry the full blob ids of the cut commit's files. When a
+file moved since the cut, `patch` says so: apply with `git apply --3way`,
+which merges against that commit. In the experiments, plain apply carried
+27% of such patches and `--3way` 89%. A file cut from uncommitted changes
+has no blob to merge against, and `patch` names it. Exit code 3 means there
+was nothing to patch. `--json` prints the lists with the diff.
+
+## 7. Merge and apply
+
+```sh
+carveout merge <folder> --into <checkout> --verify "npm test"
+carveout apply <folder> upstream.patch [--stubs]
+```
+
+`merge` runs `patch`, then `git apply --3way` in the checkout you name,
+then the verify command at its root. It reports each step, and exits 2 when
+one fails. It never picks a checkout itself. Name a clean clone, or the
+person's own checkout only when they ask.
+
+`apply` goes the other way: a patch for the repository at the cut's commit
+comes into the folder, with its imports rewritten as a cut writes them. It
+lists the paths outside the slice, which it does not apply, and the stubs
+the change needs from cut modules. `--stubs` writes those stubs and their
+mocks; without it, it exits 5 when some are needed. `patch` afterwards
+gives back the slice's part of the change.
 
 ## Limits
 
