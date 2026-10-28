@@ -209,12 +209,13 @@ categories (identicon in the first).
 
 ## Phase 5: E6 (pre-registered, model)
 
-- **Size.** At least 30 usable cases, × `full`, `slice-seam` and
-  `slice-diff` × 3 runs, on Haiku 5.5. A usable case has a confirmed spec
-  whose calibration passed, and a seam slice that builds at B.
-  duediligence has 11 such cases today (decision 5). Re-run a subset of 10 cases × 2 arms
-  × 3 runs on Sonnet 5.5, to check that the result isn't specific to one
-  model.
+- **Size (amended 2026-10-29, before any E6 data).** E6a: the 11 cases
+  with a confirmed spec, × `full`, `slice-seam` and `slice-diff` × 5 runs,
+  on Haiku 5.5. A case is usable when its calibration passed and a template
+  of every arm builds at B (the slice's own tests run). A case that does not
+  is reported and left out. Then the Sonnet 5.5 check: 10 of the usable
+  cases × `full` and `slice-seam` × 3 runs. E6b, on a corpus grown to 30,
+  comes later and is held to the same bars.
 - **Correctness bars:**
   - `slice-seam` acceptance (post-merge) is within 10 points of `full`
     (non-inferiority, one-sided 95%);
@@ -268,14 +269,8 @@ its entries.
    gate makes the slice more honest, but also bigger. Recommended: carry
    them, and record the token cost.
 
-5. **Cases for E6.** There are 11 confirmed specs, against a bar of 30.
-
-   - _Grow to 30_ with duediligence's `in-repo.mjs discover`/`add`/`prepare`
-     on sandbox-factory (and command-center). This costs more sessions,
-     and someone has to stand in as the confirming developer.
-   - _Run 11 × 5 runs_ and amend the size before any E6 data exists.
-
-   Recommended: run 11 × 5 now, as E6a, and grow the corpus for E6b.
+5. **Cases for E6.** Decided 2026-10-29: E6a on the 11, 5 runs each, now;
+   E6b once the corpus is grown to 30.
 
 ## Order
 
