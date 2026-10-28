@@ -17,12 +17,12 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { command } from "./command.js";
 import {
+  IMPORT_LITERAL,
   SLICE_BUDGET_DEFAULTS,
   detectExternals,
   generateProject,
   isSecretPath,
   packageNameOf,
-  reach,
   renderBoundaryMarkdown,
   resolveScope,
   type BoundaryContract,
@@ -44,7 +44,7 @@ import {
 import { packageModules, packageUses } from "./extract/fixture.js";
 import { npmPackageTypes, typesPackageOf } from "./extract/package-types.js";
 import { NODE_BUILTINS, isNodeBuiltin } from "./extract/typescript.js";
-import { buildGraph } from "./graph.js";
+import { walkGraph } from "./graph.js";
 
 export const CARVEOUT_VERSION = "0.1.0";
 export const RECORD_PATH = "carveout.json";
@@ -74,6 +74,8 @@ export interface SliceRequest {
   /** Files or directories, relative to the root. */
   readonly entryPoints: readonly string[];
   readonly budget?: SliceBudget;
+  /** Also bring along the tests outside the slice that import it. */
+  readonly tests?: boolean;
 }
 
 function git(repo: string, args: readonly string[]): string | null {
@@ -132,6 +134,8 @@ export interface Plan {
   readonly secretFiles: readonly string[];
   /** Cut modules, sorted. */
   readonly cutModules: readonly string[];
+  /** Of those, the ones the slice imports only types from. */
+  readonly typeOnlyCuts: readonly string[];
 }
 
 /** What a cut of the request would hold, from the import graph alone. */
@@ -139,8 +143,9 @@ export function planSlice(request: SliceRequest): Plan {
   const repo = resolve(request.repo);
   const budget = request.budget ?? SLICE_BUDGET_DEFAULTS;
   const entryPoints = entriesOf(request);
-  const built = buildGraph(repo);
-  const walk = reach(built.graph, entryPoints, budget);
+  const { built, walk } = walkGraph(repo, entryPoints, budget, {
+    tests: request.tests === true,
+  });
   const externals = detectExternals(
     walk.included.map((path) => ({
       path,
@@ -171,6 +176,13 @@ export function planSlice(request: SliceRequest): Plan {
     cutModules: [...new Set(walk.cuts.outbound.map((edge) => edge.to))].sort(
       compare,
     ),
+    typeOnlyCuts: [
+      ...new Set(walk.cuts.outbound.map((edge) => edge.to)),
+    ]
+      .filter((to) =>
+        walk.cuts.outbound.every((edge) => edge.to !== to || edge.typeOnly),
+      )
+      .sort(compare),
   };
 }
 
@@ -219,6 +231,8 @@ export interface CarveoutRecord {
     readonly choices: Readonly<Record<string, DependencyChoice>>;
     readonly offline: boolean;
     readonly widenLiterals: boolean;
+    /** Absent in records made before tests could be brought along. */
+    readonly tests?: boolean;
   };
   /**
    * The repository's files the cut resolved with, beyond the slice: compiler
@@ -419,14 +433,16 @@ export async function computeCut(
   const log = request.log ?? (() => {});
   const budget = request.budget ?? SLICE_BUDGET_DEFAULTS;
   const entryPoints = entriesOf(request);
-  const built = buildGraph(repo);
+  const { built } = walkGraph(repo, entryPoints, budget, {
+    tests: request.tests === true,
+  });
   log(`Read the imports of ${built.files.length} files.`);
   const commitSha = git(repo, ["rev-parse", "HEAD"]);
   const signal = AbortSignal.timeout(15 * 60_000);
   const analysis = await analyseSlice({
     sourceDir: repo,
     graph: built.graph,
-    params: { entryPoints, budget, includeInferred: false },
+    params: { entryPoints, budget, tests: request.tests === true },
     source: {
       commitSha,
       isDirty: (paths) =>
@@ -679,6 +695,7 @@ export async function computeCut(
         choices: request.choices ?? {},
         offline: request.offline === true,
         widenLiterals: request.widenLiterals === true,
+        tests: request.tests === true,
       },
       inputs: resolutionInputs(repo, manifest.requiredBuildInputs.configs),
     },
@@ -827,7 +844,7 @@ export function undoRewrites(
   if (rewrites.length === 0) return text;
   const back = new Map(rewrites.map((rewrite) => [rewrite.to, rewrite.from]));
   return text.replace(
-    /((?:\bimport|\bexport)\s+(?:type\s+)?(?:[^'";\s][^'";]*?\sfrom\s+)?|\brequire\(\s*|\bimport\(\s*)(['"])([^'"\n]+)\2/g,
+    IMPORT_LITERAL,
     (whole, prefix: string, quote: string, specifier: string) => {
       const from = back.get(specifier);
       return from === undefined ? whole : `${prefix}${quote}${from}${quote}`;

@@ -27,13 +27,15 @@ their source. Entry points are files or directories relative to the root.
 ## 1. Plan
 
 ```sh
-carveout plan <entry>... [--depth N] [--max-files N]
+carveout plan <entry>... [--depth N] [--max-files N] [--with-tests]
 ```
 
 It reads the import graph and runs nothing. It prints:
 
 - the files the slice holds, each with its depth from the entry points;
-- the modules that are cut (these become stubs and mocks);
+- the files the file budget left out, when it ran out;
+- the modules that are cut (these become stubs and mocks), marked
+  `types only` when the slice imports nothing else from them;
 - the files outside the slice that import it;
 - the packages it imports, with the repository's own packages marked;
 - the services and environment variables it reads;
@@ -47,13 +49,23 @@ The defaults are depth 3 and 40 files. Choose the budget with the person:
   usually enough for one change.
 - More depth means more real code and fewer mocks.
 
-Being at the file limit means the walk was cut short. Raise `--max-files`,
-or narrow the entry points. `--json` gives the same report as data.
+Depth counts imports of code. Going through a barrel's re-export does not
+add depth, and only the module that declares an imported name comes along,
+not the barrel's other modules. A module the slice imports only types from
+is always cut to a stub.
+
+When the file limit is reached, the plan lists the files it left out. Raise
+`--max-files`, or narrow the entry points. `--json` gives the same report as
+data.
+
+`--with-tests` also brings the test files outside the slice that import it
+(`*.test.*`, `*.spec.*`, `__tests__/`), when they run on `node:test` or
+Vitest. The plan lists tests on other runners as left behind.
 
 ## 2. Cut
 
 ```sh
-carveout cut <entry>... --out <empty folder> [--depth N] [--max-files N]
+carveout cut <entry>... --out <empty folder> [--depth N] [--max-files N] [--with-tests]
 ```
 
 What the folder holds:
@@ -82,7 +94,12 @@ The rest of the cut's behaviour:
 
 - **Imports.** Path aliases, workspace package imports and bundler-style
   extensionless imports are rewritten to the relative paths Node resolves.
+  So are modules named to `vi.mock`, `jest.mock` and `require.resolve`.
   Each rewrite is recorded so `patch` can undo it.
+- **Files read by path.** A file the slice reads with
+  `new URL("./x", import.meta.url)` or `join(__dirname, "x")` is copied.
+  A folder read that way, or such a file outside the budget, is a
+  `path_read` blocker.
 - **Credentials.** The cut refuses a credentials file, and blocks on any
   credential it finds in what it writes. Neither is ever copied.
 - **Network.** The cut reads package types from the public registry and
@@ -102,8 +119,12 @@ carveout check <folder>
 ```
 
 It runs `npm ci`, `npm run build` and `npm test` in a scratch copy of the
-folder, and exits 0 only when all three pass. The test imports every module
-that outside code imports from the slice, with the mocks in place. When a
+folder, and exits 0 only when all three pass. The interface test imports
+every module that outside code imports from the slice, with the mocks in
+place. With `--with-tests`, `npm test` then runs the slice's own tests: the
+`node:test` ones with Node, the Vitest ones with `vitest run`. If Vitest
+was mocked (no lockfile), the cut reports `test_runner_mocked`; cut again
+with `--install vitest`. When a
 package is missing at runtime, the check says which `--install` to cut again
 with. Report the result to the person as it is. A failed step is not "mostly
 working".

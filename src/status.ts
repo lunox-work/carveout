@@ -126,6 +126,7 @@ export async function statusProject(
       choices: request.choices,
       offline: request.offline,
       widenLiterals: request.widenLiterals,
+      tests: request.tests === true,
     });
   } catch (error) {
     return {

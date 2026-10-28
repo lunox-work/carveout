@@ -29,6 +29,7 @@ export const SLICE_BLOCKER_CODES = [
   "unknown_entry_point",
   "unresolved_import",
   "dynamic_dependency",
+  "path_read",
   "missing_build_input",
   "no_extractor",
   "declaration_incomplete",
@@ -39,7 +40,8 @@ export type SliceBlockerCode = (typeof SLICE_BLOCKER_CODES)[number];
 
 /**
  * The blockers a contributor meets in the code itself: an import that
- * resolves to no file, a dynamic import of a computed name. Every other
+ * resolves to no file, a dynamic import of a computed name, a path read at
+ * runtime the folder will not have. Every other
  * code is the slicer's own build falling short (a compile error in its
  * fixture, a configuration it could not read, a language it cannot
  * extract), which says how well the code was measured, not how hard the
@@ -48,6 +50,7 @@ export type SliceBlockerCode = (typeof SLICE_BLOCKER_CODES)[number];
 export const WORK_BLOCKER_CODES: readonly SliceBlockerCode[] = [
   "unresolved_import",
   "dynamic_dependency",
+  "path_read",
 ];
 
 const WORK_BLOCKERS: ReadonlySet<SliceBlockerCode> = new Set(

@@ -82,7 +82,7 @@ const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const UNRESOLVED_MODULE_CODES: readonly string[] = ["TS2307", "TS2792"];
 
 const edgeKey = (edge: CutEdge) =>
-  `${edge.from}\n${edge.to}\n${edge.relation}\n${edge.specifier ?? ""}\n${edge.location ?? ""}\n${edge.targetSymbol ?? ""}`;
+  `${edge.from}\n${edge.to}\n${edge.relation}\n${edge.specifier ?? ""}\n${edge.location ?? ""}`;
 
 /** Edges in `reach`'s order, each once. */
 function sortEdges(edges: readonly CutEdge[]): CutEdge[] {
@@ -232,7 +232,7 @@ async function readIncluded(
 }
 
 function namesOnly(
-  edges: readonly { to: string; from: string; targetSymbol: string | null }[],
+  edges: readonly { to: string; from: string }[],
   side: "to" | "from",
 ): BoundaryModule[] {
   const modules = new Map<
@@ -246,8 +246,6 @@ function namesOnly(
       symbols: new Set(),
       importedBy: new Set(),
     };
-    if (edge.targetSymbol !== null)
-      entry.symbols.add(edge.targetSymbol.replace(/\(\)$/, ""));
     entry.importedBy.add(by);
     modules.set(module, entry);
   }
@@ -307,7 +305,7 @@ export async function analyseSlice(input: {
   const { params, graph } = input;
   input.signal.throwIfAborted();
   const walk = reach(graph, params.entryPoints, params.budget, {
-    includeInferred: params.includeInferred,
+    tests: params.tests,
   });
   input.log(
     `Slice reached ${walk.included.length} files with ${walk.cuts.outbound.length} outbound and ${walk.cuts.inbound.length} inbound cuts.`,
@@ -379,15 +377,28 @@ export async function analyseSlice(input: {
         code:
           dependency.status === "dynamic"
             ? "dynamic_dependency"
-            : "unresolved_import",
+            : dependency.status === "path"
+              ? "path_read"
+              : "unresolved_import",
         file: dependency.file,
         location: dependency.location,
         detail:
           dependency.status === "dynamic"
             ? "A dynamic import of a computed name cannot be resolved."
-            : `${dependency.specifier ?? ""} does not resolve to a repository file.`,
+            : dependency.status === "path"
+              ? `${dependency.specifier ?? ""} is read by path, and is a folder or a kind of file a slice does not copy.`
+              : `${dependency.specifier ?? ""} does not resolve to a repository file.`,
       });
   }
+  // A file read by path must be there itself; a stub at its path is not it.
+  for (const edge of walk.cuts.outbound)
+    if (edge.relation === "reads")
+      blockers.push({
+        code: "path_read",
+        file: edge.from,
+        location: edge.location,
+        detail: `${edge.to} is read by path and is outside the slice; raise --depth or add it as an entry point.`,
+      });
   let language: BoundaryContract["language"] = "none";
   let extractorVersion: string | null = null;
   let outbound: BoundaryModule[];

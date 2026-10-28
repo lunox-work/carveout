@@ -3,7 +3,7 @@
  * written in, so two cuts of the same bytes give the same files.
  */
 
-export const SLICE_TOOL_VERSION = "carveout-slice@1";
+export const SLICE_TOOL_VERSION = "carveout-slice@2";
 
 export interface SliceBudget {
   /** Files inside the slice; the first file past it on any path is a cut. */
@@ -18,8 +18,8 @@ export interface SliceParams {
   /** Repository-relative file or directory paths, sorted and unique. */
   readonly entryPoints: readonly string[];
   readonly budget: SliceBudget;
-  /** Kept for the manifest's shape; the import graph has no inferred edges. */
-  readonly includeInferred: boolean;
+  /** Also bring along the tests outside the slice that import it. */
+  readonly tests: boolean;
 }
 
 export function canonicalJson(value: unknown): string {

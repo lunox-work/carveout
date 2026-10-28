@@ -91,11 +91,15 @@ export function isScriptPath(path: string): boolean {
   return /\.[cm]?[jt]sx?$/.test(path);
 }
 /**
- * Files a script imports as data (`import data from "./data.json"`). They
- * ride along in a TypeScript slice; code in any other language does not.
+ * Files a script imports as data (`import data from "./data.json"`) or
+ * reads by path (a query, a schema, a template). They ride along in a
+ * TypeScript slice; code in any other language does not.
  */
 export function isDataPath(path: string): boolean {
-  return /\.(json|jsonc|ya?ml)$/.test(path) || isAssetPath(path);
+  return (
+    /\.(json|jsonc|ya?ml|toml|csv|xml|sql|graphql|gql|prisma)$/.test(path) ||
+    isAssetPath(path)
+  );
 }
 export function isNodeBuiltin(specifier: string): boolean {
   if (specifier.startsWith("node:")) return true;
@@ -1254,7 +1258,7 @@ export function extractTypeScriptBoundary(
             relation: "imports",
             specifier: fact.specifier,
             location: `L${fact.line}`,
-            targetSymbol: null,
+            typeOnly: false,
           });
       } else if ("package" in target) recordPackage(fact.specifier, file);
       else if ("unresolved" in target)
@@ -1266,17 +1270,11 @@ export function extractTypeScriptBoundary(
         });
     }
   }
-  // A graph edge without a matching import (a call the graph inferred) still
-  // names a module the slice touches; its symbols are listed by name.
+  // A graph link without a matching import (a module named to `vi.mock`,
+  // a file read by path) still names a module the slice touches, whole.
   for (const edge of input.outbound)
     if (!requests.has(edge.to) && isScriptPath(edge.to))
-      asks(
-        edge.to,
-        edge.targetSymbol === null
-          ? ALL
-          : new Set([edge.targetSymbol.replace(/\(\)$/, "")]),
-        edge.from,
-      );
+      asks(edge.to, ALL, edge.from);
   // Imports from outside files decide the public surface.
   for (const by of new Set(input.inbound.map((edge) => edge.from))) {
     if (!isScriptPath(by)) continue;
@@ -1290,14 +1288,7 @@ export function extractTypeScriptBoundary(
   }
   for (const edge of input.inbound)
     if (!surface.has(edge.to) && isScriptPath(edge.to))
-      merge(
-        surface,
-        edge.to,
-        edge.targetSymbol === null
-          ? ALL
-          : new Set([edge.targetSymbol.replace(/\(\)$/, "")]),
-        edge.from,
-      );
+      merge(surface, edge.to, ALL, edge.from);
   const emitted = new Map<string, string | null>();
   const emit = (module: string): string | null => {
     const cached = emitted.get(module);

@@ -34,6 +34,7 @@ import {
   type PathClass,
   type ResolvedDependency,
 } from "./provenance.js";
+import { isTestPath, testRunnerOf } from "../slice/reach.js";
 import { scanSecrets, secretBlockers } from "./secrets.js";
 
 export const HARNESS_DIR = "carveout";
@@ -226,7 +227,8 @@ export interface ProjectBlocker {
     | "language_unsupported"
     | "mock_unsupported"
     | "path_conflict"
-    | "secret_found";
+    | "secret_found"
+    | "test_runner_mocked";
   readonly file: string | null;
   readonly detail: string;
 }
@@ -276,8 +278,14 @@ export function runtimeKindOf(
   if (/^export\s+(default\s+|\{)/.test(declaration)) return "value";
   return "unknown";
 }
-const IMPORT_LITERAL =
-  /((?:\bimport|\bexport)\s+(?:type\s+)?(?:[^'";\s][^'";]*?\sfrom\s+)?|\brequire\(\s*|\bimport\(\s*)(['"])([^'"\n]+)\2/g;
+/**
+ * A module specifier as a source writes it: in an import or re-export, a
+ * `require` or `import()`, or a call that names a module to a test runner
+ * or a resolver (`vi.mock`, `jest.requireActual`, `require.resolve`).
+ * Rewrites and their undoing both match with it.
+ */
+export const IMPORT_LITERAL =
+  /((?:\bimport|\bexport)\s+(?:type\s+)?(?:[^'";\s][^'";]*?\sfrom\s+)?|\brequire\(\s*|\bimport\(\s*|\b(?:vi|jest)\.(?:mock|doMock|unmock|doUnmock|dontMock|importActual|importMock|requireActual|requireMock|createMockFromModule)\(\s*|\brequire\.resolve\(\s*|\bimport\.meta\.resolve\(\s*)(['"])([^'"\n]+)\2/g;
 const NAMED_IMPORT =
   /\bimport\s+(type\s+)?(?:[\w$]+\s*,\s*)?\{([^}]*)\}\s*from\s*['"]([^'"\n]+)['"]/g;
 
@@ -1194,7 +1202,8 @@ export function generateProject(input: ProjectInput): GeneratedProject {
     public: true,
   });
 
-  // Tests.
+  // Tests: the interface test, then, when the cut brought them along, the
+  // slice's own tests, each on the runner it imports.
   const tests = [`${TESTS_DIR}/interface.test.ts`];
   add({
     path: tests[0] ?? "",
@@ -1202,6 +1211,41 @@ export function generateProject(input: ProjectInput): GeneratedProject {
     class: "test-public",
     public: true,
   });
+  const nodeTests: string[] = [];
+  const vitestTests: string[] = [];
+  if (input.manifest.params.tests)
+    for (const source of input.sources) {
+      if (!isScript(source.path) || !isTestPath(source.originalPath)) continue;
+      const runner = testRunnerOf(
+        [...source.text.matchAll(IMPORT_LITERAL)].map((match) => match[3] ?? ""),
+      );
+      if (runner === "node") nodeTests.push(runtimePath(source.path));
+      else if (runner === "vitest") vitestTests.push(source.path);
+      else continue;
+      tests.push(source.path);
+    }
+  // A mocked Vitest runs nothing; say so rather than fail the check on it.
+  const vitestInstalled = input.dependencies.some(
+    (dependency) =>
+      dependency.name === "vitest" && dependency.resolution === "approved-package",
+  );
+  if (vitestTests.length > 0 && !vitestInstalled) {
+    blockers.push({
+      code: "test_runner_mocked",
+      file: null,
+      detail: `vitest is not installed, so ${vitestTests.length} Vitest test file(s) do not run; cut again with --install vitest.`,
+    });
+    vitestTests.length = 0;
+  }
+  const scripts = {
+    ...SANDBOX_SCRIPTS,
+    test: [
+      `npm run build && ${commandLine([...SANDBOX_RUN_ARGV.test, ...nodeTests.sort(compare)])}`,
+      ...(vitestTests.length === 0
+        ? []
+        : [`vitest run ${vitestTests.sort(compare).join(" ")}`]),
+    ].join(" && "),
+  };
 
   // Configuration.
   const environment = input.manifest.externals.environment.map(
@@ -1216,7 +1260,7 @@ export function generateProject(input: ProjectInput): GeneratedProject {
         private: true,
         type: "module",
         engines: { node: toolchain.nodeRange },
-        scripts: SANDBOX_SCRIPTS,
+        scripts,
         dependencies,
         devDependencies: { typescript: toolchain.typescript },
       },

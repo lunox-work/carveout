@@ -32,5 +32,5 @@ What to tell them, accurately:
   `--widen-literals` removes them. Neither option hides the slice's own
   source, so do not hand the folder to someone who should not read it.
 - `carveout check` passing means the folder installs, builds and loads every
-  export outside code uses. It does not mean the slice's behaviour is
-  tested.
+  export outside code uses. It tests the slice's behaviour only when the cut
+  was made with `--with-tests`, and then only as far as those tests go.

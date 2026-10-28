@@ -22,12 +22,13 @@ import { statusProject } from "./status.js";
 
 const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript repository.
 
-  carveout plan  <entry>... [--repo <dir>] [--max-files N] [--depth N] [--json]
+  carveout plan  <entry>... [--repo <dir>] [--max-files N] [--depth N]
+                 [--with-tests] [--json]
       What a cut would hold, from the import graph alone. Writes nothing.
 
   carveout cut   <entry>... --out <dir> [--repo <dir>] [--max-files N] [--depth N]
-                 [--mock <package>]... [--install <package>]... [--offline]
-                 [--widen-literals] [--json]
+                 [--with-tests] [--mock <package>]... [--install <package>]...
+                 [--offline] [--widen-literals] [--json]
       Copies the slice to <dir> at its repository paths, with a .d.ts stub and a
       recording mock for every module it imports from outside, mock packages for
       what it does not install, package.json, tsconfig.json and a lockfile.
@@ -93,6 +94,7 @@ async function main(argv: readonly string[]) {
       install: { type: "string", multiple: true },
       offline: { type: "boolean" },
       "widen-literals": { type: "boolean" },
+      "with-tests": { type: "boolean" },
       "in-place": { type: "boolean" },
       json: { type: "boolean" },
     },
@@ -116,7 +118,12 @@ async function main(argv: readonly string[]) {
 
     case "plan": {
       if (positionals.length === 0) fail("plan needs at least one entry point.");
-      const plan = planSlice({ repo, entryPoints: positionals, budget });
+      const plan = planSlice({
+        repo,
+        entryPoints: positionals,
+        budget,
+        tests: values["with-tests"] === true,
+      });
       if (values.json === true) {
         print({
           repo: plan.repo,
@@ -125,7 +132,11 @@ async function main(argv: readonly string[]) {
           budget: plan.budget,
           included: plan.walk.included,
           depthOf: plan.walk.depthOf,
+          dropped: plan.walk.dropped,
+          tests: plan.walk.tests,
+          untestable: plan.walk.untestable,
           cutModules: plan.cutModules,
+          typeOnlyCuts: plan.typeOnlyCuts,
           inbound: [...new Set(plan.walk.cuts.inbound.map((e) => e.from))].sort(),
           packages: plan.packages,
           workspacePackages: plan.workspacePackages,
@@ -137,12 +148,15 @@ async function main(argv: readonly string[]) {
         });
         return;
       }
-      const atLimit = plan.walk.included.length >= plan.budget.maxFiles;
+      const atLimit = plan.walk.dropped.length > 0;
       const importers = [
         ...new Set(plan.walk.cuts.inbound.map((edge) => edge.from)),
       ].sort();
       const broken = plan.walk.dependencies.filter(
         (dependency) => dependency.status !== "external",
+      );
+      const readsCut = plan.walk.cuts.outbound.filter(
+        (edge) => edge.relation === "reads",
       );
       process.stdout.write(
         [
@@ -155,8 +169,33 @@ async function main(argv: readonly string[]) {
             ),
           ),
           "",
+          ...(atLimit
+            ? [
+                "Left out by the file limit, cut instead:",
+                list(plan.walk.dropped),
+                "",
+              ]
+            : []),
+          ...(plan.walk.tests.length + plan.walk.untestable.length === 0
+            ? []
+            : [
+                "Tests brought along:",
+                list(plan.walk.tests),
+                ...(plan.walk.untestable.length === 0
+                  ? []
+                  : [
+                      "",
+                      "Tests left behind (they run on neither node:test nor Vitest):",
+                      list(plan.walk.untestable),
+                    ]),
+                "",
+              ]),
           "Cut, becomes a stub and a mock:",
-          list(plan.cutModules),
+          list(
+            plan.cutModules.map((path) =>
+              plan.typeOnlyCuts.includes(path) ? `${path} (types only)` : path,
+            ),
+          ),
           "",
           "Imported by code outside the slice:",
           list(importers),
@@ -179,6 +218,7 @@ async function main(argv: readonly string[]) {
           ]),
           ...(plan.walk.unknownEntryPoints.length +
             broken.length +
+            readsCut.length +
             plan.secretFiles.length ===
           0
             ? []
@@ -191,7 +231,11 @@ async function main(argv: readonly string[]) {
                   ),
                   ...broken.map(
                     (dependency) =>
-                      `${dependency.file}${dependency.location === null ? "" : `:${dependency.location.slice(1)}`}: ${dependency.status === "dynamic" ? "dynamic import of a computed name" : `${dependency.specifier ?? ""} resolves to no file`}`,
+                      `${dependency.file}${dependency.location === null ? "" : `:${dependency.location.slice(1)}`}: ${dependency.status === "dynamic" ? "dynamic import of a computed name" : dependency.status === "path" ? `reads ${dependency.specifier ?? ""} by path, which a slice cannot copy` : `${dependency.specifier ?? ""} resolves to no file`}`,
+                  ),
+                  ...readsCut.map(
+                    (edge) =>
+                      `${edge.from}${edge.location === null ? "" : `:${edge.location.slice(1)}`}: reads ${edge.to} by path, and it is outside the slice`,
                   ),
                   ...plan.secretFiles.map(
                     (path) => `${path}: a credentials file is never copied`,
@@ -220,6 +264,7 @@ async function main(argv: readonly string[]) {
         entryPoints: positionals,
         budget,
         choices,
+        ...(values["with-tests"] === true ? { tests: true } : {}),
         ...(values.offline === true ? { offline: true } : {}),
         ...(values["widen-literals"] === true ? { widenLiterals: true } : {}),
         log: (line) => {
