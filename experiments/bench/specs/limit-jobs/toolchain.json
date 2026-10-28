@@ -1,0 +1,29 @@
+{
+  "name": "repo",
+  "repo": "../sandbox-factory",
+  "base": "03d1437ee2c28fe191fd578aa6002c8ead348850",
+  "package": "apps/worker",
+  "packageManager": "npm@10.9.2",
+  "buildFirst": [
+    "packages/core",
+    "packages/db",
+    "packages/shared",
+    "packages/github"
+  ],
+  "runner": "node-test",
+  "rootDir": ".",
+  "outDir": "dist-test",
+  "testDir": "apps/worker/test",
+  "testPattern": "*.test.ts",
+  "build": "tsc -p tsconfig.test.json",
+  "hiddenDir": "apps/worker/test/hidden-limit-jobs-confirmed",
+  "seam": [
+    "apps/worker/src/evaluation/limit.ts"
+  ],
+  "allowedPaths": [
+    "apps/worker/src/evaluation/limit.ts"
+  ],
+  "examples": [
+    "apps/worker/test/local-process.test.ts"
+  ]
+}

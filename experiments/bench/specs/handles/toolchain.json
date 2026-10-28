@@ -1,0 +1,24 @@
+{
+  "name": "repo",
+  "repo": "../sandbox-factory",
+  "base": "7b323763e764cc4a14e13c24ad0f3a88822174a1",
+  "package": "packages/core",
+  "packageManager": "npm@10.9.2",
+  "buildFirst": [],
+  "runner": "node-test",
+  "rootDir": ".",
+  "outDir": "dist-test",
+  "testDir": "packages/core/test",
+  "testPattern": "*.test.ts",
+  "build": "tsc -p tsconfig.test.json",
+  "hiddenDir": "packages/core/test/hidden-handles-confirmed",
+  "seam": [
+    "packages/core/src/handle.ts"
+  ],
+  "allowedPaths": [
+    "packages/core/src/"
+  ],
+  "examples": [
+    "packages/core/test/index.test.ts"
+  ]
+}

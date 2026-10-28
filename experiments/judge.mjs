@@ -118,7 +118,9 @@ export function judge(clone, pkg, { importers = false } = {}) {
   const functionalScript = script
     .replace(/\s--experimental-test-coverage/g, "")
     .replace(/\s--test-coverage-\S+/g, "")
-    .replace(/\s>\s*dist-test\/coverage\.txt[\s\S]*$/, "");
+    .replace(/\s>\s*dist-test\/coverage\.txt[\s\S]*$/, "")
+    // Hidden suites sit in a folder of their own under test/.
+    .replace(/(\s)dist-test\/test\/\*\.test\.js/, "$1'dist-test/test/**/*.test.js'");
   const bin = `${join(clone, pkg, "node_modules", ".bin")}:${join(clone, "node_modules", ".bin")}:${process.env.PATH}`;
   const functional = shell(join(clone, pkg), functionalScript, { env: { ...MEMORY, PATH: bin } });
   const gate = shell(join(clone, pkg), "npm test --silent");

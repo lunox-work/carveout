@@ -120,10 +120,16 @@ Reuse duediligence's session runner rather than writing a new one:
 from `duediligence/experiments/bin/lib.mjs`. Copy them; the two repositories
 are independent.
 
-- **Case.** `{ repo, base, commit, ticket, seam, hiddenTests, package,
-allowed }`. The ticket is the commit message, as in duediligence's
-  in-repo cases. `hiddenTests` are the commit's added or changed test
-  files.
+- **Case.** `{ repo, commit, package, seam }` in `e5-cases.json`, plus,
+  from duediligence's in-repo evidence (`bench/specs/<slug>/`):
+
+  - the developer-confirmed spec, which is the brief;
+  - its toolchain, which gives the allowed paths and the hidden folder;
+  - its calibrated hidden suite, which is the judge.
+
+  _Changed after the pilot_ (see Phase 4). The plan first briefed the
+  commit message and judged with the commit's own tests.
+
 - **Arms.**
 
   | arm          | the agent works in                                                                             | entries                                                     |
@@ -177,10 +183,36 @@ that can't merge, hitting coverage gates, or a harness that leaks. Each
 finding goes back to Phase 1 or 3. Repeat until a pilot round turns up
 nothing new.
 
+**Findings (2026-10-29).** Three rounds, on handles, jira-spec and
+categories (identicon in the first).
+
+1. **The ticket against the commit's tests: 0 of 12 accepted in either
+   arm.** The commit's tests assert what the ticket never says:
+
+   - exact messages;
+   - a module the ticket does not name (`adf.ts`);
+   - a dozen exports beyond the interface.
+
+   This is duediligence's finding again: a spec has to be confirmed before
+   it can judge. So the brief became the confirmed spec, and the judge its
+   calibrated hidden suite, on which duediligence's Haiku passes 5 of 5 in
+   every case.
+
+2. **An in-slice judge defect.** Applied alone at B, a hidden test of a
+   module the change adds was left behind as unresolved, and the agent's
+   own test ran in its place. The in-slice verdict now applies the change
+   and the hidden suite as one patch.
+3. **Third round: 12 of 12 accepted, and the in-slice verdict agrees 6 of 6.** There were no boundary edits, no peeks, and no file outside scope.
+   Slice agents read `BOUNDARY.md` and `carveout/test.js`, and two of six
+   read `carveout.json` (up to 18 KB). That overhead is small, so nothing
+   changed for it.
+
 ## Phase 5: E6 (pre-registered, model)
 
-- **Size.** At least 30 usable cases from E5, × `full`, `slice-seam` and
-  `slice-diff` × 3 runs, on Haiku 5.5. Re-run a subset of 10 cases × 2 arms
+- **Size.** At least 30 usable cases, × `full`, `slice-seam` and
+  `slice-diff` × 3 runs, on Haiku 5.5. A usable case has a confirmed spec
+  whose calibration passed, and a seam slice that builds at B.
+  duediligence has 11 such cases today (decision 5). Re-run a subset of 10 cases × 2 arms
   × 3 runs on Sonnet 5.5, to check that the result isn't specific to one
   model.
 - **Correctness bars:**
@@ -235,6 +267,15 @@ its entries.
 4. **Conventions in the slice (M8).** Carrying `AGENTS.md` and the coverage
    gate makes the slice more honest, but also bigger. Recommended: carry
    them, and record the token cost.
+
+5. **Cases for E6.** There are 11 confirmed specs, against a bar of 30.
+
+   - _Grow to 30_ with duediligence's `in-repo.mjs discover`/`add`/`prepare`
+     on sandbox-factory (and command-center). This costs more sessions,
+     and someone has to stand in as the confirming developer.
+   - _Run 11 × 5 runs_ and amend the size before any E6 data exists.
+
+   Recommended: run 11 × 5 now, as E6a, and grow the corpus for E6b.
 
 ## Order
 

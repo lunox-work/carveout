@@ -1,0 +1,113 @@
+{
+  "slug": "step-holds-confirmed",
+  "status": "ok",
+  "reason": null,
+  "publicIds": [
+    "test/step-holds-confirmed.test.ts :: [happy-1] a price over an approved scope is not held",
+    "test/step-holds-confirmed.test.ts :: [happy-1] a price over a scope approved at a high version is not held",
+    "test/step-holds-confirmed.test.ts :: [unhappy-1] a price over a scope not approved at its version is held by the scope",
+    "test/step-holds-confirmed.test.ts :: [unhappy-1] an approval one version off either way holds the price",
+    "test/step-holds-confirmed.test.ts :: [boundary-1] the price's hold does not read the proposal",
+    "test/step-holds-confirmed.test.ts :: [boundary-1] the price's hold never touches the proposal's status",
+    "test/step-holds-confirmed.test.ts :: [boundary-2] version 0 approved at version 0 is approved",
+    "test/step-holds-confirmed.test.ts :: [boundary-2] version 0 with no approval, or another version's, is not approved",
+    "test/step-holds-confirmed.test.ts :: [happy-2] a sandbox over an approved scope and an approved price is not held",
+    "test/step-holds-confirmed.test.ts :: [happy-2] a sandbox over both approved at a high version is not held",
+    "test/step-holds-confirmed.test.ts :: [unhappy-2] the earliest step not approved holds the sandbox",
+    "test/step-holds-confirmed.test.ts :: [unhappy-2] an approval ahead of the scope holds the sandbox by the scope, whatever the price",
+    "test/step-holds-confirmed.test.ts :: [boundary-3] only the exact status \"approved\" approves the price",
+    "test/step-holds-confirmed.test.ts :: [boundary-3] near misses of \"approved\" leave the sandbox held by the price",
+    "test/step-holds-confirmed.test.ts :: [boundary-4] a price behind the scope does not hold the sandbox once both are approved",
+    "test/step-holds-confirmed.test.ts :: [boundary-4] drifted steps hold neither the price nor the sandbox once approved",
+    "test/step-holds-confirmed.test.ts :: [boundary-5] a whole bounty with extra fields is read for its version and approval only",
+    "test/step-holds-confirmed.test.ts :: [boundary-5] fields beside the version, approval and status do not approve a step",
+    "test/step-holds-confirmed.test.ts :: [happy-3] the functions do not change their arguments",
+    "test/step-holds-confirmed.test.ts :: [happy-3] frozen arguments come back unchanged when nothing is held",
+    "test/step-holds-confirmed.test.ts :: [unhappy-3] a step outside \"price\" and \"sandbox\" waits on the scope only",
+    "test/step-holds-confirmed.test.ts :: [unhappy-3] a step outside \"price\" and \"sandbox\" never reads the proposal",
+    "test/step-holds-confirmed.test.ts :: [happy-4] each hold has its own words",
+    "test/step-holds-confirmed.test.ts :: [happy-4] each reason is one line with no surrounding whitespace, and each differs",
+    "test/step-holds-confirmed.test.ts :: [happy-5] every hold stepHeldBy returns has a reason",
+    "test/step-holds-confirmed.test.ts :: [happy-5] each hold stepHeldBy can return maps to its own reason",
+    "test/step-holds-confirmed.test.ts :: [unhappy-4] a hold that cannot happen is not refused",
+    "test/step-holds-confirmed.test.ts :: [unhappy-4] unknown steps and holders still get one of the three sentences",
+    "test/step-holds-confirmed.test.ts :: [happy-6] scopeApproved and bountyStatus are unchanged",
+    "test/step-holds-confirmed.test.ts :: [happy-6] scopeApproved holds at version 0 and bountyStatus reads only the exact status"
+  ],
+  "publicOnSkeleton": {
+    "passed": 2,
+    "total": 30
+  },
+  "publicFailingOnReference": [],
+  "referenceRegressions": [],
+  "hiddenWritten": 34,
+  "kept": [
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [happy-1] a price over a scope approved at its version is not held, at any version",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [happy-1] a price over an approved scope is not held whatever the proposal is",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [unhappy-1] a price over a scope approved at any other version is held by the scope",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [unhappy-1] an approval at a later version does not approve an earlier scope",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [unhappy-1] a scope at version NaN is never approved",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [unhappy-1] a price over an unapproved scope is held by the scope even with an approved price",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [boundary-1] the price's hold looks at no part of the proposal",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [boundary-1] the price's hold is the same for every proposal",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [boundary-2] the sandbox over a scope at version 0 approved at version 0 waits only on the price",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [boundary-2] an approval at -0 approves a scope at version 0",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [boundary-2] version 0 is not approved by an approval at another version",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [happy-2] a sandbox over both approved is not held, at any version",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [happy-2] a proposal without a prototype that says approved approves the price",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [unhappy-2] the earliest step not approved holds the sandbox, at other versions and statuses",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [unhappy-2] with neither the scope nor the price approved the sandbox is held by the scope",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [unhappy-2] a sandbox over an approved scope and a null proposal is held by the price",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [boundary-3] statuses that only contain or resemble \"approved\" leave the sandbox held by the price",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [boundary-3] the exact status \"approved\" approves the price at any scope version",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [boundary-4] a sandbox behind the price is not held once the scope and the price are approved",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [boundary-4] steps with nothing behind are still held while unapproved",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [boundary-5] fields that say a step is approved do not approve it",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [boundary-5] the bounty's own sandbox and status fields do not hold a step",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [happy-3] stepHeldBy writes nothing to its arguments, for any step or outcome",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [happy-3] frozen arguments give the same answers as unfrozen ones",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [unhappy-3] other strings and non-strings as the step wait on the scope only",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [unhappy-3] a step outside \"price\" and \"sandbox\" looks at no part of the proposal",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [happy-6] scopeApproved is unchanged and the price is held exactly when it is false",
+    "test/hidden-step-holds-confirmed/step-held-by.test.ts :: [happy-6] bountyStatus is unchanged where the sandbox is held by the scope",
+    "test/hidden-step-holds-confirmed/step-held-reason.test.ts :: [happy-4] each hold has its own words, whatever order they are asked in",
+    "test/hidden-step-holds-confirmed/step-held-reason.test.ts :: [happy-4] the sandbox's reason depends on the step holding it",
+    "test/hidden-step-holds-confirmed/step-held-reason.test.ts :: [happy-5] every hold stepHeldBy returns over a grid has the reason for it",
+    "test/hidden-step-holds-confirmed/step-held-reason.test.ts :: [unhappy-4] a step that only resembles \"price\" does not get the price's sentence",
+    "test/hidden-step-holds-confirmed/step-held-reason.test.ts :: [unhappy-4] only the exact holder \"scope\" gives a step other than the price the scope-and-price sentence",
+    "test/hidden-step-holds-confirmed/step-held-reason.test.ts :: [unhappy-4] a step or holder that is not a string is not refused"
+  ],
+  "dropped": [],
+  "reference": {
+    "public": {
+      "passed": 30,
+      "total": 30
+    },
+    "hidden": {
+      "passed": 34,
+      "total": 34
+    },
+    "touchedOutsideSrc": [],
+    "removed": [],
+    "existing": {
+      "passed": 248,
+      "total": 248
+    },
+    "notes": "I implemented both functions in `packages/core/src/stages.ts`, and all tests pass: 30/30 in `step-holds-confirmed.*`, 34/34 in `hidden-step-holds-confirmed/`, and 312/312 in the whole package. `npm test`, which also checks coverage, passes too, with `stages.js` fully covered.\n\n- **`stepHeldBy`**:\n  - It returns `\"scope\"` if the scope isn't approved, using the existing `scopeApproved` check.\n  - If the step is anything other than `\"sandbox\"`, it then returns `null` without looking at the proposal. That covers `\"price\"` and any unexpected value.\n  - For the sandbox, it returns `null` only when the proposal's status is exactly `\"approved\"`, and `\"price\"` otherwise.\n- **`stepHeldReason`**: a step of `\"price\"` always gets the price sentence. Any other step gets the scope-and-price sentence when `heldBy` is `\"scope\"`, and the price-before-sandbox sentence otherwise. It never throws.\n\nI also rewrote the comment at the top of `stages.ts`, which said \"The steps are not locked to each other\". That is no longer true, so it now says a step waits for the steps before it to be approved, but going back never does. No other exports changed, and both new functions reach `index.ts` through the existing `export *`.\n\nTests left failing: none",
+    "sessions": [
+      {
+        "sessionId": "1d352a0b-803d-4878-b2f1-faf2af74112d",
+        "model": "claude-opus-5-5",
+        "ok": true,
+        "exitCode": 0,
+        "timedOut": false,
+        "costUsd": 0.1871236,
+        "turns": 5,
+        "durationMs": 28857,
+        "subtype": "success",
+        "apiError": null
+      }
+    ],
+    "costUsd": 0.1871236
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "name": "repo",
+  "repo": "../sandbox-factory",
+  "base": "03d1437ee2c28fe191fd578aa6002c8ead348850",
+  "package": "apps/api",
+  "packageManager": "npm@10.9.2",
+  "buildFirst": [
+    "packages/core",
+    "packages/db",
+    "packages/shared",
+    "packages/github",
+    "packages/jira"
+  ],
+  "runner": "node-test",
+  "rootDir": ".",
+  "outDir": "dist-test",
+  "testDir": "apps/api/test",
+  "testPattern": "*.test.ts",
+  "build": "tsc -p tsconfig.test.json",
+  "hiddenDir": "apps/api/test/hidden-recent-reads-confirmed",
+  "seam": [
+    "apps/api/src/jira/recent.ts"
+  ],
+  "allowedPaths": [
+    "apps/api/src/jira/recent.ts"
+  ],
+  "examples": [
+    "apps/api/test/agent-routes.test.ts",
+    "apps/api/test/analysis-enqueue.test.ts"
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "name": "repo",
+  "repo": "../sandbox-factory",
+  "base": "e09b2e5fce7e46af8ba4915b0e26e3d45cb811e0",
+  "package": "apps/web",
+  "packageManager": "npm@10.9.2",
+  "buildFirst": [
+    "packages/core",
+    "packages/shared",
+    "packages/client"
+  ],
+  "runner": "vitest",
+  "testDir": "apps/web/test",
+  "testPattern": "*.test.{ts,tsx}",
+  "build": "tsc -p tsconfig.test.json --noEmit",
+  "hiddenDir": "apps/web/test/hidden-setup-stage-confirmed",
+  "seam": [
+    "apps/web/src/features/onboarding/setup.ts"
+  ],
+  "allowedPaths": [
+    "apps/web/src/features/onboarding/setup.ts"
+  ],
+  "examples": [
+    "apps/web/test/account.test.tsx",
+    "apps/web/test/analysis-labels.test.ts"
+  ]
+}

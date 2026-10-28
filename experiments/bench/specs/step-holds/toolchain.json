@@ -1,0 +1,26 @@
+{
+  "name": "repo",
+  "repo": "../sandbox-factory",
+  "base": "23708b8e6c2f1f4ba22f80756205f1eb0c1cd759",
+  "package": "packages/core",
+  "packageManager": "npm@10.9.2",
+  "buildFirst": [],
+  "runner": "node-test",
+  "rootDir": ".",
+  "outDir": "dist-test",
+  "testDir": "packages/core/test",
+  "testPattern": "*.test.ts",
+  "build": "tsc -p tsconfig.test.json",
+  "hiddenDir": "packages/core/test/hidden-step-holds-confirmed",
+  "seam": [
+    "packages/core/src/stages.ts"
+  ],
+  "allowedPaths": [
+    "packages/core/src/"
+  ],
+  "examples": [
+    "packages/core/test/stages.test.ts",
+    "packages/core/test/analysis.test.ts",
+    "packages/core/test/bounty.test.ts"
+  ]
+}
