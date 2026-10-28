@@ -95,7 +95,7 @@ are found by name first, and the compiler confirms each one.
 | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
 | `carveout plan <entry>...`               | Lists the files, cuts, importers, packages, environment and blockers. Writes nothing.                          |
 | `carveout cut <entry>... --out <dir>`    | Writes the folder. Exits 2 if it was written with blockers.                                                    |
-| `carveout check <dir>`                   | Runs `npm ci`, `npm run build` and `npm test` in a scratch copy.                                               |
+| `carveout check <dir>`                   | Runs `npm ci`, `npm run build` and `npm test` in a scratch copy; records the tests that fail on the mocks.     |
 | `carveout status <dir>`                  | Says whether a cut now would write the same folder, and names what changed. Exits 4 if stale.                  |
 | `carveout patch <dir>`                   | Prints the edits as a patch for the repository (`--output <file>`), with full blob ids for `git apply --3way`. |
 | `carveout merge <dir> --into <checkout>` | Patches, applies with `--3way` in the checkout you name, and runs `--verify <cmd>` there.                      |
