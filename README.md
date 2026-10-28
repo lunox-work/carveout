@@ -59,7 +59,8 @@ billing-slice/
   under Node.
 - **The repository's checks.** The compiler options that only reject
   code (`strict`, `noUnusedLocals` and the like) come from the
-  repository's tsconfig. Node's types come at the repository's version.
+  repository's tsconfig. `noImplicitAny` too, unless the slice does not
+  compile under it with its stubs and untyped packages, which the cut says. Node's types come at the repository's version.
   When the package's own test sets coverage thresholds, `npm test` holds
   the source files you add to them.
 - **Credentials.** A credentials file is never copied, and a credential

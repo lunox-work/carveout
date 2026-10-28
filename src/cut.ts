@@ -270,6 +270,11 @@ export interface SliceAnalysis {
   readonly contractJson: string;
   readonly stubs: readonly { path: string; module: string; text: string }[];
   readonly ready: boolean;
+  /**
+   * Whether the slice compiles with the source's noImplicitAny, so the
+   * folder can hold its code to it; false when the source has it off.
+   */
+  readonly keepsImplicitAny: boolean;
 }
 
 /**
@@ -405,6 +410,7 @@ export async function analyseSlice(input: {
   let inbound: BoundaryModule[];
   let stubs: readonly { path: string; module: string; text: string }[] = [];
   let configs: string[] = [];
+  let keepsImplicitAny = false;
   let compilation: CompilationResult = {
     attempted: false,
     ok: false,
@@ -609,13 +615,14 @@ export async function analyseSlice(input: {
     const compile = (
       files: ReadonlyMap<string, string>,
       modules: ReadonlyMap<string, string>,
+      relaxed = true,
     ) =>
       compileFixture({
         root: input.sourceDir,
         files,
         compilerOptions: {
           ...boundary.compilerOptions,
-          ...UNTYPED_PACKAGE_OPTIONS,
+          ...(relaxed ? UNTYPED_PACKAGE_OPTIONS : {}),
         },
         shimmedPackages: shimmed.filter((name) => !typed(name)),
         ignoredCodes: UNTYPED_PACKAGE_CODES,
@@ -664,6 +671,27 @@ export async function analyseSlice(input: {
         diagnostics: added,
         untypedPackageErrors: untyped,
       };
+    }
+    // The folder keeps the source's noImplicitAny when the slice compiles
+    // under it with its stubs and untyped packages; otherwise the folder
+    // relaxes it, and the record says so.
+    const options = boundary.compilerOptions as Record<string, unknown>;
+    const sourceImplicitAny =
+      options["noImplicitAny"] === true ||
+      (options["noImplicitAny"] === undefined && options["strict"] === true);
+    if (sourceImplicitAny && compilation.ok) {
+      // TS7xxx: the implicit-any family.
+      const implicit = compile(fixture, stubModules, false).diagnostics.filter(
+        ({ code }) => /^(TS)?7\d{3}$/.test(String(code)),
+      );
+      keepsImplicitAny = implicit.length === 0;
+      if (!keepsImplicitAny)
+        input.log(
+          `noImplicitAny is relaxed in the folder: ${implicit.length} implicit any with the stubs (${implicit
+            .slice(0, 3)
+            .map((d) => `${d.file ?? ""}:${d.line ?? ""} ${d.code}`)
+            .join(", ")}).`,
+        );
     }
     compilation = {
       ...compilation,
@@ -808,5 +836,6 @@ export async function analyseSlice(input: {
     contractJson,
     stubs,
     ready: readiness.ready,
+    keepsImplicitAny,
   };
 }

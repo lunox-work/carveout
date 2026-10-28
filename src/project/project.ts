@@ -213,6 +213,8 @@ export interface ProjectInput {
   readonly toolchain?: Toolchain;
   /** The coverage the repository's package test holds its sources to. */
   readonly coverage?: CoverageGate;
+  /** Keep the source's noImplicitAny: the slice compiled under it. */
+  readonly keepsImplicitAny?: boolean;
 }
 
 /**
@@ -1420,7 +1422,7 @@ export function generateProject(input: ProjectInput): GeneratedProject {
     path: "tsconfig.json",
     text: tsconfigFor({
       ...input.compilerOptions,
-      ...UNTYPED_PACKAGE_OPTIONS,
+      ...(input.keepsImplicitAny === true ? {} : UNTYPED_PACKAGE_OPTIONS),
     }),
     class: "config",
     public: true,

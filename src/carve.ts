@@ -552,6 +552,7 @@ export async function computeCut(
     ),
     ...(compilerOptions === undefined ? {} : { compilerOptions }),
     ...(coverage === null ? {} : { coverage }),
+    keepsImplicitAny: analysis.keepsImplicitAny,
   });
   // Peers the installed packages need, and packages asked for by name
   // that the slice does not import, as the repository installs them.
