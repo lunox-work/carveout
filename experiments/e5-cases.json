@@ -1,0 +1,131 @@
+{
+  "note": "The commits of duediligence/evidence/in-repo/cases.json (sandbox-factory, all after 2026-09-15): seam = the files a ticket names, drafted without the diff; package and allowed as there.",
+  "cases": [
+    {
+      "slug": "identicon",
+      "repo": "sandbox-factory",
+      "commit": "c4decdfa2206d96d580bec4b8a0bb734ae467d16",
+      "package": "packages/shared",
+      "seam": [
+        "packages/shared/src/identicon.ts"
+      ],
+      "subject": "feat: generate identicon avatars for users and organizations (#39)"
+    },
+    {
+      "slug": "step-holds",
+      "repo": "sandbox-factory",
+      "commit": "d7d924f9331aa1536107f71040cabb0ad2edccac",
+      "package": "packages/core",
+      "seam": [
+        "packages/core/src/stages.ts"
+      ],
+      "subject": "feat(bounties): edit a bounty's scope, hold steps for approval, and pin repository builds as context (#95)"
+    },
+    {
+      "slug": "limit-jobs",
+      "repo": "sandbox-factory",
+      "commit": "4d1491e40f80cac31812a93b7c08b9359866e3e6",
+      "package": "apps/worker",
+      "seam": [
+        "apps/worker/src/evaluation/limit.ts"
+      ],
+      "allowed": [
+        "apps/worker/src/evaluation/limit.ts"
+      ],
+      "subject": "feat: faster flows, phases 0–4 (#104)"
+    },
+    {
+      "slug": "recent-reads",
+      "repo": "sandbox-factory",
+      "commit": "4d1491e40f80cac31812a93b7c08b9359866e3e6",
+      "package": "apps/api",
+      "seam": [
+        "apps/api/src/jira/recent.ts"
+      ],
+      "allowed": [
+        "apps/api/src/jira/recent.ts"
+      ],
+      "subject": "feat: faster flows, phases 0–4 (#104)"
+    },
+    {
+      "slug": "setup-stage",
+      "repo": "sandbox-factory",
+      "commit": "d4bccefca102004149bf735533e742b3d6348208",
+      "package": "apps/web",
+      "seam": [
+        "apps/web/src/features/onboarding/setup.ts"
+      ],
+      "allowed": [
+        "apps/web/src/features/onboarding/setup.ts"
+      ],
+      "subject": "feat(onboarding): connecting Jira sizes nothing; home shows the free category scan (#84)"
+    },
+    {
+      "slug": "ticket-content",
+      "repo": "sandbox-factory",
+      "commit": "b69b190dfd232596fdff8934e9dad558d4b9061e",
+      "package": "packages/core",
+      "seam": [
+        "packages/core/src/ticket.ts"
+      ],
+      "allowed": [
+        "packages/core/src/ticket.ts"
+      ],
+      "subject": "feat(tickets): support native tickets and repository complexity profiles (#76)"
+    },
+    {
+      "slug": "analysis-params",
+      "repo": "sandbox-factory",
+      "commit": "5e5ccf7bfce33788e0703c9ddf3cfac3b4ebfff2",
+      "package": "packages/core",
+      "seam": [
+        "packages/core/src/analysis.ts"
+      ],
+      "subject": "feat(analysis): analyze repository snapshots with a private Graphify worker (#68)"
+    },
+    {
+      "slug": "handles",
+      "repo": "sandbox-factory",
+      "commit": "61e8e1116cfaac44b4e7f1f4cc315f6e14428372",
+      "package": "packages/core",
+      "seam": [
+        "packages/core/src/handle.ts"
+      ],
+      "subject": "feat(organizations): add organizations with handles, membership and roles (#24)"
+    },
+    {
+      "slug": "jira-spec",
+      "repo": "sandbox-factory",
+      "commit": "a2c9d8e89512e6f62843537dc368baeaf14e073e",
+      "package": "packages/jira",
+      "seam": [
+        "packages/jira/src/spec.ts"
+      ],
+      "subject": "feat(jira): read a ticket's spec and fingerprint it (#27)"
+    },
+    {
+      "slug": "categories",
+      "repo": "sandbox-factory",
+      "commit": "586f07984834493ef605f265d7d2d75561480945",
+      "package": "packages/core",
+      "seam": [
+        "packages/core/src/selection/index.ts",
+        "packages/core/src/selection/facts.ts",
+        "packages/core/src/selection/rules.ts",
+        "packages/core/src/selection/signals.ts",
+        "packages/core/src/selection/categories.ts"
+      ],
+      "subject": "feat(bounties): select tickets by category and browse proposals by category (#64)"
+    },
+    {
+      "slug": "context-sources",
+      "repo": "sandbox-factory",
+      "commit": "7f2274d76108365697732a01485b05d95c98359a",
+      "package": "packages/core",
+      "seam": [
+        "packages/core/src/sources.ts"
+      ],
+      "subject": "feat(bounties): sync Jira and repository context into bounties, versioned per source (#80)"
+    }
+  ]
+}

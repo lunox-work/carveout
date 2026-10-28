@@ -139,6 +139,7 @@ Step 1 rerun on the fixed build (`results/e4-after-fix.json`, median of 3):
 - **The gate again.** n8n is still over 10 s, so step 2 was weighed against
   the fixed build.
 - **Step 2's ceiling.** A warm run as planned must still do three things:
+
   - list the files (0.33 s);
   - read and hash every file for its blob id, measured at 1.77 s for n8n's
     151 MB;
@@ -152,3 +153,62 @@ Step 1 rerun on the fixed build (`results/e4-after-fix.json`, median of 3):
   Git's index would avoid the reads. The plan rules that out on purpose:
   ids taken from bytes are what keep uncommitted edits from being served
   stale.
+
+## E5: replaying real commits
+
+The procedure is in [README.md](README.md#e5-replaying-real-commits), and
+the bars are in [PLAN-benchmark.md](PLAN-benchmark.md). The runs used CLI
+`e407a46` on the eleven commits of `e5-cases.json`, and the raw data is in
+`results/e5.jsonl` (newest line per case and mode).
+
+**Usable cases.** The oracle, B plus the commit's whole package change,
+passes the package's tests on 8 of 11. The other three fail even then:
+
+- limit-jobs and recent-reads (`4d1491e`) need changes the commit made in
+  other packages;
+- setup-stage has 7 web tests that fail.
+
+These three are not usable for the benchmark. Their rows are reported, but
+they say nothing about carveout.
+
+| Bar                                                         | Result                                      | Verdict  |
+| ----------------------------------------------------------- | ------------------------------------------- | -------- |
+| Round trip byte-identical in at least 90% of in-slice diffs | 20 of 22; 16 of 16 on the usable cases      | **pass** |
+| Every round-tripped patch applies at B                      | 22 of 22                                    | **pass** |
+| In-slice and post-merge verdicts agree in at least 95%      | 15 of 16 usable (94%)                       | **fail** |
+| No slice-passes, repository-fails case caused by carveout   | 0; the one disagreement is coverage (below) | **pass** |
+
+- **The disagreement.** In step-holds/seam the slice passes and the
+  repository fails. The commit changes two code files outside the seam's
+  slice (`analysis.ts`, `sizing.ts`), and `apply` named both as outside. In
+  diff mode, which holds them, both verdicts pass. This is the slice being
+  too small for the change, not mechanics. By the bar as written, E5 fails
+  at 94%.
+- **The two round-trip misses.** Both are setup-stage (unusable),
+  `RepoXray.tsx`, a file the commit adds. One import comes back as
+  `../../components/StackIcon` where the commit wrote
+  `@/components/StackIcon`. Both resolve to the same file: for a new file,
+  the spelling is a guess.
+- **Defects E5 found and fixed** (commits `b7cea4e`, `393942d`, `e407a46`):
+  - A brought-along test with a computed import blocked the whole folder's
+    build.
+  - `npm test` ignored tests written after the cut.
+  - Slices had no `@types/node`, so `assert.ok` narrowed nothing and four
+    usable cases did not build.
+  - Two specifiers rewritten to one target came back wrong, and an
+    unchanged file was patched.
+  - New imports of stubs that `apply --stubs` wrote kept their slice
+    spelling.
+  - `apply` wrote existing tests as new files, and the merge conflicted.
+  - A deleted entry point broke `carveout/run.ts`.
+- **Known limits, not fixed.**
+  - Web slices type-check under `NodeNext`, where a CommonJS default
+    import such as `@testing-library/user-event` loses its members
+    (setup-stage).
+  - A mock package's types can lack a member the change uses
+    (`@aws-sdk/client-ecs` `RunTaskCommand`, recent-reads/diff).
+  - A type inferred from an untyped package becomes `unknown` (hono's
+    `file`).
+- **In-slice baselines.** Tests that fail at the slice's baseline fail on
+  the mocks: 3 in identicon (shared's handle schema, whose validator is in
+  core) and none in most others. They are counted, not judged.

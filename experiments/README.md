@@ -76,6 +76,7 @@ leaves open.
 - **Fitting.** Uses the N first-parent commits before T that touch at most
   50 files. A hint is a file outside the slice (the slice's included files
   at HEAD) that:
+
   - changed in at least k of the fitting commits that touch an included
     file;
   - and in at least x of them, as a share.
@@ -111,3 +112,44 @@ leaves open.
     import walk);
   - resolving (`loadConfig` and `resolveModuleName`).
 - **Step 2** runs only if the median at about 20k files is over 10 s.
+
+## E5: replaying real commits
+
+The pass bars are in [PLAN-benchmark.md](PLAN-benchmark.md), Phase 2. The
+script is `e5-replay.mjs`.
+
+- **Cases.** `e5-cases.json`: the eleven sandbox-factory commits of
+  duediligence's in-repo evidence, each with its package and its seam (the
+  files its ticket names, drafted without the diff).
+- **Entries.**
+  - _seam:_ each seam file that exists at the commit's parent B. A seam
+    file the commit adds (ten of eleven cases) is replaced by its nearest
+    folder that exists at B, through that folder's `index.ts` when it has
+    one. This uses the seam alone, never the diff.
+  - _diff:_ the files the commit changed in its package outside tests,
+    without the ones it added.
+- **Cut.** At B, `--with-tests --depth 1 --max-files 200`, online (as a
+  person would cut).
+- **In the slice.** The slice's tests run at B (the baseline) and again
+  after `carveout apply --stubs` of the whole commit. The verdict is per
+  test, by name, against the baseline:
+  - it holds when every test that passed at baseline still passes, and
+    every test the change adds passes;
+  - a test that already fails at baseline fails on the mocks, not on the
+    change, and is counted, not judged.
+- **Round trip.** `carveout merge` into a clean clone at B. Every path the
+  apply wrote must be patched, nothing else may be, and each must be
+  byte-identical to the commit.
+- **Coverage.** The commit's code files in its package that the apply
+  wrote nowhere (`outsideCode`), and its test files inside and outside the
+  slice.
+- **After the merge.** The commit's package test files the slice did not
+  hold are laid over the clone. Then `turbo run build` builds the package's
+  dependencies, and its test script runs twice:
+  - _functional:_ with the coverage flags and the `assert-all-covered`
+    step removed;
+  - _gate:_ as written.
+- **Oracle.** The same judge on B, and on B plus the commit's whole package
+  change.
+- **Installs.** One `npm ci` (npm 10.9.2, `--ignore-scripts`) per distinct
+  lockfile, kept in the target clone. Test runs get a 4 GB heap cap.
