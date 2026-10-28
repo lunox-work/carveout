@@ -140,6 +140,25 @@ function done() {
   return out;
 }
 
+/**
+ * `turbo` writes a managed block into AGENTS.md when it detects an agent
+ * (E6a: every full run of ticket-content). It is the tool's write, not the
+ * agent's change: taken out before the diff, and recorded.
+ */
+function stripToolBlocks(work) {
+  const stripped = [];
+  for (const name of ["AGENTS.md", "CLAUDE.md"]) {
+    const path = join(work, name);
+    if (!existsSync(path)) continue;
+    const text = readFileSync(path, "utf8");
+    const clean = text.replace(/\n*<!-- BEGIN:turborepo-agent-rules -->[\s\S]*?<!-- END:turborepo-agent-rules -->\n?/, "\n");
+    if (clean === text) continue;
+    writeFileSync(path, clean);
+    stripped.push(name);
+  }
+  return stripped;
+}
+
 /** The session, and the change it leaves, from a copy of the template. */
 async function session(cli, item, arm, n, prepared) {
   const work = mkdtempSync(join(WORK_ROOT, `${item.slug}-${arm}-${n}-`));
@@ -153,7 +172,9 @@ async function session(cli, item, arm, n, prepared) {
     if (agent.apiError === "usage_limit_reached" || /usage limit/i.test(agent.stderr)) return { limited: true };
     const change = join(out, "change.patch");
     let patch = null;
+    let toolWrites = [];
     if (arm === "full") {
+      toolWrites = stripToolBlocks(work);
       git(work, ["add", "-A"]);
       writeFileSync(change, git(work, ["diff", "--cached", "--binary", "--full-index", "--no-renames"]));
     } else {
@@ -165,7 +186,7 @@ async function session(cli, item, arm, n, prepared) {
       execFileSync("cp", ["-c", "-R", work, join(out, "slice")]);
       rmSync(join(out, "slice", "node_modules"), { recursive: true, force: true });
     }
-    return { agent, patch, change, out, peeks: peeks(transcript, work) };
+    return { agent, patch, change, out, toolWrites, peeks: peeks(transcript, work) };
   } finally {
     discard(work);
   }
@@ -276,6 +297,7 @@ async function main() {
           agent: ran.agent,
           patch: ran.patch,
           peeks: ran.peeks,
+          toolWrites: ran.toolWrites,
           ...judged,
           at: new Date().toISOString(),
         };
