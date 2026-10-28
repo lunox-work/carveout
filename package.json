@@ -1,0 +1,55 @@
+{
+  "name": "carveout",
+  "version": "0.1.0",
+  "description": "Carve a slice out of a TypeScript repository: the files a change needs, copied at their paths, with every module it imports from the rest of the repository stubbed and mocked, so the folder installs, builds and tests on its own.",
+  "keywords": [
+    "carveout",
+    "repository-slicing",
+    "code-slicing",
+    "monorepo",
+    "extract",
+    "stubs",
+    "mocks",
+    "ai-agents",
+    "coding-agents",
+    "claude-code",
+    "codex",
+    "cursor",
+    "typescript"
+  ],
+  "homepage": "https://github.com/lunox-work/carveout#readme",
+  "bugs": {
+    "url": "https://github.com/lunox-work/carveout/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lunox-work/carveout.git"
+  },
+  "license": "MIT",
+  "author": "Charlie Angriawan",
+  "type": "module",
+  "bin": {
+    "carveout": "dist/src/cli.js"
+  },
+  "files": [
+    "dist/src/",
+    "AGENTS.md",
+    "NOTICE.md",
+    "README.md",
+    "SKILL.md"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "prepublishOnly": "npm test"
+  },
+  "dependencies": {
+    "typescript": "5.9.3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

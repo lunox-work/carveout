@@ -1,0 +1,9 @@
+{
+  "name": "@fx/shop",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@fx/money": "*",
+    "stripe": "^17.0.0"
+  }
+}

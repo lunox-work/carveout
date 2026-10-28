@@ -1,0 +1,1306 @@
+/**
+ * The standalone project a cut becomes, as a pure function of the slice,
+ * the copied source and the dependency resolution.
+ *
+ * Copied source keeps its repository structure. Everything generated lives
+ * apart from it under `carveout/` and is classified: declaration stubs
+ * beside runtime mocks for the modules the slice imports from outside,
+ * mock packages for the packages it does not install, the recording mock
+ * runtime and the ambient declarations the slice compiled against, an
+ * interface test for the surface outside code imports, and the
+ * configuration that makes `npm ci`, `npm run dev`, `npm run build` and
+ * `npm test` work on a clean machine with no credentials.
+ *
+ * An import the source makes through a compiler alias is rewritten to a
+ * relative path and recorded, so `carveout patch` can undo it; a bare
+ * specifier that neither a package nor a cut module explains is a blocker,
+ * never a guess. Bodies of copied source are never rewritten beyond those
+ * specifiers.
+ */
+
+import type {
+  BoundaryContract,
+  BoundaryModule,
+  BoundarySymbol,
+  SliceManifest,
+} from "../slice/manifest.js";
+import {
+  SANDBOX_COMMANDS,
+  SANDBOX_TOOLCHAIN,
+  type Toolchain,
+} from "./build.js";
+import {
+  packageNameOf,
+  type PathClass,
+  type ResolvedDependency,
+} from "./provenance.js";
+import { scanSecrets, secretBlockers } from "./secrets.js";
+
+export const HARNESS_DIR = "carveout";
+export const MOCKS_DIR = `${HARNESS_DIR}/packages`;
+export const TESTS_DIR = `${HARNESS_DIR}/tests`;
+export const MOCK_RUNTIME_PATH = `${HARNESS_DIR}/mock.js`;
+export const AMBIENT_PATH = `${HARNESS_DIR}/ambient.d.ts`;
+export const RUN_PATH = `${HARNESS_DIR}/run.ts`;
+export const ENV_FILE = "carveout.env";
+export const ASSETS_LOADER_PATH = `${HARNESS_DIR}/assets.js`;
+
+/**
+ * Files a script imports that are not code: copied with the slice, typed
+ * as untyped modules, and loaded at runtime as their own path.
+ */
+export const ASSET_EXTENSIONS: readonly string[] = [
+  "css",
+  "scss",
+  "sass",
+  "less",
+  "svg",
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "avif",
+  "ico",
+  "woff",
+  "woff2",
+  "ttf",
+  "otf",
+  "mp4",
+  "webm",
+  "mp3",
+  "wav",
+  "txt",
+  "md",
+  "html",
+];
+
+export function isAssetPath(path: string): boolean {
+  const dot = path.lastIndexOf(".");
+  return dot !== -1 && ASSET_EXTENSIONS.includes(path.slice(dot + 1).toLowerCase());
+}
+
+const ASSETS_LOADER = [
+  "// Loads a stylesheet, image or other asset a module imports as a module",
+  "// whose default export is the asset's path, as a bundler would give its",
+  "// URL, and gives the project's modules Vite's import.meta.glob over the",
+  "// files the cut copied. Registered with --import before anything runs.",
+  "import { globSync } from \"node:fs\";",
+  "import { register } from \"node:module\";",
+  "import { dirname, relative, resolve, sep } from \"node:path\";",
+  "import { fileURLToPath, pathToFileURL } from \"node:url\";",
+  "",
+  "const ASSETS = new Set(__ASSETS__);",
+  "const isAsset = (path) => {",
+  "  const clean = path.split(/[?#]/)[0] ?? \"\";",
+  "  const dot = clean.lastIndexOf(\".\");",
+  "  return dot !== -1 && ASSETS.has(clean.slice(dot + 1).toLowerCase());",
+  "};",
+  "",
+  "/** import.meta.glob, as Vite answers it, over the project's own files. */",
+  "export function carveoutGlob(base, patterns, options = {}) {",
+  "  const directory = dirname(fileURLToPath(base));",
+  "  const root = process.cwd();",
+  "  const matches = new Map();",
+  "  for (const raw of [patterns].flat()) {",
+  "    const negated = raw.startsWith(\"!\");",
+  "    const pattern = negated ? raw.slice(1) : raw;",
+  "    const from = pattern.startsWith(\"/\") ? root : directory;",
+  "    for (const match of globSync(pattern.replace(/^\\/+/, \"\"), { cwd: from })) {",
+  "      const absolute = resolve(from, match);",
+  "      if (absolute.split(sep).includes(\"node_modules\")) continue;",
+  "      let key = pattern.startsWith(\"/\")",
+  "        ? `/${relative(root, absolute).split(sep).join(\"/\")}`",
+  "        : relative(directory, absolute).split(sep).join(\"/\");",
+  "      if (!key.startsWith(\"/\") && !key.startsWith(\".\")) key = `./${key}`;",
+  "      if (negated) matches.delete(key);",
+  "      else matches.set(key, absolute);",
+  "    }",
+  "  }",
+  "  const result = {};",
+  "  const pick = (module) =>",
+  "    options.import === undefined ? module : module[options.import];",
+  "  for (const [key, absolute] of [...matches].sort(([a], [b]) => (a < b ? -1 : 1))) {",
+  "    const runtime = absolute.replace(/\\.(m|c)?tsx?$/, (_, kind) => `.${kind ?? \"\"}js`);",
+  "    const url = pathToFileURL(runtime).href;",
+  "    if (isAsset(absolute)) {",
+  "      const module = { default: absolute };",
+  "      result[key] = options.eager ? pick(module) : async () => pick(module);",
+  "    } else if (!options.eager) result[key] = async () => pick(await import(url));",
+  "    // An eager glob of modules needs a bundler; it finds nothing here.",
+  "  }",
+  "  return result;",
+  "}",
+  "",
+  "export async function load(url, context, nextLoad) {",
+  "  if (url.startsWith(\"file:\") && isAsset(url))",
+  "    return {",
+  "      format: \"module\",",
+  "      shortCircuit: true,",
+  "      source: `export default ${JSON.stringify(fileURLToPath(url))};`,",
+  "    };",
+  "  const loaded = await nextLoad(url, context);",
+  "  if (",
+  "    loaded.format === \"module\" &&",
+  "    loaded.source !== undefined &&",
+  "    url.startsWith(\"file:\") &&",
+  "    !url.includes(\"/node_modules/\")",
+  "  ) {",
+  "    const original = String(loaded.source);",
+  "    let text = original;",
+  "    // Vite's env reads take carveout.env's values, which Node loads.",
+  "    if (text.includes(\"import.meta.env\"))",
+  "      text = text.replace(/\\bimport\\.meta\\.env\\b/g, \"process.env\");",
+  "    if (text.includes(\"import.meta.glob\"))",
+  "      return {",
+  "        ...loaded,",
+  "        source: `import { carveoutGlob as __carveoutGlob } from ${JSON.stringify(import.meta.url.split(\"#\")[0])};\\n${text.replace(/import\\.meta\\.glob(?:<[^>()]*>)?\\(/g, \"__carveoutGlob(import.meta.url, \")}`,",
+  "      };",
+  "    if (text !== original) return { ...loaded, source: text };",
+  "  }",
+  "  return loaded;",
+  "}",
+  "",
+  "if (!import.meta.url.includes(\"#hooks\"))",
+  "  register(`${import.meta.url}#hooks`);",
+  "",
+].join("\n").replace("__ASSETS__", JSON.stringify(ASSET_EXTENSIONS));
+
+/** Where a cut came from, as the README and package name say it. */
+export interface ProjectOrigin {
+  /** The repository folder's name. */
+  readonly repository: string;
+  /** The commit the source was read at, or null outside Git. */
+  readonly commit: string | null;
+  /** Whether the checkout had uncommitted changes to included files. */
+  readonly dirty: boolean;
+  /** The project's package name. */
+  readonly name: string;
+}
+
+export interface ProjectSource {
+  /** The repository path. */
+  readonly originalPath: string;
+  /** The path in the project; the same as the repository's. */
+  readonly path: string;
+  readonly text: string;
+}
+
+export interface ProjectStub {
+  /** The cut module's repository path. */
+  readonly module: string;
+  /** The module's path in the project, with its source extension. */
+  readonly path: string;
+  /** The declaration stub's text. */
+  readonly text: string;
+}
+
+export interface ProjectInput {
+  readonly origin: ProjectOrigin;
+  readonly manifest: SliceManifest;
+  readonly contract: BoundaryContract;
+  readonly sources: readonly ProjectSource[];
+  readonly stubs: readonly ProjectStub[];
+  readonly dependencies: readonly ResolvedDependency[];
+  /** Bare specifiers that need no rewrite: Node's modules and packages. */
+  readonly knownSpecifiers: readonly string[];
+  /** A safe subset of the source's compiler options, if they were read. */
+  readonly compilerOptions?: Readonly<Record<string, unknown>>;
+  /** What the sources read of each package, declared as the slice's check declared it. */
+  readonly packageModules?: PackageModules;
+  readonly toolchain?: Toolchain;
+}
+
+export interface GeneratedFile {
+  readonly path: string;
+  readonly text: string;
+  readonly class: PathClass;
+  readonly public: boolean;
+}
+
+export interface ImportRewrite {
+  readonly file: string;
+  readonly from: string;
+  readonly to: string;
+}
+
+export interface ProjectBlocker {
+  readonly code:
+    | "import_unrewritable"
+    | "language_unsupported"
+    | "mock_unsupported"
+    | "path_conflict"
+    | "secret_found";
+  readonly file: string | null;
+  readonly detail: string;
+}
+
+export interface GeneratedProject {
+  readonly files: readonly GeneratedFile[];
+  readonly importRewrites: readonly ImportRewrite[];
+  readonly tests: readonly string[];
+  readonly blockers: readonly ProjectBlocker[];
+}
+
+const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+const VALUE_KINDS: readonly string[] = [
+  "function",
+  "class",
+  "variable",
+  "module",
+];
+const TYPE_KINDS: readonly string[] = ["interface", "type"];
+
+/**
+ * The runtime shape of a symbol. The extractor names most kinds; a
+ * re-export it could only follow by name arrives as `unknown`, and its
+ * declaration text says whether it is a type (`export type { X }`,
+ * `interface`, `type`) or a value. A symbol with neither a kind nor a
+ * declaration cannot be mocked.
+ */
+export function runtimeKindOf(
+  symbol: BoundarySymbol,
+): "value" | "type" | "enum" | "unknown" {
+  if (symbol.kind === "enum") return "enum";
+  if (VALUE_KINDS.includes(symbol.kind)) return "value";
+  if (TYPE_KINDS.includes(symbol.kind)) return "type";
+  const declaration = symbol.declaration?.trim() ?? "";
+  if (declaration === "") return "unknown";
+  if (/^(export|import)\s+type\s*\{/.test(declaration)) return "type";
+  if (/^(export\s+)?(declare\s+)?(interface|type)\s/.test(declaration))
+    return "type";
+  if (/^(export\s+)?(declare\s+)?(const\s+)?enum\s/.test(declaration))
+    return "enum";
+  if (
+    /^(export\s+)?(declare\s+)?(abstract\s+)?(function|class|const|let|var|namespace|module)\s/.test(
+      declaration,
+    )
+  )
+    return "value";
+  if (/^export\s+(default\s+|\{)/.test(declaration)) return "value";
+  return "unknown";
+}
+const IMPORT_LITERAL =
+  /((?:\bimport|\bexport)\s+(?:type\s+)?(?:[^'";\s][^'";]*?\sfrom\s+)?|\brequire\(\s*|\bimport\(\s*)(['"])([^'"\n]+)\2/g;
+const NAMED_IMPORT =
+  /\bimport\s+(type\s+)?(?:[\w$]+\s*,\s*)?\{([^}]*)\}\s*from\s*['"]([^'"\n]+)['"]/g;
+
+/**
+ * Whether the text before `offset` on its line opens a comment: a
+ * commented-out import, or one quoted in a doc comment, is not an import.
+ */
+function onCommentLine(text: string, offset: number): boolean {
+  const start = text.lastIndexOf("\n", offset - 1) + 1;
+  return /^\s*(\/\/|\/\*|\*)/.test(text.slice(start, offset));
+}
+
+export function dirnameOf(path: string): string {
+  const index = path.lastIndexOf("/");
+  return index === -1 ? "" : path.slice(0, index);
+}
+
+/** `../lib/service.js` from `src/app.ts` to `lib/service.ts`. */
+export function relativeSpecifier(fromFile: string, toFile: string): string {
+  const from = dirnameOf(fromFile).split("/").filter(Boolean);
+  const to = toFile.split("/").filter(Boolean);
+  let common = 0;
+  while (
+    common < from.length &&
+    common < to.length - 1 &&
+    from[common] === to[common]
+  )
+    common += 1;
+  const up = from.length - common;
+  const rest = to.slice(common).join("/");
+  const prefix = up === 0 ? "./" : "../".repeat(up);
+  return `${prefix}${runtimePath(rest)}`;
+}
+
+/** The emitted JavaScript path of a TypeScript source path. */
+export function runtimePath(path: string): string {
+  if (path.endsWith(".d.ts")) return `${path.slice(0, -5)}.js`;
+  if (path.endsWith(".mts")) return `${path.slice(0, -4)}.mjs`;
+  if (path.endsWith(".cts")) return `${path.slice(0, -4)}.cjs`;
+  if (path.endsWith(".tsx") || path.endsWith(".ts"))
+    return `${path.replace(/\.tsx?$/, "")}.js`;
+  return path;
+}
+
+/** What `npm run dev` and `npm test` run once the project is built. */
+export const SANDBOX_RUN_ARGV = {
+  dev: [
+    "node",
+    `--env-file=${ENV_FILE}`,
+    `--import=./${ASSETS_LOADER_PATH}`,
+    runtimePath(RUN_PATH),
+  ],
+  test: [
+    "node",
+    `--env-file=${ENV_FILE}`,
+    `--import=./${ASSETS_LOADER_PATH}`,
+    "--test",
+    `${TESTS_DIR}/**/*.test.js`,
+  ],
+} as const;
+
+/** One command line, a glob quoted so node expands it rather than a shell. */
+const commandLine = (argv: readonly string[]) =>
+  argv.map((arg) => (arg.includes("*") ? `"${arg}"` : arg)).join(" ");
+
+/** A carved-out project's `package.json` scripts. */
+export const SANDBOX_SCRIPTS = {
+  build: "tsc -p tsconfig.json",
+  dev: `npm run build && ${commandLine(SANDBOX_RUN_ARGV.dev)}`,
+  test: `npm run build && ${commandLine(SANDBOX_RUN_ARGV.test)}`,
+} as const;
+
+/** `x.ts`, `x.tsx` and `x.js` → `x.d.ts`; `x.mts` → `x.d.mts`; `x.cts` → `x.d.cts`. */
+export function declarationPath(path: string): string {
+  if (/\.d\.[cm]?ts$/.test(path)) return path;
+  const match = /\.([cm]?)[jt]sx?$/.exec(path);
+  return match === null
+    ? `${path}.d.ts`
+    : `${path.slice(0, -match[0].length)}.d.${match[1] ?? ""}ts`;
+}
+
+/** A TypeScript source the project compiles, as opposed to a declaration or an asset. */
+export function isScript(path: string): boolean {
+  return /\.(m|c)?tsx?$/.test(path) && !path.endsWith(".d.ts");
+}
+
+/** Members of a `declare enum` declaration, as `[name, value]` pairs. */
+export function enumMembers(
+  declaration: string,
+): { name: string; value: string | number }[] | null {
+  const match = /\benum\s+[\w$]+\s*\{([^}]*)\}/.exec(declaration);
+  if (match === null) return null;
+  const members: { name: string; value: string | number }[] = [];
+  let next = 0;
+  for (const raw of (match[1] ?? "").split(",")) {
+    const entry = raw.trim();
+    if (entry === "") continue;
+    const parts = /^([\w$]+|"[^"]*"|'[^']*')\s*(?:=([\s\S]+))?$/.exec(entry);
+    if (parts === null) return null;
+    const name = (parts[1] ?? "").replace(/^['"]|['"]$/g, "");
+    const initializer = parts[2]?.trim();
+    if (initializer === undefined) {
+      members.push({ name, value: next });
+      next += 1;
+    } else if (/^-?\d+(\.\d+)?$/.test(initializer)) {
+      const value = Number(initializer);
+      members.push({ name, value });
+      next = value + 1;
+    } else if (/^(['"]).*\1$/.test(initializer))
+      members.push({ name, value: initializer.slice(1, -1) });
+    else return null;
+  }
+  return members;
+}
+
+const RESERVED_WORDS = new Set(
+  "await break case catch class const continue debugger default delete do else enum export extends false finally for function if implements import in instanceof interface let new null package private protected public return static super switch this throw true try typeof var void while with yield".split(
+    " ",
+  ),
+);
+/**
+ * `export const name = value;`, or for a name that is not an identifier
+ * (`"weird-name"`, a reserved word) a local binding exported under the
+ * string name, which ES2022 modules allow.
+ */
+function exportValue(name: string, value: string, index: number): string {
+  if (/^[A-Za-z_$][\w$]*$/.test(name) && !RESERVED_WORDS.has(name))
+    return `export const ${name} = ${value};`;
+  const local = `__export${index}`;
+  return `const ${local} = ${value};\nexport { ${local} as ${JSON.stringify(name)} };`;
+}
+
+/** A stub's `export * from "./x.js"`: the modules a barrel forwards to. */
+const STAR_EXPORT = /^export \* from (["'])(\.{1,2}\/[^"'\n]+)\1;?$/gm;
+
+function mockRuntimeFor(
+  modulePath: string,
+  originalModule: string,
+  symbols: readonly BoundarySymbol[],
+  blockers: ProjectBlocker[],
+  stubText = "",
+): string {
+  const lines = [
+    `// Generated runtime for the declarations in ${declarationPath(modulePath).split("/").pop() ?? ""}.`,
+    `// Every value is a recording mock; see ${MOCK_RUNTIME_PATH} and the README.`,
+    `import { createMock } from "${relativeSpecifier(modulePath, MOCK_RUNTIME_PATH)}";`,
+    `const mock = createMock(${JSON.stringify(`module:${modulePath}`)});`,
+  ];
+  let exported = 0;
+  for (const symbol of [...symbols].sort((a, b) => compare(a.name, b.name))) {
+    const shape = runtimeKindOf(symbol);
+    if (shape === "type") continue;
+    if (shape === "enum") {
+      const members = enumMembers(symbol.declaration ?? "");
+      if (members === null) {
+        blockers.push({
+          code: "mock_unsupported",
+          file: originalModule,
+          detail: `The enum ${symbol.name} has members the generator cannot evaluate.`,
+        });
+        continue;
+      }
+      const entries = members.flatMap((member) => [
+        `${JSON.stringify(member.name)}: ${JSON.stringify(member.value)}`,
+        ...(typeof member.value === "number"
+          ? [
+              `${JSON.stringify(String(member.value))}: ${JSON.stringify(member.name)}`,
+            ]
+          : []),
+      ]);
+      lines.push(
+        exportValue(
+          symbol.name,
+          `Object.freeze({ ${entries.join(", ")} })`,
+          exported,
+        ),
+      );
+      exported += 1;
+      continue;
+    }
+    if (shape === "unknown") {
+      blockers.push({
+        code: "mock_unsupported",
+        file: originalModule,
+        detail: `${symbol.name} has kind ${symbol.kind} and no declaration that says its runtime shape.`,
+      });
+      continue;
+    }
+    lines.push(
+      symbol.name === "default"
+        ? "export default mock.default;"
+        : exportValue(
+            symbol.name,
+            `mock[${JSON.stringify(symbol.name)}]`,
+            exported,
+          ),
+    );
+    exported += 1;
+  }
+  // A barrel's names come from the modules it forwards to, whose runtimes
+  // sit beside their stubs as this one does.
+  for (const [, , specifier] of stubText.matchAll(STAR_EXPORT)) {
+    lines.push(`export * from ${JSON.stringify(specifier)};`);
+    exported += 1;
+  }
+  if (exported === 0) lines.push("export {};");
+  return `${lines.join("\n")}\n`;
+}
+
+const MOCK_RUNTIME = `// The recording mock every generated module and package shares.
+//
+// A mock answers any property with another mock, any call with a mock and
+// records the call. It is not thenable, so awaiting one gives the mock
+// back, and it prints as [mock <name>]. Tests can install an implementation
+// for a path with mockImplementation() and read what was called with
+// recordedCalls(). Nothing here reaches a network or a credential.
+const calls = [];
+const implementations = new Map();
+const fixtures = new Map();
+export function recordedCalls() {
+  return calls.slice();
+}
+/** Clears recorded calls and installed implementations; fixtures stay. */
+export function resetMocks() {
+  calls.length = 0;
+  implementations.clear();
+}
+/** @param {string} path such as "module:lib/service.ts.createService" */
+export function mockImplementation(path, implementation) {
+  implementations.set(path, implementation);
+}
+/** The task's default behaviour for a path; mockImplementation() overrides it. */
+export function fixture(path, implementation) {
+  fixtures.set(path, implementation);
+}
+export function createMock(origin, name = origin) {
+  const target = function mock() {};
+  return new Proxy(target, {
+    get(_target, property) {
+      if (property === "then") return undefined;
+      if (property === Symbol.toPrimitive) return () => \`[mock \${name}]\`;
+      if (property === Symbol.iterator) return function* iterate() {};
+      if (property === "toJSON") return () => ({ mock: name });
+      if (typeof property === "symbol") return undefined;
+      return createMock(origin, \`\${name}.\${property}\`);
+    },
+    apply(_target, _self, args) {
+      calls.push({ name, args });
+      const implementation = implementations.get(name) ?? fixtures.get(name);
+      return implementation === undefined
+        ? createMock(origin, \`\${name}()\`)
+        : implementation(...args);
+    },
+    construct(_target, args) {
+      calls.push({ name: \`new \${name}\`, args });
+      const implementation =
+        implementations.get(\`new \${name}\`) ?? fixtures.get(\`new \${name}\`);
+      return implementation === undefined
+        ? createMock(origin, \`\${name}#\`)
+        : implementation(...args);
+    },
+    has() {
+      return true;
+    },
+  });
+}
+`;
+
+export const MOCK_RUNTIME_TYPES = `export interface RecordedCall {
+  readonly name: string;
+  readonly args: readonly unknown[];
+}
+export function recordedCalls(): RecordedCall[];
+export function resetMocks(): void;
+export function mockImplementation(
+  path: string,
+  implementation: (...args: unknown[]) => unknown,
+): void;
+export function fixture(
+  path: string,
+  implementation: (...args: any[]) => unknown,
+): void;
+export function createMock(origin: string, name?: string): any;
+`;
+
+/**
+ * Module declarations for the specifiers a slice reads names of, each
+ * exporting those names as values and types, as the worker writes them for
+ * the slice's own check. They take the place of the specifier's untyped
+ * shorthand, which only works as a value: `import type { X }` from it fails.
+ * An installed package's are patterns (`"zod*"`), so its own types win.
+ */
+export interface PackageModules {
+  readonly specifiers: readonly string[];
+  readonly text: string;
+}
+
+/** Classes Node has and the ES libraries do not, read as both a value and a type. */
+const NODE_CLASSES = [
+  "AbortController",
+  "AbortSignal",
+  "Blob",
+  "Buffer",
+  "BroadcastChannel",
+  "DOMException",
+  "Event",
+  "EventTarget",
+  "File",
+  "FormData",
+  "Headers",
+  "MessageChannel",
+  "MessagePort",
+  "ReadableStream",
+  "Request",
+  "Response",
+  "TextDecoder",
+  "TextEncoder",
+  "TransformStream",
+  "URL",
+  "URLSearchParams",
+  "WebSocket",
+  "WritableStream",
+] as const;
+
+/** Types code reads off Node's own `NodeJS` namespace. */
+const NODE_NAMESPACE_TYPES = [
+  "Dict",
+  "ErrnoException",
+  "Immediate",
+  "Process",
+  "ProcessEnv",
+  "ReadOnlyDict",
+  "ReadableStream",
+  "ReadWriteStream",
+  "Signals",
+  "Timeout",
+  "Timer",
+  "WritableStream",
+] as const;
+
+/**
+ * Node's own modules and globals, untyped: what `@types/node` gives code
+ * the ES libraries alone do not. The slice is type-checked against these
+ * and a generated project builds against them. Where the DOM library
+ * declares a global too, the library's declaration comes first and keeps
+ * its type; the clash is in a declaration file, which `skipLibCheck`
+ * leaves unchecked.
+ */
+export const NODE_GLOBAL_DECLARATIONS: readonly string[] = [
+  'declare module "node:*";',
+  "declare var process: any;",
+  "declare var global: any;",
+  "declare var require: any;",
+  "declare var module: any;",
+  "declare var exports: any;",
+  "declare var __dirname: string;",
+  "declare var __filename: string;",
+  "declare var console: any;",
+  "declare var performance: any;",
+  "declare var crypto: any;",
+  "declare function setTimeout(handler: (...args: any[]) => void, ms?: number, ...args: any[]): any;",
+  "declare function clearTimeout(handle: any): void;",
+  "declare function setInterval(handler: (...args: any[]) => void, ms?: number, ...args: any[]): any;",
+  "declare function clearInterval(handle: any): void;",
+  "declare function setImmediate(handler: (...args: any[]) => void, ...args: any[]): any;",
+  "declare function clearImmediate(handle: any): void;",
+  "declare function queueMicrotask(callback: () => void): void;",
+  "declare function structuredClone<T>(value: T): T;",
+  "declare function fetch(input: any, init?: any): Promise<any>;",
+  "declare function atob(data: string): string;",
+  "declare function btoa(data: string): string;",
+  ...NODE_CLASSES.flatMap((name) => [
+    `type ${name}<T0 = any, T1 = any> = any;`,
+    `declare var ${name}: any;`,
+  ]),
+  ...ASSET_EXTENSIONS.map((extension) => `declare module "*.${extension}";`),
+  "interface ImportMetaEnv { readonly [key: string]: any }",
+  "interface ImportMeta { readonly env: ImportMetaEnv; glob<T = any>(pattern: string | readonly string[], options?: any): Record<string, any> }",
+  "declare namespace NodeJS {",
+  ...NODE_NAMESPACE_TYPES.map((name) => `  type ${name} = any;`),
+  "}",
+];
+
+export function ambientDeclarations(
+  packages: readonly string[],
+  modules: PackageModules = { specifiers: [], text: "" },
+  installed: ReadonlySet<string> = new Set(),
+): string {
+  const declared = new Set(modules.specifiers);
+  const lines = [
+    "// The same declarations the slice was type-checked against: Node's",
+    "// modules and globals untyped, and every package untyped. A package the",
+    "// project installs is declared by a pattern, which the compiler",
+    "// consults only when the package brings no types of its own.",
+    ...NODE_GLOBAL_DECLARATIONS,
+    "declare var globalThis: any;",
+  ];
+  for (const name of [...new Set(packages)].sort(compare))
+    if (installed.has(name)) {
+      if (!declared.has(name)) lines.push(`declare module "${name}*";`);
+    } else {
+      if (!declared.has(name)) lines.push(`declare module "${name}";`);
+      lines.push(`declare module "${name}/*";`);
+    }
+  return `${lines.join("\n")}\n${modules.text}`;
+}
+
+/**
+ * What the slice's check relaxes for its untyped packages, which the
+ * project must relax too to build what the check passed: a callback passed
+ * to an untyped function has no parameter types to take.
+ */
+const UNTYPED_PACKAGE_OPTIONS = { noImplicitAny: false } as const;
+
+const SAFE_COMPILER_KEYS: readonly string[] = [
+  "strict",
+  "target",
+  "lib",
+  "jsx",
+  "esModuleInterop",
+  "allowSyntheticDefaultImports",
+  "exactOptionalPropertyTypes",
+  "noUncheckedIndexedAccess",
+  "noImplicitAny",
+  "strictNullChecks",
+  "useDefineForClassFields",
+  "verbatimModuleSyntax",
+  "isolatedModules",
+  "resolveJsonModule",
+  "experimentalDecorators",
+  "emitDecoratorMetadata",
+  "noImplicitOverride",
+  "noPropertyAccessFromIndexSignature",
+  "useUnknownInCatchVariables",
+];
+
+/**
+ * The compiler options a generated project builds with: the source's safe
+ * options carried over, Node's ESM resolution, no emitted declarations.
+ */
+export function projectCompilerOptions(
+  options: Readonly<Record<string, unknown>> | undefined,
+): Record<string, unknown> {
+  const carried: Record<string, unknown> = {};
+  for (const key of SAFE_COMPILER_KEYS)
+    if (options !== undefined && options[key] !== undefined)
+      carried[key] = options[key];
+  return {
+    strict: true,
+    target: "ES2022",
+    ...carried,
+    module: "NodeNext",
+    moduleResolution: "NodeNext",
+    rootDir: ".",
+    declaration: false,
+    sourceMap: false,
+    noEmitOnError: true,
+    skipLibCheck: true,
+    types: [],
+    allowJs: false,
+  };
+}
+
+/** `tsconfig.json` for a generated project. */
+export function tsconfigFor(
+  options: Readonly<Record<string, unknown>> | undefined,
+) {
+  return `${JSON.stringify(
+    {
+      compilerOptions: projectCompilerOptions(options),
+      include: ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"],
+      exclude: ["node_modules", MOCKS_DIR],
+    },
+    null,
+    2,
+  )}\n`;
+}
+
+function scanNamedImports(
+  sources: readonly ProjectSource[],
+): Map<string, Set<string>> {
+  const names = new Map<string, Set<string>>();
+  for (const source of sources)
+    for (const match of source.text.matchAll(NAMED_IMPORT)) {
+      // Type-only imports need no runtime export.
+      if (match[1] !== undefined) continue;
+      const specifier = match[3] ?? "";
+      const list = names.get(packageNameOf(specifier)) ?? new Set();
+      for (const part of (match[2] ?? "").split(",")) {
+        const trimmed = part.trim();
+        if (trimmed === "" || /^type\s/.test(trimmed)) continue;
+        const name = /^\S+/.exec(trimmed)?.[0];
+        if (name !== undefined && name !== "" && name !== "default")
+          list.add(name);
+      }
+      names.set(packageNameOf(specifier), list);
+    }
+  return names;
+}
+
+function escapeJs(text: string): string {
+  return JSON.stringify(text);
+}
+
+function interfaceTests(
+  inbound: readonly BoundaryModule[],
+  aliasedOf: (original: string) => string | null,
+  entries: readonly string[],
+): string {
+  const lines = [
+    "// The public surface: what code outside the slice imports from it in",
+    "// the repository. Keep every one of these exports in place, or the",
+    "// change will not fit back; their types are in BOUNDARY.md.",
+    'import assert from "node:assert/strict";',
+    'import { test } from "node:test";',
+    "",
+  ];
+  const testFile = `${TESTS_DIR}/interface.test.ts`;
+  let count = 0;
+  for (const module of inbound) {
+    const path = aliasedOf(module.module);
+    if (path === null) continue;
+    // Only what is known to exist at runtime; a name whose kind the
+    // extractor could not tell is not asserted.
+    const values = module.symbols
+      .filter((symbol) => {
+        const kind = runtimeKindOf(symbol);
+        return kind === "value" || kind === "enum";
+      })
+      .map((symbol) => symbol.name);
+    if (values.length === 0) continue;
+    count += 1;
+    lines.push(
+      `test(${escapeJs(`${path} keeps its public surface`)}, async () => {`,
+      `  const module = (await import(${escapeJs(relativeSpecifier(testFile, path))})) as Record<string, unknown>;`,
+    );
+    for (const name of values)
+      lines.push(
+        `  assert.notEqual(module[${escapeJs(name)}], undefined, ${escapeJs(`${name} must stay exported`)});`,
+      );
+    lines.push("});", "");
+  }
+  if (count === 0)
+    for (const entry of entries) {
+      lines.push(
+        `test(${escapeJs(`${entry} loads`)}, async () => {`,
+        `  assert.ok(await import(${escapeJs(relativeSpecifier(testFile, entry))}));`,
+        "});",
+        "",
+      );
+    }
+  return `${lines.join("\n")}\n`;
+}
+
+function runScript(entries: readonly string[]): string {
+  const lines = [
+    "// `npm run dev`: load every entry point with the mocks in place and",
+    "// report what it exports. Replace or extend this to exercise the slice.",
+    "",
+  ];
+  if (entries.length === 0) lines.push('console.log("No entry points.");');
+  for (const entry of entries)
+    lines.push(
+      `console.log(${escapeJs(entry)}, Object.keys(await import(${escapeJs(relativeSpecifier(RUN_PATH, entry))})));`,
+    );
+  return `${lines.join("\n")}\n`;
+}
+
+
+function readme(input: {
+  origin: ProjectOrigin;
+  toolchain: Toolchain;
+  editable: readonly string[];
+  mockedModules: readonly string[];
+  mockedPackages: readonly string[];
+  installedPackages: readonly { name: string; version: string }[];
+  environment: readonly string[];
+  rewrites: readonly ImportRewrite[];
+  tests: readonly string[];
+}): string {
+  const list = (items: readonly string[], empty: string) =>
+    items.length === 0 ? [empty] : items.map((item) => `- \`${item}\``);
+  const at =
+    input.origin.commit === null
+      ? "outside Git"
+      : `at \`${input.origin.commit.slice(0, 12)}\`${input.origin.dirty ? " with uncommitted changes" : ""}`;
+  return `${[
+    `# ${input.origin.name}`,
+    "",
+    `A slice of \`${input.origin.repository}\`, ${at}, carved out by carveout. It holds only the files below; every module it imports from the rest of the repository is a stub with a recording mock behind it.`,
+    "",
+    "## Run it",
+    "",
+    `Node ${input.toolchain.nodeRange} and npm ${input.toolchain.npm}. No account, service or credential is needed.`,
+    "",
+    "```sh",
+    SANDBOX_COMMANDS.install,
+    SANDBOX_COMMANDS.build,
+    SANDBOX_COMMANDS.test,
+    SANDBOX_COMMANDS.dev,
+    "```",
+    "",
+    `\`${SANDBOX_COMMANDS.dev}\` runs \`${RUN_PATH}\`, which loads each entry point; replace it to exercise the slice.`,
+    "",
+    "## The slice",
+    "",
+    "Copied from the repository, at the same paths. Edit these:",
+    "",
+    ...list(input.editable, "No files."),
+    "",
+    "Everything under `carveout/`, and the configuration at the root, is generated. `carveout patch` turns your edits back into a patch for the repository, with the import rewrites below undone.",
+    "",
+    "## Mocks",
+    "",
+    `Modules outside the slice are declared by \`.d.ts\` stubs beside generated \`.js\` runtimes whose values are recording mocks (\`${MOCK_RUNTIME_PATH}\`). Packages it does not install are mock packages under \`${MOCKS_DIR}/\`. A mock answers any property or call with another mock and records the call; \`mockImplementation(path, fn)\` installs behaviour and \`recordedCalls()\` reads it back. Environment values are placeholders in \`${ENV_FILE}\`.`,
+    "",
+    "Mocked modules:",
+    "",
+    ...list(input.mockedModules, "None."),
+    "",
+    "Mocked packages:",
+    "",
+    ...list(input.mockedPackages, "None."),
+    "",
+    "Installed packages:",
+    "",
+    ...list(
+      input.installedPackages.map((item) => `${item.name}@${item.version}`),
+      "None.",
+    ),
+    "",
+    "Environment:",
+    "",
+    ...list(input.environment, "None."),
+    "",
+    "## Import rewrites",
+    "",
+    ...(input.rewrites.length === 0
+      ? ["None."]
+      : input.rewrites.map(
+          (item) => `- \`${item.file}\`: \`${item.from}\` → \`${item.to}\``,
+        )),
+    "",
+    "## Tests",
+    "",
+    ...list(input.tests, "None."),
+    "",
+    "`BOUNDARY.md` lists what the slice imports from outside and what outside code imports from it; `carveout.json` records the cut.",
+  ].join("\n")}\n`;
+}
+
+/**
+ * Generates the project. Deterministic: the same inputs give the same
+ * files in the same order.
+ */
+export function generateProject(input: ProjectInput): GeneratedProject {
+  const toolchain = input.toolchain ?? SANDBOX_TOOLCHAIN;
+  const blockers: ProjectBlocker[] = [];
+  const rewrites: ImportRewrite[] = [];
+  const files = new Map<string, GeneratedFile>();
+  const add = (file: GeneratedFile) => {
+    if (files.has(file.path))
+      blockers.push({
+        code: "path_conflict",
+        file: file.path,
+        detail: `${file.path} is produced twice.`,
+      });
+    else files.set(file.path, file);
+  };
+  const projectPaths = new Map<string, string>();
+  for (const source of input.sources)
+    projectPaths.set(source.originalPath, source.path);
+  for (const stub of input.stubs) projectPaths.set(stub.module, stub.path);
+  const pathOf = (original: string) => projectPaths.get(original) ?? null;
+  const known = new Set(input.knownSpecifiers.map(packageNameOf));
+  for (const dependency of input.dependencies)
+    if (dependency.kind === "package") known.add(dependency.name);
+  // Every import the slice resolved, inside it or across a cut, by
+  // importer and the specifier as written.
+  const targetOf = new Map<string, string>();
+  for (const edge of [
+    ...input.manifest.cuts.outbound,
+    ...input.manifest.internalImports,
+  ])
+    if (edge.specifier !== null)
+      targetOf.set(`${edge.from}\n${edge.specifier}`, edge.to);
+
+  // Copied source. Path aliases become relative imports.
+  for (const source of input.sources) {
+    let text = source.text;
+    if (isScript(source.path))
+      text = source.text.replace(
+        IMPORT_LITERAL,
+        (
+          whole,
+          prefix: string,
+          quote: string,
+          specifier: string,
+          offset: number,
+          all: string,
+        ) => {
+          if (onCommentLine(all, offset)) return whole;
+          const relative =
+            specifier.startsWith(".") || specifier.startsWith("/");
+          if (
+            specifier.startsWith("node:") ||
+            (!relative && known.has(packageNameOf(specifier)))
+          )
+            return whole;
+          const target = targetOf.get(`${source.originalPath}\n${specifier}`);
+          const projectTarget = target === undefined ? null : pathOf(target);
+          if (projectTarget === null) {
+            // A relative import the graph did not record is left as written
+            // for the compiler to judge; a cut module without a stub is
+            // already a `mock_unsupported` blocker.
+            if (!relative)
+              blockers.push({
+                code: "import_unrewritable",
+                file: source.originalPath,
+                detail: `${specifier} is neither a package nor a module the slice resolved.`,
+              });
+            return whole;
+          }
+          const to = relativeSpecifier(source.path, projectTarget);
+          // A relative import is kept as written unless Node's resolution
+          // needs it spelled out: an extensionless or directory import a
+          // bundler resolved, or an asset whose path it names already.
+          if (relative && projectTarget === target && isAssetPath(target))
+            return whole;
+          if (to === specifier) return whole;
+          rewrites.push({ file: source.path, from: specifier, to });
+          return `${prefix}${quote}${to}${quote}`;
+        },
+      );
+    else if (/\.[cm]?jsx?$/.test(source.originalPath))
+      blockers.push({
+        code: "language_unsupported",
+        file: source.originalPath,
+        detail:
+          "The project compiles TypeScript in place; a JavaScript source would be overwritten by its own output.",
+      });
+    add({ path: source.path, text, class: "source", public: true });
+  }
+
+  // Cut modules: declaration stubs beside generated runtimes.
+  const mockedModules: string[] = [];
+  const stubByModule = new Map(input.stubs.map((stub) => [stub.module, stub]));
+  for (const module of input.contract.outbound) {
+    const stub = stubByModule.get(module.module);
+    if (stub === undefined) {
+      blockers.push({
+        code: "mock_unsupported",
+        file: module.module,
+        detail: "The slice produced no declaration stub for this module.",
+      });
+      continue;
+    }
+    mockedModules.push(stub.path);
+    add({
+      path: declarationPath(stub.path),
+      text: stub.text,
+      class: "stub",
+      public: true,
+    });
+    add({
+      path: runtimePath(stub.path),
+      text: mockRuntimeFor(
+        stub.path,
+        module.module,
+        module.symbols,
+        blockers,
+        stub.text,
+      ),
+      class: "mock",
+      public: true,
+    });
+  }
+  // Stubs the contract does not list as modules (types a stub imports).
+  for (const stub of input.stubs)
+    if (!input.contract.outbound.some((m) => m.module === stub.module)) {
+      add({
+        path: declarationPath(stub.path),
+        text: stub.text,
+        class: "stub",
+        public: true,
+      });
+      add({
+        path: runtimePath(stub.path),
+        text: "export {};\n",
+        class: "mock",
+        public: true,
+      });
+    }
+
+  // Packages: approved ones install; mocked ones are local packages.
+  const namedImports = scanNamedImports(input.sources);
+  const mockedPackages: string[] = [];
+  const installedPackages: { name: string; version: string }[] = [];
+  const dependencies: Record<string, string> = {};
+  for (const dependency of [...input.dependencies].sort((a, b) =>
+    compare(a.name, b.name),
+  )) {
+    if (dependency.kind !== "package") continue;
+    if (
+      dependency.resolution === "approved-package" &&
+      dependency.version !== null
+    ) {
+      installedPackages.push({
+        name: dependency.name,
+        version: dependency.version,
+      });
+      dependencies[dependency.name] = dependency.version;
+    } else if (dependency.resolution === "runtime-mock") {
+      const name = dependency.name;
+      mockedPackages.push(name);
+      const dir = `${MOCKS_DIR}/${name}`;
+      dependencies[name] = `file:${dir}`;
+      const names = [...(namedImports.get(name) ?? [])].sort(compare);
+      add({
+        path: `${dir}/package.json`,
+        text: `${JSON.stringify(
+          {
+            name,
+            version: "0.0.0-carveout",
+            private: true,
+            type: "module",
+            main: "index.js",
+            types: "index.d.ts",
+          },
+          null,
+          2,
+        )}\n`,
+        class: "mock",
+        public: true,
+      });
+      add({
+        path: `${dir}/index.js`,
+        text: `${[
+          `// Mock of the ${name} package. Values are recording mocks.`,
+          `import { createMock } from "${relativeSpecifier(`${dir}/index.js`, MOCK_RUNTIME_PATH)}";`,
+          `const mock = createMock(${JSON.stringify(`package:${name}`)});`,
+          "export default mock;",
+          ...names.map(
+            (name) => `export const ${name} = mock[${JSON.stringify(name)}];`,
+          ),
+        ].join("\n")}\n`,
+        class: "mock",
+        public: true,
+      });
+      add({
+        path: `${dir}/index.d.ts`,
+        text: `${[
+          "declare const mock: any;",
+          "export default mock;",
+          ...names.map((name) => `export const ${name}: any;`),
+        ].join("\n")}\n`,
+        class: "mock",
+        public: true,
+      });
+    }
+  }
+
+  // Harness.
+  add({
+    path: MOCK_RUNTIME_PATH,
+    text: MOCK_RUNTIME,
+    class: "harness",
+    public: true,
+  });
+  add({
+    path: ASSETS_LOADER_PATH,
+    text: ASSETS_LOADER,
+    class: "harness",
+    public: true,
+  });
+  add({
+    path: `${HARNESS_DIR}/mock.d.ts`,
+    text: MOCK_RUNTIME_TYPES,
+    class: "harness",
+    public: true,
+  });
+  add({
+    path: AMBIENT_PATH,
+    text: ambientDeclarations(
+      [
+        ...installedPackages.map((p) => p.name),
+        ...mockedPackages,
+        // Node's modules by their bare names too (`fs`, `fs/promises`).
+        ...input.knownSpecifiers
+          .filter((specifier) => !specifier.startsWith("node:"))
+          .map(packageNameOf),
+      ],
+      input.packageModules,
+      new Set(installedPackages.map((p) => p.name)),
+    ),
+    class: "harness",
+    public: true,
+  });
+  const entries = input.manifest.entryPoints
+    .flatMap((entry) =>
+      input.sources
+        .filter(
+          (source) =>
+            source.originalPath === entry ||
+            source.originalPath.startsWith(`${entry}/`),
+        )
+        .map((source) => source.path),
+    )
+    .filter((path, index, all) => isScript(path) && all.indexOf(path) === index)
+    .sort(compare);
+  add({
+    path: RUN_PATH,
+    text: runScript(entries),
+    class: "harness",
+    public: true,
+  });
+
+  // Tests.
+  const tests = [`${TESTS_DIR}/interface.test.ts`];
+  add({
+    path: tests[0] ?? "",
+    text: interfaceTests(input.contract.inbound, pathOf, entries),
+    class: "test-public",
+    public: true,
+  });
+
+  // Configuration.
+  const environment = input.manifest.externals.environment.map(
+    (item) => item.name,
+  );
+  add({
+    path: "package.json",
+    text: `${JSON.stringify(
+      {
+        name: input.origin.name,
+        version: "0.0.0",
+        private: true,
+        type: "module",
+        engines: { node: toolchain.nodeRange },
+        scripts: SANDBOX_SCRIPTS,
+        dependencies,
+        devDependencies: { typescript: toolchain.typescript },
+      },
+      null,
+      2,
+    )}\n`,
+    class: "config",
+    public: true,
+  });
+  add({
+    path: "tsconfig.json",
+    text: tsconfigFor({
+      ...input.compilerOptions,
+      ...UNTYPED_PACKAGE_OPTIONS,
+    }),
+    class: "config",
+    public: true,
+  });
+  add({
+    path: ".nvmrc",
+    text: `${toolchain.node}\n`,
+    class: "config",
+    public: true,
+  });
+  add({
+    path: ".npmrc",
+    text: "engine-strict=true\nignore-scripts=true\nfund=false\naudit=false\n",
+    class: "config",
+    public: true,
+  });
+  add({
+    path: ENV_FILE,
+    text: `${[
+      "# Placeholder values for the environment the slice reads. Safe to",
+      "# commit; nothing here reaches a real service.",
+      ...environment.map(
+        (name) =>
+          `${name}=carveout-${name.toLowerCase().replace(/_/g, "-")}`,
+      ),
+    ].join("\n")}\n`,
+    class: "config",
+    public: true,
+  });
+  const emitted = [...files.values()]
+    .filter((file) => isScript(file.path))
+    .map((file) => runtimePath(file.path))
+    .filter((path) => !files.has(path))
+    .sort(compare);
+  add({
+    path: ".gitignore",
+    text: `${["node_modules/", ...emitted].join("\n")}\n`,
+    class: "config",
+    public: true,
+  });
+  const editable = input.sources.map((source) => source.path).sort(compare);
+  add({
+    path: "README.md",
+    text: readme({
+      origin: input.origin,
+      toolchain,
+      editable,
+      mockedModules: mockedModules.sort(compare),
+      mockedPackages,
+      installedPackages,
+      environment,
+      rewrites,
+      tests,
+    }),
+    class: "config",
+    public: true,
+  });
+  // Nothing the project holds may carry a credential the source held.
+  blockers.push(...secretBlockers(scanSecrets([...files.values()])));
+  return {
+    files: [...files.values()].sort((a, b) => compare(a.path, b.path)),
+    importRewrites: rewrites.sort((a, b) =>
+      compare(`${a.file}\n${a.from}`, `${b.file}\n${b.from}`),
+    ),
+    tests,
+    blockers,
+  };
+}
