@@ -1,0 +1,145 @@
+{
+  "experiment": "E4",
+  "cli": "ddb11b3+dirty dist:287023b16f91",
+  "results": [
+    {
+      "repo": "cal.com",
+      "url": "https://github.com/calcom/cal.com.git",
+      "commit": "56da01b4b1664894b784aca636eccab0c56cc141",
+      "target": "~5k",
+      "files": 5073,
+      "median": {
+        "totalMs": 2148,
+        "listMs": 94,
+        "parseMs": 1495,
+        "resolveMs": 565,
+        "rssMb": 644
+      },
+      "runs": [
+        {
+          "files": 5073,
+          "nodes": 20419,
+          "links": 26171,
+          "totalMs": 2603,
+          "listMs": 107,
+          "resolveMs": 595,
+          "parseMs": 1900,
+          "rssMb": 643
+        },
+        {
+          "files": 5073,
+          "nodes": 20419,
+          "links": 26171,
+          "totalMs": 2148,
+          "listMs": 94,
+          "resolveMs": 565,
+          "parseMs": 1489,
+          "rssMb": 666
+        },
+        {
+          "files": 5073,
+          "nodes": 20419,
+          "links": 26171,
+          "totalMs": 2142,
+          "listMs": 92,
+          "resolveMs": 555,
+          "parseMs": 1495,
+          "rssMb": 644
+        }
+      ]
+    },
+    {
+      "repo": "n8n",
+      "url": "https://github.com/n8n-io/n8n.git",
+      "commit": "b63bf7f963745fabad2871b6d3dc0bfbc413d40d",
+      "target": "~20k",
+      "files": 23979,
+      "median": {
+        "totalMs": 11790,
+        "listMs": 325,
+        "parseMs": 9006,
+        "resolveMs": 2460,
+        "rssMb": 1266
+      },
+      "runs": [
+        {
+          "files": 23979,
+          "nodes": 73481,
+          "links": 119126,
+          "totalMs": 11845,
+          "listMs": 325,
+          "resolveMs": 2460,
+          "parseMs": 9060,
+          "rssMb": 1263
+        },
+        {
+          "files": 23979,
+          "nodes": 73481,
+          "links": 119126,
+          "totalMs": 11790,
+          "listMs": 322,
+          "resolveMs": 2462,
+          "parseMs": 9006,
+          "rssMb": 1297
+        },
+        {
+          "files": 23979,
+          "nodes": 73481,
+          "links": 119126,
+          "totalMs": 11597,
+          "listMs": 325,
+          "resolveMs": 2456,
+          "parseMs": 8816,
+          "rssMb": 1266
+        }
+      ]
+    },
+    {
+      "repo": "DefinitelyTyped",
+      "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+      "commit": "3a0a6ffd801dc5f7a2b50b64c8f2fb32c93643cb",
+      "target": "~45k (largest found under the 50k cap)",
+      "files": 33319,
+      "median": {
+        "totalMs": 13708,
+        "listMs": 505,
+        "parseMs": 10343,
+        "resolveMs": 2864,
+        "rssMb": 1512
+      },
+      "runs": [
+        {
+          "files": 33319,
+          "nodes": 62369,
+          "links": 58420,
+          "totalMs": 14405,
+          "listMs": 509,
+          "resolveMs": 3057,
+          "parseMs": 10839,
+          "rssMb": 1512
+        },
+        {
+          "files": 33319,
+          "nodes": 62369,
+          "links": 58420,
+          "totalMs": 13389,
+          "listMs": 505,
+          "resolveMs": 2728,
+          "parseMs": 10156,
+          "rssMb": 1387
+        },
+        {
+          "files": 33319,
+          "nodes": 62369,
+          "links": 58420,
+          "totalMs": 13708,
+          "listMs": 501,
+          "resolveMs": 2864,
+          "parseMs": 10343,
+          "rssMb": 1534
+        }
+      ]
+    }
+  ],
+  "continueToStep2": true
+}

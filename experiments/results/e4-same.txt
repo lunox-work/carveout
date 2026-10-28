@@ -1,0 +1,6 @@
+sandbox-factory identical: true before { listMs: 19, resolveMs: 276, parseMs: 681 } after { listMs: 15, resolveMs: 50, parseMs: 450 }
+private-api identical: true before { listMs: 14, resolveMs: 72, parseMs: 128 } after { listMs: 10, resolveMs: 13, parseMs: 63 }
+private-site identical: true before { listMs: 12, resolveMs: 30, parseMs: 64 } after { listMs: 10, resolveMs: 6, parseMs: 28 }
+cal.com identical: true before { listMs: 100, resolveMs: 11019, parseMs: 1940 } after { listMs: 92, resolveMs: 508, parseMs: 1353 }
+DefinitelyTyped identical: true before { listMs: 477, resolveMs: 5602, parseMs: 10630 } after { listMs: 489, resolveMs: 2908, parseMs: 10639 }
+n8n identical: true before { listMs: 315, resolveMs: 424832, parseMs: 11790 } after { listMs: 328, resolveMs: 2368, parseMs: 9052 }

@@ -2,3 +2,5 @@ node_modules/
 dist/
 *.tgz
 .carveout/
+experiments/repos.local.json
+experiments/work/

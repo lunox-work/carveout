@@ -1,0 +1,23 @@
+{
+  "note": "The README's thirteen test slices. Commits are each repository's HEAD on 2026-10-28; private repositories go by alias, mapped to paths in repos.local.json (not committed). Every cut uses --max-files 200.",
+  "repositories": {
+    "sandbox-factory": { "head": "aaf77e964e983127c157940a39e16b06cf844ddd", "public": "https://github.com/lunox-work/sandbox-factory" },
+    "private-api": { "head": "6a84e872521fa9882ceb12bedc8cc2b03e4fd378" },
+    "private-site": { "head": "90cb833418bd54e4b6a29e7e06efec4f79e68833" }
+  },
+  "slices": [
+    { "id": "m1", "repo": "sandbox-factory", "entries": ["apps/worker/src/tools/slice/hash.ts", "apps/worker/src/tools/slice/package-types.ts"], "depth": 1, "flags": [] },
+    { "id": "m2", "repo": "sandbox-factory", "entries": ["apps/worker/src/tools/slice.ts"], "depth": 1, "flags": [] },
+    { "id": "m3", "repo": "private-api", "entries": ["apps/api/src/articles"], "depth": 2, "flags": [] },
+    { "id": "m4", "repo": "private-api", "entries": ["apps/api/src/auth.ts"], "depth": 1, "flags": ["--install", "drizzle-orm"] },
+    { "id": "m5", "repo": "private-site", "entries": ["src/lib"], "depth": 1, "flags": [] },
+    { "id": "m6", "repo": "private-site", "entries": ["src/components/not-found.tsx"], "depth": 1, "flags": [] },
+    { "id": "m7", "repo": "sandbox-factory", "entries": ["apps/web/src/components/ConfirmDialog.tsx"], "depth": 1, "flags": [] },
+    { "id": "m8", "repo": "sandbox-factory", "entries": ["apps/web/src/components/Identicon.tsx"], "depth": 2, "flags": [] },
+    { "id": "m9", "repo": "sandbox-factory", "entries": ["apps/api/src/sandbox/cutter.ts"], "depth": 2, "flags": [] },
+    { "id": "m10", "repo": "sandbox-factory", "entries": ["packages/shared/src/bounty.ts"], "depth": 2, "flags": [] },
+    { "id": "m11", "repo": "sandbox-factory", "entries": ["packages/core/src/pricing"], "depth": 3, "flags": [] },
+    { "id": "m12", "repo": "private-api", "entries": ["apps/web/src"], "depth": 1, "flags": [] },
+    { "id": "m13", "repo": "sandbox-factory", "entries": ["apps/web/src/components"], "depth": 1, "flags": [] }
+  ]
+}

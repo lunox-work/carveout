@@ -1,0 +1,374 @@
+{
+  "experiment": "E3",
+  "cli": "ddb11b3+dirty dist:48e987d7b7c5",
+  "splits": {
+    "sandbox-factory": {
+      "T": "2026-10-03T11:36:56Z",
+      "split": "b69b190dfd232596fdff8934e9dad558d4b9061e",
+      "firstParentCommits": 185
+    },
+    "private-api": {
+      "T": "2026-10-23T02:09:07Z",
+      "split": "ef64d77199c3ebc95f24a11bcc9bc7a9a33dfc03",
+      "firstParentCommits": 23
+    },
+    "private-site": {
+      "T": "2026-10-20T11:54:01+08:00",
+      "split": "f785e74ebb74fa5cffc338aef651622c6e561406",
+      "firstParentCommits": 58
+    }
+  },
+  "grid": [
+    {
+      "N": 100,
+      "k": 2,
+      "x": 0.2,
+      "hints": 15,
+      "confirmed": 4,
+      "precision": 0.26666666666666666,
+      "recall": 0.008676789587852495,
+      "scoringCommits": 24
+    },
+    {
+      "N": 100,
+      "k": 2,
+      "x": 0.3,
+      "hints": 15,
+      "confirmed": 4,
+      "precision": 0.26666666666666666,
+      "recall": 0.008676789587852495,
+      "scoringCommits": 24
+    },
+    {
+      "N": 100,
+      "k": 2,
+      "x": 0.5,
+      "hints": 15,
+      "confirmed": 4,
+      "precision": 0.26666666666666666,
+      "recall": 0.008676789587852495,
+      "scoringCommits": 24
+    },
+    {
+      "N": 100,
+      "k": 3,
+      "x": 0.2,
+      "hints": 15,
+      "confirmed": 4,
+      "precision": 0.26666666666666666,
+      "recall": 0.008676789587852495,
+      "scoringCommits": 24
+    },
+    {
+      "N": 100,
+      "k": 3,
+      "x": 0.3,
+      "hints": 15,
+      "confirmed": 4,
+      "precision": 0.26666666666666666,
+      "recall": 0.008676789587852495,
+      "scoringCommits": 24
+    },
+    {
+      "N": 100,
+      "k": 3,
+      "x": 0.5,
+      "hints": 15,
+      "confirmed": 4,
+      "precision": 0.26666666666666666,
+      "recall": 0.008676789587852495,
+      "scoringCommits": 24
+    },
+    {
+      "N": 300,
+      "k": 2,
+      "x": 0.2,
+      "hints": 15,
+      "confirmed": 4,
+      "precision": 0.26666666666666666,
+      "recall": 0.008676789587852495,
+      "scoringCommits": 24
+    },
+    {
+      "N": 300,
+      "k": 2,
+      "x": 0.3,
+      "hints": 15,
+      "confirmed": 4,
+      "precision": 0.26666666666666666,
+      "recall": 0.008676789587852495,
+      "scoringCommits": 24
+    },
+    {
+      "N": 300,
+      "k": 2,
+      "x": 0.5,
+      "hints": 15,
+      "confirmed": 4,
+      "precision": 0.26666666666666666,
+      "recall": 0.008676789587852495,
+      "scoringCommits": 24
+    },
+    {
+      "N": 300,
+      "k": 3,
+      "x": 0.2,
+      "hints": 15,
+      "confirmed": 4,
+      "precision": 0.26666666666666666,
+      "recall": 0.008676789587852495,
+      "scoringCommits": 24
+    },
+    {
+      "N": 300,
+      "k": 3,
+      "x": 0.3,
+      "hints": 15,
+      "confirmed": 4,
+      "precision": 0.26666666666666666,
+      "recall": 0.008676789587852495,
+      "scoringCommits": 24
+    },
+    {
+      "N": 300,
+      "k": 3,
+      "x": 0.5,
+      "hints": 15,
+      "confirmed": 4,
+      "precision": 0.26666666666666666,
+      "recall": 0.008676789587852495,
+      "scoringCommits": 24
+    },
+    {
+      "N": 1000,
+      "k": 2,
+      "x": 0.2,
+      "hints": 15,
+      "confirmed": 4,
+      "precision": 0.26666666666666666,
+      "recall": 0.008676789587852495,
+      "scoringCommits": 24
+    },
+    {
+      "N": 1000,
+      "k": 2,
+      "x": 0.3,
+      "hints": 15,
+      "confirmed": 4,
+      "precision": 0.26666666666666666,
+      "recall": 0.008676789587852495,
+      "scoringCommits": 24
+    },
+    {
+      "N": 1000,
+      "k": 2,
+      "x": 0.5,
+      "hints": 15,
+      "confirmed": 4,
+      "precision": 0.26666666666666666,
+      "recall": 0.008676789587852495,
+      "scoringCommits": 24
+    },
+    {
+      "N": 1000,
+      "k": 3,
+      "x": 0.2,
+      "hints": 15,
+      "confirmed": 4,
+      "precision": 0.26666666666666666,
+      "recall": 0.008676789587852495,
+      "scoringCommits": 24
+    },
+    {
+      "N": 1000,
+      "k": 3,
+      "x": 0.3,
+      "hints": 15,
+      "confirmed": 4,
+      "precision": 0.26666666666666666,
+      "recall": 0.008676789587852495,
+      "scoringCommits": 24
+    },
+    {
+      "N": 1000,
+      "k": 3,
+      "x": 0.5,
+      "hints": 15,
+      "confirmed": 4,
+      "precision": 0.26666666666666666,
+      "recall": 0.008676789587852495,
+      "scoringCommits": 24
+    }
+  ],
+  "chosen": {
+    "N": 100,
+    "k": 2,
+    "x": 0.2
+  },
+  "tuning": {
+    "N": 100,
+    "k": 2,
+    "x": 0.2,
+    "hints": 15,
+    "confirmed": 4,
+    "precision": 0.26666666666666666,
+    "recall": 0.008676789587852495,
+    "scoringCommits": 24,
+    "perSlice": [
+      {
+        "slice": "m1",
+        "hints": [],
+        "confirmed": [],
+        "scoringCommits": 2,
+        "coChanged": 37
+      },
+      {
+        "slice": "m2",
+        "hints": [],
+        "confirmed": [],
+        "scoringCommits": 3,
+        "coChanged": 53
+      },
+      {
+        "slice": "m7",
+        "hints": [
+          "apps/web/src/Account.tsx (3, 1.00)",
+          "apps/web/src/App.tsx (3, 1.00)",
+          "apps/web/src/SideNav.tsx (3, 1.00)",
+          "apps/web/src/UserMenu.tsx (3, 1.00)",
+          "apps/web/src/index.css (3, 1.00)"
+        ],
+        "confirmed": [
+          "apps/web/src/App.tsx"
+        ],
+        "scoringCommits": 1,
+        "coChanged": 43
+      },
+      {
+        "slice": "m8",
+        "hints": [],
+        "confirmed": [],
+        "scoringCommits": 0,
+        "coChanged": 0
+      },
+      {
+        "slice": "m9",
+        "hints": [],
+        "confirmed": [],
+        "scoringCommits": 3,
+        "coChanged": 56
+      },
+      {
+        "slice": "m10",
+        "hints": [
+          "packages/jira/src/index.ts (4, 1.00)",
+          "packages/db/src/schema/jira.ts (3, 0.75)",
+          "packages/jira/src/client.ts (3, 0.75)",
+          "packages/jira/src/mapping.ts (3, 0.75)",
+          "packages/jira/test/client.test.ts (3, 0.75)"
+        ],
+        "confirmed": [],
+        "scoringCommits": 2,
+        "coChanged": 54
+      },
+      {
+        "slice": "m11",
+        "hints": [],
+        "confirmed": [],
+        "scoringCommits": 7,
+        "coChanged": 137
+      },
+      {
+        "slice": "m13",
+        "hints": [
+          "apps/web/src/Account.tsx (5, 0.83)",
+          "apps/web/src/App.tsx (5, 0.83)",
+          "apps/web/src/index.css (5, 0.83)",
+          "apps/web/test/account.test.tsx (5, 0.83)",
+          "apps/web/test/nav.test.tsx (5, 0.83)"
+        ],
+        "confirmed": [
+          "apps/web/src/App.tsx",
+          "apps/web/src/index.css",
+          "apps/web/test/nav.test.tsx"
+        ],
+        "scoringCommits": 6,
+        "coChanged": 81
+      }
+    ]
+  },
+  "heldOut": {
+    "private-api": {
+      "hints": 5,
+      "confirmed": 5,
+      "precision": 1,
+      "recall": 0.078125,
+      "scoringCommits": 6,
+      "perSlice": [
+        {
+          "slice": "m3",
+          "hints": [],
+          "confirmed": [],
+          "scoringCommits": 1,
+          "coChanged": 32
+        },
+        {
+          "slice": "m4",
+          "hints": [],
+          "confirmed": [],
+          "scoringCommits": 0,
+          "coChanged": 0
+        },
+        {
+          "slice": "m12",
+          "hints": [
+            "AGENTS.md (5, 0.71)",
+            "packages/shared/src/index.ts (5, 0.71)",
+            "apps/api/src/server.ts (4, 0.57)",
+            "packages/db/drizzle/meta/_journal.json (4, 0.57)",
+            "apps/api/test/ideas.test.ts (3, 0.43)"
+          ],
+          "confirmed": [
+            "AGENTS.md",
+            "packages/shared/src/index.ts",
+            "apps/api/src/server.ts",
+            "packages/db/drizzle/meta/_journal.json",
+            "apps/api/test/ideas.test.ts"
+          ],
+          "scoringCommits": 5,
+          "coChanged": 32
+        }
+      ]
+    },
+    "private-site": {
+      "hints": 5,
+      "confirmed": 0,
+      "precision": 0,
+      "recall": null,
+      "scoringCommits": 0,
+      "perSlice": [
+        {
+          "slice": "m5",
+          "hints": [],
+          "confirmed": [],
+          "scoringCommits": 0,
+          "coChanged": 0
+        },
+        {
+          "slice": "m6",
+          "hints": [
+            "AGENTS.md (2, 1.00)",
+            "README.md (2, 1.00)",
+            "content/README.md (2, 1.00)",
+            "mdx.config.ts (2, 1.00)",
+            "package.json (2, 1.00)"
+          ],
+          "confirmed": [],
+          "scoringCommits": 0,
+          "coChanged": 0
+        }
+      ]
+    }
+  },
+  "pass": false
+}
