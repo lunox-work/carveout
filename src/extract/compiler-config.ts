@@ -247,7 +247,18 @@ function lazyWorkspaces(root: string): () => ReadonlyMap<string, string> {
  * outside the root. A base in an installed package resolves when the
  * package is one of the repository's own workspaces.
  */
-export function loadConfig(root: string, file: string): LoadedConfig {
+export function loadConfig(
+  root: string,
+  file: string,
+  /**
+   * For a caller loading many files' configurations: the workspaces read
+   * once, and each tsconfig loaded once, for that run.
+   */
+  shared: {
+    readonly packages?: () => ReadonlyMap<string, string>;
+    readonly loaded?: Map<string, LoadedConfig>;
+  } = {},
+): LoadedConfig {
   let config: string | undefined;
   for (let dir = dirname(resolve(root, file)); ; dir = dirname(dir)) {
     const rel = relative(root, dir);
@@ -267,9 +278,11 @@ export function loadConfig(root: string, file: string): LoadedConfig {
   };
   if (config === undefined)
     return { path: null, options: defaults, rawOptions: undefined, errors: [] };
+  const known = shared.loaded?.get(config);
+  if (known !== undefined) return known;
   // TypeScript looks for a package base under node_modules; the snapshot
   // has none, so those lookups are answered from the workspaces.
-  const packages = lazyWorkspaces(root);
+  const packages = shared.packages ?? lazyWorkspaces(root);
   const real = (path: string) => throughWorkspaces(path, packages);
   const exists = (path: string) =>
     isInside(root, real(path)) && existsSync(real(path));
@@ -293,20 +306,22 @@ export function loadConfig(root: string, file: string): LoadedConfig {
     ...(loaded.error === undefined ? [] : [loaded.error]),
     ...parsed.errors.filter((error) => error.code !== 18003),
   ].map((error) => ts.flattenDiagnosticMessageText(error.messageText, " "));
-  return {
+  const result: LoadedConfig = {
     path: relative(root, config).replaceAll("\\", "/"),
     options: { ...defaults, ...parsed.options },
-    rawOptions: rawOptionsOf(root, config),
+    rawOptions: rawOptionsOf(root, config, packages),
     errors,
   };
+  shared.loaded?.set(config, result);
+  return result;
 }
 
 /** Active recursion detects cycles; a base resolved on a sibling branch still applies. */
 function rawOptionsOf(
   root: string,
   configPath: string,
+  packages: () => ReadonlyMap<string, string> = lazyWorkspaces(root),
 ): Record<string, unknown> | undefined {
-  const packages = lazyWorkspaces(root);
   const active = new Set<string>();
   const cache = new Map<string, Record<string, unknown>>();
   const resolveOptions = (path: string): Record<string, unknown> => {

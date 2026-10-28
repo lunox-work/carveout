@@ -23,7 +23,11 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import ts from "typescript";
-import { loadConfig } from "./extract/compiler-config.js";
+import {
+  loadConfig,
+  workspacePackages,
+  type LoadedConfig,
+} from "./extract/compiler-config.js";
 import { isAssetPath } from "./project/project.js";
 import type { SliceGraph, SliceGraphLink, SliceGraphNode } from "./core.js";
 
@@ -138,9 +142,16 @@ export interface BuiltGraph {
   readonly files: readonly string[];
   /** Files whose `tsconfig.json` could not be read. */
   readonly invalidConfigs: readonly string[];
+  /** Where the time went, in milliseconds: resolving is the compiler's
+   * configuration and module resolution, parsing the rest of the walk. */
+  readonly timings: { readonly listMs: number; readonly parseMs: number; readonly resolveMs: number };
 }
 
-export function buildGraph(root: string, files = listFiles(root)): BuiltGraph {
+export function buildGraph(root: string, listed?: readonly string[]): BuiltGraph {
+  const started = performance.now();
+  const files = listed ?? listFiles(root);
+  const listMs = performance.now() - started;
+  let resolveMs = 0;
   const absoluteRoot = resolve(root);
   const inside = (path: string) => {
     const rel = relative(absoluteRoot, resolve(path));
@@ -150,10 +161,23 @@ export function buildGraph(root: string, files = listFiles(root)): BuiltGraph {
       !rel.split(/[\\/]/).includes("node_modules")
     );
   };
+  // One run sees one tree, so what exists is read once per path, and each
+  // compiler configuration keeps one resolution cache for the run.
+  const memo = <T>(read: (path: string) => T) => {
+    const known = new Map<string, T>();
+    return (path: string): T => {
+      let value = known.get(path);
+      if (value === undefined && !known.has(path)) {
+        value = read(path);
+        known.set(path, value);
+      }
+      return value as T;
+    };
+  };
   const host: ts.ModuleResolutionHost = {
-    fileExists: (path) => inside(path) && ts.sys.fileExists(path),
-    readFile: (path) => (inside(path) ? ts.sys.readFile(path) : undefined),
-    directoryExists: (path) => inside(path) && ts.sys.directoryExists(path),
+    fileExists: memo((path) => inside(path) && ts.sys.fileExists(path)),
+    readFile: memo((path) => (inside(path) ? ts.sys.readFile(path) : undefined)),
+    directoryExists: memo((path) => inside(path) && ts.sys.directoryExists(path)),
     getCurrentDirectory: () => absoluteRoot,
     getDirectories: (path) => (inside(path) ? ts.sys.getDirectories(path) : []),
     realpath: (path) => path,
@@ -177,21 +201,43 @@ export function buildGraph(root: string, files = listFiles(root)): BuiltGraph {
     return id;
   };
   const configs = new Map<string, ts.CompilerOptions>();
+  const byConfig = new Map<string | null, ts.CompilerOptions>();
+  let workspaces: ReadonlyMap<string, string> | undefined;
+  const shared = {
+    packages: () => (workspaces ??= workspacePackages(absoluteRoot)),
+    loaded: new Map<string, LoadedConfig>(),
+  };
+  const caches = new Map<ts.CompilerOptions, ts.ModuleResolutionCache>();
+  const cacheOf = (options: ts.CompilerOptions) => {
+    let cache = caches.get(options);
+    if (cache === undefined) {
+      cache = ts.createModuleResolutionCache(absoluteRoot, (name) => name, options);
+      caches.set(options, cache);
+    }
+    return cache;
+  };
   for (const file of scripts) {
     const absolute = join(absoluteRoot, file);
     const directory = dirname(absolute);
     let options = configs.get(directory);
     if (options === undefined) {
-      const loaded = loadConfig(absoluteRoot, absolute);
+      const resolving = performance.now();
+      const loaded = loadConfig(absoluteRoot, absolute, shared);
       if (loaded.errors.length > 0) invalidConfigs.push(file);
-      options = {
-        module: ts.ModuleKind.NodeNext,
-        moduleResolution: ts.ModuleResolutionKind.NodeNext,
-        allowJs: true,
-        resolveJsonModule: true,
-        ...(loaded.path === null ? {} : loaded.options),
-      };
+      // One options object per tsconfig, so its directories share a cache.
+      options = byConfig.get(loaded.path);
+      if (options === undefined) {
+        options = {
+          module: ts.ModuleKind.NodeNext,
+          moduleResolution: ts.ModuleResolutionKind.NodeNext,
+          allowJs: true,
+          resolveJsonModule: true,
+          ...(loaded.path === null ? {} : loaded.options),
+        };
+        byConfig.set(loaded.path, options);
+      }
       configs.set(directory, options);
+      resolveMs += performance.now() - resolving;
     }
     const text = readFileSync(absolute, "utf8");
     const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
@@ -214,11 +260,13 @@ export function buildGraph(root: string, files = listFiles(root)): BuiltGraph {
     };
     for (const imported of ts.preProcessFile(text, true, true).importedFiles) {
       const specifier = imported.fileName;
+      const resolving = performance.now();
       const result = ts.resolveModuleName(
         specifier,
         absolute,
         options,
         host,
+        cacheOf(options),
       ).resolvedModule;
       const line = lineOf(imported.pos);
       // An asset the compiler does not resolve (a stylesheet, an image)
@@ -237,6 +285,7 @@ export function buildGraph(root: string, files = listFiles(root)): BuiltGraph {
               statSync(asset).isFile()
             ? posix(relative(absoluteRoot, asset))
             : null;
+      resolveMs += performance.now() - resolving;
       const bare =
         !specifier.startsWith(".") &&
         !specifier.startsWith("/") &&
@@ -319,5 +368,10 @@ export function buildGraph(root: string, files = listFiles(root)): BuiltGraph {
     },
     files: scripts,
     invalidConfigs: invalidConfigs.sort(compare),
+    timings: {
+      listMs: Math.round(listMs),
+      resolveMs: Math.round(resolveMs),
+      parseMs: Math.round(performance.now() - started - listMs - resolveMs),
+    },
   };
 }
