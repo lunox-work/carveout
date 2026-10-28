@@ -57,6 +57,11 @@ billing-slice/
 - **Assets.** Stylesheets and images a module imports are copied, and load
   in Node as their path. `import.meta.glob` and `import.meta.env` work
   under Node.
+- **The repository's checks.** The compiler options that only reject
+  code (`strict`, `noUnusedLocals` and the like) come from the
+  repository's tsconfig. Node's types come at the repository's version.
+  When the package's own test sets coverage thresholds, `npm test` holds
+  the source files you add to them.
 - **Credentials.** A credentials file is never copied, and a credential
   found in anything written blocks the cut.
 

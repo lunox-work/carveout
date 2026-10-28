@@ -211,6 +211,36 @@ export interface ProjectInput {
   /** What the sources read of each package, declared as the slice's check declared it. */
   readonly packageModules?: PackageModules;
   readonly toolchain?: Toolchain;
+  /** The coverage the repository's package test holds its sources to. */
+  readonly coverage?: CoverageGate;
+}
+
+/**
+ * Coverage thresholds a package's `node --test` script sets, in percent,
+ * over the sources under `folder` (a package's root, "" for the root).
+ */
+export interface CoverageGate {
+  readonly folder: string;
+  readonly lines?: number;
+  readonly branches?: number;
+  readonly functions?: number;
+}
+
+/** The thresholds a package's test script passes to `node --test`, if any. */
+export function coverageGateOf(folder: string, script: string): CoverageGate | null {
+  if (!/--experimental-test-coverage/.test(script)) return null;
+  const read = (name: string) => {
+    const match = new RegExp(`--test-coverage-${name}=(\\d+(?:\\.\\d+)?)`).exec(script);
+    return match === null ? undefined : Number(match[1]);
+  };
+  const gate = { lines: read("lines"), branches: read("branches"), functions: read("functions") };
+  if (gate.lines === undefined && gate.branches === undefined && gate.functions === undefined) return null;
+  return {
+    folder,
+    ...(gate.lines === undefined ? {} : { lines: gate.lines }),
+    ...(gate.branches === undefined ? {} : { branches: gate.branches }),
+    ...(gate.functions === undefined ? {} : { functions: gate.functions }),
+  };
 }
 
 export interface GeneratedFile {
@@ -725,6 +755,15 @@ const SAFE_COMPILER_KEYS: readonly string[] = [
   "noImplicitOverride",
   "noPropertyAccessFromIndexSignature",
   "useUnknownInCatchVariables",
+  // Checks that only reject code: the slice holds the code to them as the
+  // repository does, so what passes here passes there.
+  "noUnusedLocals",
+  "noUnusedParameters",
+  "noImplicitReturns",
+  "noFallthroughCasesInSwitch",
+  "allowUnreachableCode",
+  "allowUnusedLabels",
+  "forceConsistentCasingInFileNames",
 ];
 
 /**
@@ -850,7 +889,31 @@ function interfaceTests(
  * after the cut runs too. Each goes to the runner it imports; Node runs the
  * compiled `.js`, Vitest the source.
  */
-function testRunnerScript(): string {
+function testRunnerScript(coverage: CoverageGate | undefined): string {
+  // The gate covers the package's compiled sources the folder holds: a
+  // \`.js\` beside its \`.ts\`, never a stub's mock or a test.
+  const gate =
+    coverage === undefined
+      ? ["const gate = [];"]
+      : [
+          `const folder = ${JSON.stringify(coverage.folder)};`,
+          "// Only sources the cut did not copy: the slice's tests cannot reach",
+          "// the repository's coverage of the rest, so the gate holds new code.",
+          "const copied = new Set(JSON.parse(readFileSync(\"carveout.json\", \"utf8\")).manifest.included.map((file) => file.path));",
+          "const source = (path) => /\\.js$/.test(path) && !TEST.test(path) &&",
+          '  [".ts", ".tsx"].some((ext) => existsSync(path.replace(/\\.js$/, ext)) && !copied.has(path.replace(/\\.js$/, ext)));',
+          "const covered = node.length === 0 ? [] : listed(folder).filter(source).sort();",
+          "const gate = covered.length === 0 ? [] : [",
+          '  "--experimental-test-coverage",',
+          ...(["lines", "branches", "functions"] as const).flatMap((name) =>
+            coverage[name] === undefined ? [] : [`  "--test-coverage-${name}=${coverage[name]}",`],
+          ),
+          "  ...covered.map((path) => `--test-coverage-include=${path}`),",
+          "  // Loaded in every test process, so a file no test imports counts",
+          "  // as uncovered rather than unseen.",
+          "  ...covered.map((path) => `--import=./${path}`),",
+          "];",
+        ];
   return `${[
     "// \`npm test\`, after \`npm run build\`: finds the folder's tests now, the",
     "// interface test and any the slice holds or gained, and runs each on the",
@@ -876,7 +939,14 @@ function testRunnerScript(): string {
     "  }",
     "};",
     'walk("");',
+    "/** The files under a folder of the slice, outside node_modules and carveout/. */",
+    "const listed = (dir) =>",
+    '  readdirSync(dir || ".", { recursive: true, withFileTypes: true })',
+    "    .filter((entry) => entry.isFile())",
+    '    .map((entry) => join(entry.parentPath, entry.name).replace(/^\\.\\//, ""))',
+    '    .filter((path) => !path.split("/").includes("node_modules") && !path.startsWith("carveout/"));',
     "node.sort();",
+    ...gate,
     "vitest.sort();",
     "let failed = false;",
     "const run = (command, args) => {",
@@ -884,7 +954,7 @@ function testRunnerScript(): string {
     "  if (result.status !== 0) failed = true;",
     "};",
     "if (node.length > 0)",
-    `  run(process.execPath, ["--env-file=${ENV_FILE}", "--import=./${ASSETS_LOADER_PATH}", "--test", ...node]);`,
+    `  run(process.execPath, ["--env-file=${ENV_FILE}", "--import=./${ASSETS_LOADER_PATH}", "--test", ...gate, ...node]);`,
     "if (vitest.length > 0) {",
     '  const bin = join("node_modules", ".bin", "vitest");',
     "  if (existsSync(bin)) run(bin, [\"run\", ...vitest]);",
@@ -933,6 +1003,7 @@ function readme(input: {
   environment: readonly string[];
   rewrites: readonly ImportRewrite[];
   tests: readonly string[];
+  coverage?: CoverageGate | undefined;
 }): string {
   const list = (items: readonly string[], empty: string) =>
     items.length === 0 ? [empty] : items.map((item) => `- \`${item}\``);
@@ -957,6 +1028,14 @@ function readme(input: {
     "",
     `\`${SANDBOX_COMMANDS.dev}\` runs \`${RUN_PATH}\`, which loads each entry point; replace it to exercise the slice.`,
     "",
+    ...(input.coverage === undefined
+      ? []
+      : [
+          `\`${SANDBOX_COMMANDS.test}\` holds the source files you add under \`${input.coverage.folder || "."}\` to the coverage the repository's own test requires of the package: ${(["lines", "branches", "functions"] as const)
+            .flatMap((name) => (input.coverage?.[name] === undefined ? [] : [`${name} ${input.coverage[name]}%`]))
+            .join(", ")}. Write tests for what you add; the files the cut copied are measured in the repository, not here.`,
+          "",
+        ]),
     "## The slice",
     "",
     "Copied from the repository, at the same paths. Edit these:",
@@ -1305,7 +1384,7 @@ export function generateProject(input: ProjectInput): GeneratedProject {
   }
   add({
     path: TEST_RUNNER_PATH,
-    text: testRunnerScript(),
+    text: testRunnerScript(input.coverage),
     class: "harness",
     public: true,
   });
@@ -1395,6 +1474,7 @@ export function generateProject(input: ProjectInput): GeneratedProject {
       environment,
       rewrites,
       tests,
+      coverage: input.coverage,
     }),
     class: "config",
     public: true,

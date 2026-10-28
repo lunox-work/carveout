@@ -19,6 +19,7 @@ import { command } from "./command.js";
 import {
   IMPORT_LITERAL,
   SLICE_BUDGET_DEFAULTS,
+  coverageGateOf,
   declarationPath,
   detectExternals,
   generateProject,
@@ -29,6 +30,7 @@ import {
   resolveScope,
   runtimePath,
   type BoundaryContract,
+  type CoverageGate,
   type DependencyChoice,
   type GeneratedFile,
   type ImportRewrite,
@@ -518,6 +520,22 @@ export async function computeCut(
   const first = manifest.included[0]?.path;
   const compilerOptions =
     first === undefined ? undefined : nearestCompilerOptions(repo, first);
+  // The coverage the entry points' package test requires, carried into the
+  // folder's `npm test`.
+  const packageDir =
+    entryPoints[0] === undefined ? null : packageFolder(repo)(`${entryPoints[0]}/`);
+  let coverage: CoverageGate | null = null;
+  if (packageDir !== null)
+    try {
+      const script = (
+        JSON.parse(readFileSync(join(repo, packageDir, "package.json"), "utf8")) as {
+          scripts?: Record<string, string>;
+        }
+      ).scripts?.["test"];
+      if (typeof script === "string") coverage = coverageGateOf(packageDir, script);
+    } catch {
+      // No readable package.json: no gate.
+    }
   const project = generateProject({
     origin: {
       repository: basename(repo),
@@ -533,6 +551,7 @@ export async function computeCut(
       installed.has(packageNameOf(specifier)),
     ),
     ...(compilerOptions === undefined ? {} : { compilerOptions }),
+    ...(coverage === null ? {} : { coverage }),
   });
   // Peers the installed packages need, and packages asked for by name
   // that the slice does not import, as the repository installs them.

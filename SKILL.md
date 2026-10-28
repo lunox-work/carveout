@@ -131,6 +131,12 @@ package is missing at runtime, the check says which `--install` to cut again
 with. Report the result to the person as it is. A failed step is not "mostly
 working".
 
+`npm test` finds the folder's tests when it runs, so tests written after
+the cut run too. When the package's own test sets coverage thresholds
+(`--test-coverage-lines` and the like), it holds the source files added
+after the cut to them. It loads each such file, so one no test imports
+counts as uncovered.
+
 ## 4. Work in the folder
 
 Edit the slice's files there. To see what a mock was asked, or to make it

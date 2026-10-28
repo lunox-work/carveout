@@ -263,3 +263,19 @@ test("two imports rewritten to one come back as the source wrote each", () => {
   ];
   assert.equal(undoRewrites(cut, rewrites, original), original);
 });
+
+test("a slice holds the repository's checks and its coverage of added code", async () => {
+  const { coverageGateOf, projectCompilerOptions } = await import("../src/core.js");
+  const options = projectCompilerOptions({ noUnusedLocals: true, noUnusedParameters: true, paths: { "@/*": ["x"] } });
+  assert.equal(options["noUnusedLocals"], true);
+  assert.equal(options["noUnusedParameters"], true);
+  assert.equal(options["paths"], undefined);
+  assert.deepEqual(
+    coverageGateOf(
+      "packages/core",
+      "tsc -p tsconfig.test.json && node --experimental-test-coverage --test-coverage-lines=90 --test-coverage-branches=85 --test dist-test/test/*.test.js",
+    ),
+    { folder: "packages/core", lines: 90, branches: 85 },
+  );
+  assert.equal(coverageGateOf("", "vitest run"), null);
+});
