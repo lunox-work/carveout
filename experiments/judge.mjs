@@ -163,7 +163,17 @@ export function sliceTests(dir) {
     const build = shell(work, "npm run build --silent");
     if (!build.ok) return { ok: false, step: "build", output: build.output.slice(-3000) };
     const run = shell(work, "node carveout/test.js");
-    return { ok: run.ok, step: "test", ...counts(run.full), tests: testResults(run.full), ...(run.ok ? {} : { output: run.output.slice(-3000) }) };
+    return {
+      ok: run.ok,
+      step: "test",
+      ...counts(run.full),
+      tests: testResults(run.full),
+      // What fails npm test besides a test: the coverage gate, or a test
+      // the repository's script would not run.
+      gateFailed: /coverage does not meet threshold/.test(run.full),
+      unrun: /so it would not run these/.test(run.full),
+      ...(run.ok ? {} : { output: run.output.slice(-3000) }),
+    };
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
@@ -182,7 +192,9 @@ export function verdictOf(baseline, after) {
   const added = Object.keys(now).filter((name) => !(name in before));
   const addedFailing = added.filter((name) => !now[name]);
   return {
-    ok: regressions.length === 0 && addedFailing.length === 0,
+    ok: regressions.length === 0 && addedFailing.length === 0 && after.gateFailed !== true && after.unrun !== true,
+    ...(after.gateFailed === true ? { gateFailed: true } : {}),
+    ...(after.unrun === true ? { unrun: true } : {}),
     regressions,
     added: added.length,
     addedFailing,
