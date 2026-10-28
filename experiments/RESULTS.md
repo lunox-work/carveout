@@ -212,3 +212,140 @@ they say nothing about carveout.
 - **In-slice baselines.** Tests that fail at the slice's baseline fail on
   the mocks: 3 in identicon (shared's handle schema, whose validator is in
   core) and none in most others. They are counted, not judged.
+
+## E6a: a slice against the whole repository
+
+The bars are in [PLAN-benchmark.md](PLAN-benchmark.md), Phase 5, and the
+arithmetic is in `bench/analyze.mjs`. Both were committed before the run.
+
+- **Runs.** Haiku 5.5 on CLI `e407a46` with the harness at `032fed9`. The
+  data is in `results/bench.jsonl`.
+- **Usable cases.** 8 of 11. A template of every arm must build at B, and
+  three did not (`results/bench-unusable.jsonl`):
+  - limit-jobs and recent-reads: the slice of the commit's files;
+  - setup-stage: the seam slice, a web test under `NodeNext`, as in E5.
+- **The brief and the judge.** Each case's developer-confirmed spec
+  briefed the agent, and its calibrated hidden suite judged it.
+
+### Haiku, 8 cases × 5 runs
+
+| arm          | accepted | other verdicts           |
+| ------------ | -------: | ------------------------ |
+| `full`       |  35 / 40 | refused 5                |
+| `slice-seam` |  36 / 40 | rejected 3, functional 1 |
+| `slice-diff` |  34 / 40 | rejected 5, functional 1 |
+
+| Bar                                                  | Result                             | Verdict         |
+| ---------------------------------------------------- | ---------------------------------- | --------------- |
+| Non-inferiority, one-sided 95% lower bound above -10 | +2.5 points, bound -9.7            | pass, see below |
+| Slice passed, repository failed, at most 5%          | 4 of 40 (10%)                      | **fail**        |
+| Total input at least 30% lower (median of cases)     | 14.7% lower; lower in 6 of 8 cases | **fail**        |
+| Cost per accepted run at least 30% lower             | 14.5% higher; lower in 3 of 7      | **fail**        |
+
+**Every exception, classified by hand:**
+
+- **The 5 refusals are a harness artifact.** All 5 are ticket-content's
+  `full` runs. `turbo` writes a managed block into `AGENTS.md` when it
+  detects an agent, and the agent had run `npx turbo`. The scope rule
+  refused that block. All 5 passed every other check.
+  - Counted as accepted, `full` is 40 of 40. The non-inferiority bound
+    then falls to -20.5, and the bar **fails**.
+  - The registered pass rests on the artifact, so it is not claimed. The
+    harness now takes the block out before the diff (`01691fd`).
+- **The 4 slice-passed, repository-failed runs are carveout defects,**
+  fixed in `05f4f9f`:
+  - **Three (categories)** left an unused `import type`. The repository
+    compiles with `noUnusedLocals`, and the slice did not carry it. The
+    two `slice-diff` rejections in categories are the same defect.
+  - **One (jira-spec)** reached 89.8% branch coverage against the
+    package's 90% gate, which the slice did not hold. One `slice-diff` run
+    is the same.
+- **In-slice false failures, the safe direction.** All 10 identicon slice
+  runs failed one hidden test inside the slice and passed it after the
+  merge. That test exercises shared's schemas, which delegate to a mocked
+  core module.
+- **Real failures.** jira-spec `slice-diff` runs 2 and 5 failed a hidden
+  boundary test, and both verdicts agree.
+- **One more option gap.** identicon `slice-diff` run 4 failed in the
+  repository on an implicit `any` in its own test. The slice forces
+  `noImplicitAny: false` so that untyped packages compile. Not fixed.
+
+**Where the tokens go.** Agents explore with Bash (`cat`, `ls`,
+`grep`) more than with the file tools. Over 40 runs each:
+
+| arm          | Bash calls | Read, Grep, Glob |
+| ------------ | ---------: | ---------------: |
+| `full`       |        314 |               13 |
+| `slice-seam` |        225 |               21 |
+
+The confirmed spec names the files to create, so a `full` agent goes
+straight to its package. The fixed costs then weigh most in both arms: the
+system prompt, the spec and test output.
+
+Per-case reduction in total input for `slice-seam`:
+
+| case            | reduction |
+| --------------- | --------: |
+| categories      |       40% |
+| identicon       |       28% |
+| jira-spec       |       26% |
+| analysis-params |       16% |
+| context-sources |       14% |
+| ticket-content  |        7% |
+| step-holds      |      -15% |
+| handles         |      -20% |
+
+The slice saves most where a change spans several files with heavy test
+output (categories), and costs more on one-file changes (handles,
+step-holds). There it adds its own orientation: `BOUNDARY.md` and
+`carveout/test.js`. A brief that names the files leaves little exploration
+for a slice to save, so this corpus is a hard case for the efficiency
+claim. A loose brief needs exploration, but E6's pilot found a loose brief
+cannot be judged without a confirmed spec.
+
+### Sonnet check, 8 cases × 3 runs
+
+The same harness and CLI, Sonnet 5.5 on `full` and `slice-seam`.
+
+| arm          | accepted | other verdicts        |
+| ------------ | -------: | --------------------- |
+| `full`       |  20 / 24 | refused 3, rejected 1 |
+| `slice-seam` |  17 / 24 | functional 7          |
+
+| Bar                                         | Result                             | Verdict  |
+| ------------------------------------------- | ---------------------------------- | -------- |
+| Non-inferiority, bound above -10            | -12.5 points, bound -31.5          | **fail** |
+| Slice passed, repository failed, at most 5% | 7 of 24 (29%)                      | **fail** |
+| Total input at least 30% lower              | 10.2% lower; lower in 6 of 8 cases | **fail** |
+| Cost per accepted run at least 30% lower    | 10.9% lower; lower in 3 of 5       | **fail** |
+
+- **The coverage gate.** All 7 `functional` slice runs passed the hidden
+  suite and the importers' build, then missed the package's coverage gate
+  in the repository: branches at 82–89% against 90%, in jira-spec,
+  categories and handles. The slice did not hold that gate, which
+  `05f4f9f` fixes. The `full` agents met it, because the package's own
+  `npm test` enforces it.
+- **The 3 refusals** are `turbo`'s block in `AGENTS.md` again
+  (ticket-content), with every other check passing.
+- **The one real failure** is a `full` run of categories, which failed a
+  hidden boundary test.
+- **Sonnet hit no `noUnusedLocals` failures,** where Haiku hit three.
+- **What Sonnet saves.** Total input falls only 10%, but output falls 33%
+  (lower in 7 of 8 cases), cost 18% (lower in all 8) and wall time 23%.
+  identicon is the outlier: the slice used 2.1× the input, over the
+  in-slice test it cannot pass on the mocks.
+
+### What E6a says
+
+- **Correctness.** As registered, it fails on both models. Every exception
+  traced to one of three things:
+  - two gaps where the slice was looser than the repository
+    (`noUnusedLocals`, and the coverage gate), both fixed in `05f4f9f`;
+  - one harness artifact (`turbo`), fixed in `01691fd`;
+  - and the safe-direction mock limit (identicon).
+- **Efficiency.** As registered, it fails: 10–15% less input, against a
+  bar of 30%. On these spec-named, mostly one-package changes, the slice
+  saves the tokens of exploration and test output, and adds its own
+  orientation.
+- **Next, E6b.** The same bars, a CLI with the fixes, and a corpus grown
+  past 11 cases, with briefs that leave the agent something to find.
