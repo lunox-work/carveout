@@ -43,7 +43,7 @@ import { WORK_ROOT, claude, discard, peeks } from "./lib.mjs";
 
 const BENCH = join(HERE, "bench");
 const CASES = JSON.parse(readFileSync(join(HERE, "e5-cases.json"), "utf8")).cases;
-const RESULTS = join(HERE, "results", "bench.jsonl");
+const RESULTS = process.env.BENCH_RESULTS ?? join(HERE, "results", "bench.jsonl");
 const TEMPLATES = join(WORK, "bench", "templates");
 const JUDGING = join(WORK, "bench", "judging");
 const RUNS = join(WORK, "bench", "runs");
@@ -76,25 +76,23 @@ const hiddenOf = (item) =>
     .map((name) => ({ path: `${toolchainOf(item).hiddenDir}/${name}`, from: join(specOf(item), "private", name) }));
 const within = (path, allowed) => allowed.some((entry) => (entry.endsWith("/") ? path.startsWith(entry) : path === entry));
 
-function brief(item, arm, baseline) {
+function brief(item, arm) {
   const text = readFileSync(join(BENCH, "prompts", arm === "full" ? "full.md" : "slice.md"), "utf8");
-  const failing = Object.entries(baseline?.tests ?? {}).filter(([, ok]) => !ok).map(([name]) => `\`${name}\``);
   return text
     .replaceAll("{{package}}", item.package)
     .replaceAll("{{allowed}}", allowedOf(item).map((path) => `\`${path}\``).join(", "))
-    .replaceAll(
-      "{{baseline}}",
-      failing.length === 0
-        ? "Before any change, every test in it passes."
-        : `Before any change, ${failing.length} test(s) fail on the mocks, not on your change: ${failing.join(", ")}.`,
-    )
+    // What the folder says of itself since eec1139: npm test names the
+    // tests that fail on the mocks and does not count them.
+    .replaceAll("{{baseline}}", "")
     .replaceAll("{{spec}}", readFileSync(join(specOf(item), "spec.md"), "utf8").trim());
 }
 
 /** The workdir every run of a case and arm starts from, made once. */
 function template(cli, item, arm) {
-  const dir = join(TEMPLATES, item.slug, arm);
-  const ready = join(TEMPLATES, item.slug, `${arm}.json`);
+  // A slice is the CLI's output: one template per build of it.
+  const home = arm === "full" ? join(TEMPLATES, item.slug) : join(TEMPLATES, cli.id.split("dist:")[1] ?? "cli", item.slug);
+  const dir = join(home, arm);
+  const ready = join(home, `${arm}.json`);
   if (existsSync(ready)) return { dir, ...JSON.parse(readFileSync(ready, "utf8")) };
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
@@ -120,11 +118,14 @@ function template(cli, item, arm) {
     const cut = carveout(cli, ["cut", ...entries, "--repo", repo, "--depth", "1", "--max-files", "200", "--with-tests", "--out", dir]);
     if (cut.code !== 0 && cut.code !== 2) throw new Error(`${item.slug}/${arm}: cut failed:\n${cut.stderr}`);
     const cutMs = Date.now() - started;
+    // As a person would next: the check, which records the tests that fail
+    // on the mocks before any change.
+    const checked = carveout(cli, ["check", dir, "--json"]);
     const baseline = sliceTests(dir);
     if (baseline.step !== "test") throw new Error(`${item.slug}/${arm}: the slice does not build at B:\n${baseline.output}`);
     execFileSync("sh", ["-c", existsSync(join(dir, "package-lock.json")) ? "npm ci --no-audit --no-fund --loglevel=error" : "npm install --no-audit --no-fund --loglevel=error"], { cwd: dir });
     const record = JSON.parse(readFileSync(join(dir, "carveout.json"), "utf8"));
-    meta = { base, entries, files: record.manifest.included.length, cutMs, setupMs: Date.now() - started, baseline: { tests: baseline.tests, pass: baseline.pass, fail: baseline.fail } };
+    meta = { base, entries, files: record.manifest.included.length, cutMs, setupMs: Date.now() - started, checked: checked.code === 0, mockFailures: existsSync(join(dir, "carveout", "baseline.json")) ? JSON.parse(readFileSync(join(dir, "carveout", "baseline.json"), "utf8")).failing.length : 0, baseline: { tests: baseline.tests, pass: baseline.pass, fail: baseline.fail } };
   }
   writeFileSync(ready, JSON.stringify(meta));
   return { dir, ...meta };
@@ -168,7 +169,7 @@ async function session(cli, item, arm, n, prepared) {
   mkdirSync(out, { recursive: true });
   const transcript = join(out, "transcript.jsonl");
   try {
-    const agent = await claude({ cwd: work, text: brief(item, arm, prepared.baseline), transcript, model });
+    const agent = await claude({ cwd: work, text: brief(item, arm), transcript, model });
     if (agent.apiError === "usage_limit_reached" || /usage limit/i.test(agent.stderr)) return { limited: true };
     const change = join(out, "change.patch");
     let patch = null;

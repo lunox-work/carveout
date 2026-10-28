@@ -12,7 +12,8 @@ patch, and those files do not.
 
 Before you finish, run `npm test` at the folder's root and make your change
 pass. It builds the folder and runs every test in it, including tests you
-add. {{baseline}}
+add. If it names tests that fail on the mocks, they failed before your
+change, and it does not count them.
 
 <spec>
 {{spec}}
