@@ -229,6 +229,21 @@ async function main() {
     for (const arm of arms)
       for (let n = 1; n <= runs; n += 1)
         if (!finished.has(`${item.slug}/${arm}/${model}/${n}`)) tasks.push({ item, arm, n });
+  // Every template first, one at a time: a case with an arm whose template
+  // does not build is unusable, reported and left out of every arm.
+  const unusable = new Set();
+  for (const { item, arm } of tasks) {
+    if (unusable.has(item.slug)) continue;
+    try {
+      template(cli, item, arm);
+    } catch (error) {
+      unusable.add(item.slug);
+      const line = { slug: item.slug, arm, reason: String(error?.message ?? error).slice(0, 3000), at: new Date().toISOString() };
+      writeFileSync(join(HERE, "results", "bench-unusable.jsonl"), `${JSON.stringify(line)}\n`, { flag: "a" });
+      log("bench", `${item.slug}: unusable, ${arm} template: ${line.reason.split("\n")[0]}`);
+    }
+  }
+  for (let i = tasks.length - 1; i >= 0; i -= 1) if (unusable.has(tasks[i].item.slug)) tasks.splice(i, 1);
   log("bench", `${tasks.length} runs to do`);
   let judging = Promise.resolve();
   let stopped = false;
@@ -270,8 +285,6 @@ async function main() {
       });
     }
   };
-  // Templates are made one at a time, before any session starts.
-  for (const { item, arm } of tasks) template(cli, item, arm);
   await Promise.all(Array.from({ length: concurrency }, next));
   await judging;
 }
