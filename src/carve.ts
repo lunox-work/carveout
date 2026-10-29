@@ -298,6 +298,45 @@ export function lockedVersion(repo: string, name: string): string | null {
 }
 
 /**
+ * A package-lock.json for the folder seeded from the repository's: every
+ * package the repository installs, at the version it installs it, the
+ * slice's workspaces' own installs over the root's (the first workspace
+ * last, so it wins). npm keeps a seeded version that satisfies the range
+ * and prunes the rest, so the folder runs what the repository runs rather
+ * than what the registry has newest. Null without an npm lockfile.
+ */
+export function seededLockfile(
+  repo: string,
+  workspaces: readonly string[],
+  root: Record<string, unknown>,
+): Record<string, unknown> | null {
+  let lock: { packages?: Record<string, Record<string, unknown>> };
+  try {
+    lock = JSON.parse(readFileSync(join(repo, "package-lock.json"), "utf8"));
+  } catch {
+    return null;
+  }
+  const source = lock.packages ?? {};
+  const packages: Record<string, Record<string, unknown>> = {};
+  const take = (prefix: string) => {
+    for (const [key, entry] of Object.entries(source)) {
+      if (!key.startsWith(`${prefix}node_modules/`) || entry["link"] === true) continue;
+      packages[key.slice(prefix.length)] = entry;
+    }
+  };
+  take("");
+  for (const workspace of [...workspaces].reverse())
+    if (workspace !== "") take(`${workspace}/`);
+  return {
+    name: root["name"],
+    version: root["version"],
+    lockfileVersion: 3,
+    requires: true,
+    packages: { "": root, ...packages },
+  };
+}
+
+/**
  * Peers of the installed packages, and of what they install, that the
  * repository's npm lockfile installs at its root for production: a
  * package the slice does not import but one it installs needs, at the
@@ -511,13 +550,19 @@ export async function computeCut(
       )
       .map((dependency) => dependency.name),
   );
+  const includedPaths = manifest.included.map((file) => file.path);
+  const nodeTypes = sources.some((source) =>
+    [...source.text.matchAll(IMPORT_LITERAL)].some((match) =>
+      isNodeBuiltin(match[3] ?? ""),
+    ),
+  ) ? repositoryVersion(repo, "@types/node", includedPaths) : null;
   const uses = packageUses(
     new Map([...sources, ...stubs].map((file) => [file.path, file.text])),
     (specifier) =>
       !specifier.startsWith(".") &&
       !specifier.startsWith("/") &&
       (packageNames.has(packageNameOf(specifier)) ||
-        isNodeBuiltin(specifier)),
+        (nodeTypes === null && isNodeBuiltin(specifier))),
   );
   const first = manifest.included[0]?.path;
   const compilerOptions =
@@ -555,6 +600,7 @@ export async function computeCut(
     ...(compilerOptions === undefined ? {} : { compilerOptions }),
     ...(coverage === null ? {} : { coverage }),
     keepsImplicitAny: analysis.keepsImplicitAny,
+    hasNodeTypes: nodeTypes !== null,
   });
   // Peers the installed packages need, and packages asked for by name
   // that the slice does not import, as the repository installs them.
@@ -620,7 +666,6 @@ export async function computeCut(
   ].sort((a, b) => compare(`${a.kind}:${a.name}`, `${b.kind}:${b.name}`));
   // The types of what the folder installs, where the repository pins
   // them, so it compiles against what the repository compiles against.
-  const includedPaths = manifest.included.map((file) => file.path);
   const typesPackages = [
     ...new Set(
       dependencies
@@ -643,18 +688,15 @@ export async function computeCut(
   // sources import a Node built-in: untyped, `assert.ok` narrows nothing
   // and `import.meta.url` is unknown, so the folder would not type-check
   // as the repository does.
-  const nodeTypes = sources.some((source) =>
-    [...source.text.matchAll(IMPORT_LITERAL)].some((match) =>
-      isNodeBuiltin(match[3] ?? ""),
-    ),
-  )
-    ? repositoryVersion(repo, "@types/node", includedPaths)
-    : null;
   if (
     nodeTypes !== null &&
     !typesPackages.some((types) => types.name === "@types/node")
   )
     typesPackages.push({ name: "@types/node", version: nodeTypes });
+  // The compiler the repository builds with, so the folder's build passes
+  // and fails as the repository's does; the tool's own without one.
+  const compiler = repositoryVersion(repo, "typescript", includedPaths);
+  if (compiler !== null) log(`Compiles with typescript@${compiler}, as the repository does.`);
   const sorted = (record: Record<string, string>) =>
     Object.fromEntries(
       Object.entries(record).sort(([a], [b]) => compare(a, b)),
@@ -669,13 +711,14 @@ export async function computeCut(
     }
     if (
       file.path !== "package.json" ||
-      peers.length + typesPackages.length === 0
+      (peers.length + typesPackages.length === 0 && compiler === null)
     )
       return file;
     const manifestJson = JSON.parse(file.text) as {
       dependencies: Record<string, string>;
       devDependencies: Record<string, string>;
     };
+    if (compiler !== null) manifestJson.devDependencies["typescript"] = compiler;
     for (const peer of peers)
       manifestJson.dependencies[peer.name] ??= peer.version;
     for (const types of typesPackages)
@@ -785,6 +828,23 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
   }
   log(`Wrote ${files.length + binaries.length} files to ${out}.`);
   let lockfile = false;
+  if (request.offline !== true) {
+    // The entry points' workspace first, then the others the slice holds.
+    const packageOf = packageFolder(repo);
+    const workspaces = [
+      ...new Set([
+        ...computed.request.entryPoints.map((entry) => packageOf(`${entry}/`)),
+        ...computed.manifest.included.map((file) => packageOf(file.path)),
+      ]),
+    ];
+    const seeded = seededLockfile(
+      repo,
+      workspaces,
+      JSON.parse(readFileSync(join(out, "package.json"), "utf8")) as Record<string, unknown>,
+    );
+    if (seeded !== null)
+      await writeFile(join(out, "package-lock.json"), `${JSON.stringify(seeded, null, 2)}\n`, "utf8");
+  }
   if (request.offline !== true)
     try {
       await command(
@@ -802,6 +862,9 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
       lockfile = existsSync(join(out, "package-lock.json"));
       log("Resolved package-lock.json.");
     } catch (error) {
+      // The seed is not a resolved lockfile. Do not leave it behind for
+      // `check` to mistake for a lock suitable for npm ci.
+      await rm(join(out, "package-lock.json"), { force: true });
       log(
         `No lockfile: ${error instanceof Error ? error.message : String(error)}. \`npm install\` makes one.`,
       );

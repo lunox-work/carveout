@@ -175,6 +175,18 @@ export function packageUses(
       }
     }
     const visit = (node: ts.Node): void => {
+      if (ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name)) {
+        const initializer = node.initializer;
+        const call = initializer && ts.isAwaitExpression(initializer) ? initializer.expression : initializer;
+        if (call && ts.isCallExpression(call) && call.expression.kind === ts.SyntaxKind.ImportKeyword && call.arguments[0]) {
+          const root = packageOf(call.arguments[0]);
+          if (root !== null)
+            for (const element of node.name.elements) {
+              const imported = element.propertyName ?? element.name;
+              if (ts.isIdentifier(imported)) memberOf(root, imported.text);
+            }
+        }
+      }
       if (
         ts.isImportTypeNode(node) &&
         ts.isLiteralTypeNode(node.argument) &&

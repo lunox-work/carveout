@@ -18,6 +18,7 @@
  * specifiers.
  */
 
+import ts from "typescript";
 import type {
   BoundaryContract,
   BoundaryModule,
@@ -219,6 +220,8 @@ export interface ProjectInput {
   readonly coverage?: CoverageGate;
   /** Keep the source's noImplicitAny: the slice compiled under it. */
   readonly keepsImplicitAny?: boolean;
+  /** The folder installs Node's own types instead of the fallback globals. */
+  readonly hasNodeTypes?: boolean;
 }
 
 /**
@@ -727,6 +730,7 @@ export function ambientDeclarations(
   packages: readonly string[],
   modules: PackageModules = { specifiers: [], text: "" },
   installed: ReadonlySet<string> = new Set(),
+  hasNodeTypes = false,
 ): string {
   const declared = new Set(modules.specifiers);
   const lines = [
@@ -734,8 +738,13 @@ export function ambientDeclarations(
     "// modules and globals untyped, and every package untyped. A package the",
     "// project installs is declared by a pattern, which the compiler",
     "// consults only when the package brings no types of its own.",
-    ...NODE_GLOBAL_DECLARATIONS,
-    "declare var globalThis: any;",
+    ...(hasNodeTypes
+      ? [
+          ...ASSET_EXTENSIONS.map((extension) => `declare module "*.${extension}";`),
+          "interface ImportMetaEnv { readonly [key: string]: any }",
+          "interface ImportMeta { readonly env: ImportMetaEnv; glob<T = any>(pattern: string | readonly string[], options?: any): Record<string, any> }",
+        ]
+      : [...NODE_GLOBAL_DECLARATIONS, "declare var globalThis: any;"]),
   ];
   for (const name of [...new Set(packages)].sort(compare))
     if (installed.has(name)) {
@@ -787,7 +796,8 @@ const SAFE_COMPILER_KEYS: readonly string[] = [
 
 /**
  * The compiler options a generated project builds with: the source's safe
- * options carried over, Node's ESM resolution, no emitted declarations.
+ * options carried over, the source's bundler resolution when it uses one,
+ * otherwise Node's ESM resolution, and no emitted declarations.
  */
 export function projectCompilerOptions(
   options: Readonly<Record<string, unknown>> | undefined,
@@ -796,12 +806,13 @@ export function projectCompilerOptions(
   for (const key of SAFE_COMPILER_KEYS)
     if (options !== undefined && options[key] !== undefined)
       carried[key] = options[key];
+  const bundler = String(options?.["moduleResolution"] ?? "").toLowerCase() === "bundler";
   return {
     strict: true,
     target: "ES2022",
     ...carried,
-    module: "NodeNext",
-    moduleResolution: "NodeNext",
+    module: bundler ? "ESNext" : "NodeNext",
+    moduleResolution: bundler ? "Bundler" : "NodeNext",
     rootDir: ".",
     declaration: false,
     sourceMap: false,
@@ -827,11 +838,11 @@ export function tsconfigFor(
   )}\n`;
 }
 
-function scanNamedImports(
+export function scanNamedImports(
   sources: readonly ProjectSource[],
 ): Map<string, Set<string>> {
   const names = new Map<string, Set<string>>();
-  for (const source of sources)
+  for (const source of sources) {
     for (const match of source.text.matchAll(NAMED_IMPORT)) {
       // Type-only imports need no runtime export.
       if (match[1] !== undefined) continue;
@@ -846,6 +857,25 @@ function scanNamedImports(
       }
       names.set(packageNameOf(specifier), list);
     }
+    const file = ts.createSourceFile(source.path, source.text, ts.ScriptTarget.Latest, true);
+    const visit = (node: ts.Node): void => {
+      if (ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name)) {
+        const initializer = node.initializer;
+        const call = initializer && ts.isAwaitExpression(initializer) ? initializer.expression : initializer;
+        if (call && ts.isCallExpression(call) && call.expression.kind === ts.SyntaxKind.ImportKeyword && call.arguments[0] && ts.isStringLiteral(call.arguments[0])) {
+          const name = packageNameOf(call.arguments[0].text);
+          const list = names.get(name) ?? new Set<string>();
+          for (const element of node.name.elements) {
+            const imported = element.propertyName ?? element.name;
+            if (ts.isIdentifier(imported) && imported.text !== "default") list.add(imported.text);
+          }
+          names.set(name, list);
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(file);
+  }
   return names;
 }
 
@@ -1007,7 +1037,7 @@ function testRunnerScript(coverage: CoverageGate | undefined): string {
     "        process.stdout.write(`\\nFailing now and not when the folder was checked:\\n${fresh.map((name) => `  ${name}`).join(\"\\n\")}\\n`);",
     "      if (gateFailed)",
     "        process.stdout.write(",
-    `          "\\nnpm test fails on coverage: the files you added are below the coverage the repository's own test requires (the report above). Test them; the repository fails them too.\\n",`,
+    `          "\\nnpm test fails on coverage: the files you added are below the repository's coverage threshold (the report above). The repository measures its whole package, so its result may differ.\\n",`,
     "        );",
     "    }",
     "  }",
@@ -1030,6 +1060,7 @@ function runScript(entries: readonly string[]): string {
   const lines = [
     "// `npm run dev`: load every entry point with the mocks in place and",
     "// report what it exports. Replace or extend this to exercise the slice.",
+    "export {};",
     "",
   ];
   if (entries.length === 0) lines.push('console.log("No entry points.");');
@@ -1381,12 +1412,13 @@ export function generateProject(input: ProjectInput): GeneratedProject {
         ...installedPackages.map((p) => p.name),
         ...mockedPackages,
         // Node's modules by their bare names too (`fs`, `fs/promises`).
-        ...input.knownSpecifiers
+        ...(input.hasNodeTypes ? [] : input.knownSpecifiers)
           .filter((specifier) => !specifier.startsWith("node:"))
           .map(packageNameOf),
       ],
       input.packageModules,
       new Set(installedPackages.map((p) => p.name)),
+      input.hasNodeTypes === true,
     ),
     class: "harness",
     public: true,

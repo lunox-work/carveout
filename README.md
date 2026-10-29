@@ -68,7 +68,8 @@ billing-slice/
 
 The plan and the cut read the repository and never run its code. The cut
 fetches package types from the public registry with install scripts off,
-and resolves a lockfile; `--offline` skips both.
+and resolves a lockfile; when the repository has an npm lockfile, the
+slice starts from its locked versions. `--offline` skips both.
 
 ## What the walk follows
 
