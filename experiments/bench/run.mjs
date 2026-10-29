@@ -26,55 +26,34 @@
 // a session the usage limit refused is not recorded.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { HERE, WORK, carveout, checkout, cloneOf, frozenCli, git } from "../lib.mjs";
-import {
-  install,
-  buildDependencies,
-  judge,
-  log,
-  packageChange,
-  seamEntries,
-  sliceTests,
-  verdictOf,
-} from "../judge.mjs";
+import { HERE, WORK, carveout, cloneOf, frozenCli, git } from "../lib.mjs";
+import { hiddenVerdictOf, install, judge, log, sliceTests, verdictOf } from "../judge.mjs";
+import { ARMS, BENCH, CASES, allowedOf, hiddenOf, specOf, template, within } from "./cases.mjs";
 import { WORK_ROOT, claude, discard, peeks } from "./lib.mjs";
+import { codex } from "./codex.mjs";
 
-const BENCH = join(HERE, "bench");
-const CASES = JSON.parse(readFileSync(join(HERE, "e5-cases.json"), "utf8")).cases;
 const RESULTS = process.env.BENCH_RESULTS ?? join(HERE, "results", "bench.jsonl");
-const TEMPLATES = join(WORK, "bench", "templates");
-const JUDGING = join(WORK, "bench", "judging");
-const RUNS = join(WORK, "bench", "runs");
-const ARMS = ["full", "slice-seam", "slice-diff"];
+const tag = process.env.BENCH_TAG ?? "";
+const RUNS = join(WORK, "bench", tag === "" ? "runs" : `runs-${tag}`);
 
 const args = process.argv.slice(2);
 const option = (name, fallback) => {
   const at = args.indexOf(name);
   return at === -1 ? fallback : args[at + 1];
 };
-const valued = new Set(["--arms", "--runs", "--model", "--concurrency"]);
+const valued = new Set(["--arms", "--runs", "--model", "--concurrency", "--backend"]);
 const slugs = args.filter((arg, i) => !arg.startsWith("--") && !valued.has(args[i - 1]));
 const arms = option("--arms", "full,slice-seam").split(",");
 const runs = Number(option("--runs", "2"));
 const model = option("--model", "claude-haiku-5-5");
+const backend = option("--backend", "claude");
 const concurrency = Number(option("--concurrency", "2"));
+if (!["claude", "codex"].includes(backend)) throw new Error(`unknown backend ${backend}`);
+if (backend === "codex" && (tag === "" || !process.env.BENCH_RESULTS || !args.includes("--model"))) throw new Error("Codex runs require BENCH_TAG, BENCH_RESULTS and an explicit --model");
+if (backend === "codex" && concurrency !== 1) throw new Error("Codex sessions require --concurrency 1 until concurrent isolation is verified");
 for (const arm of arms) if (!ARMS.includes(arm)) throw new Error(`unknown arm ${arm}`);
-
-const source = () => cloneOf("sandbox-factory", "bench-base");
-const baseOf = (item) => git(source(), ["rev-parse", `${item.commit}^`]).trim();
-/** The case's confirmed spec, its toolchain and its hidden suite, from duediligence. */
-const specOf = (item) => join(BENCH, "specs", item.slug);
-const toolchainOf = (item) => JSON.parse(readFileSync(join(specOf(item), "toolchain.json"), "utf8"));
-const allowedOf = (item) => toolchainOf(item).allowedPaths;
-/** The hidden suite's files, by the repository path they are judged at. */
-const hiddenOf = (item) =>
-  readdirSync(join(specOf(item), "private"), { recursive: true })
-    .filter((name) => statSync(join(specOf(item), "private", name)).isFile())
-    .sort()
-    .map((name) => ({ path: `${toolchainOf(item).hiddenDir}/${name}`, from: join(specOf(item), "private", name) }));
-const within = (path, allowed) => allowed.some((entry) => (entry.endsWith("/") ? path.startsWith(entry) : path === entry));
 
 function brief(item, arm) {
   const text = readFileSync(join(BENCH, "prompts", arm === "full" ? "full.md" : "slice.md"), "utf8");
@@ -85,50 +64,6 @@ function brief(item, arm) {
     // tests that fail on the mocks and does not count them.
     .replaceAll("{{baseline}}", "")
     .replaceAll("{{spec}}", readFileSync(join(specOf(item), "spec.md"), "utf8").trim());
-}
-
-/** The workdir every run of a case and arm starts from, made once. */
-function template(cli, item, arm) {
-  // A slice is the CLI's output: one template per build of it.
-  const home = arm === "full" ? join(TEMPLATES, item.slug) : join(TEMPLATES, cli.id.split("dist:")[1] ?? "cli", item.slug);
-  const dir = join(home, arm);
-  const ready = join(home, `${arm}.json`);
-  if (existsSync(ready)) return { dir, ...JSON.parse(readFileSync(ready, "utf8")) };
-  rmSync(dir, { recursive: true, force: true });
-  mkdirSync(dir, { recursive: true });
-  const repo = source();
-  const base = baseOf(item);
-  const started = Date.now();
-  let meta;
-  if (arm === "full") {
-    execFileSync("sh", ["-c", `git -C '${repo}' archive ${base} | tar -x -C '${dir}'`]);
-    git(dir, ["init", "-q"]);
-    git(dir, ["add", "-A"]);
-    git(dir, ["-c", "user.name=bench", "-c", "user.email=bench@localhost", "commit", "-q", "-m", "base"]);
-    // What the harness and the build write beside the sources, never the change.
-    writeFileSync(join(dir, ".git", "info", "exclude"), ".e5-lock\n.turbo/\n");
-    install(dir, git(repo, ["rev-parse", `${base}:package-lock.json`]).trim());
-    const built = buildDependencies(dir, item.package);
-    if (!built.ok) throw new Error(`${item.slug}: dependencies do not build at B:\n${built.output}`);
-    meta = { base, setupMs: Date.now() - started };
-  } else {
-    checkout(repo, base);
-    const entries = arm === "slice-seam" ? seamEntries(repo, base, item.seam) : packageChange(repo, item).code.filter((path) => packageChange(repo, item).changes.get(path) !== "A");
-    rmSync(dir, { recursive: true, force: true });
-    const cut = carveout(cli, ["cut", ...entries, "--repo", repo, "--depth", "1", "--max-files", "200", "--with-tests", "--out", dir]);
-    if (cut.code !== 0 && cut.code !== 2) throw new Error(`${item.slug}/${arm}: cut failed:\n${cut.stderr}`);
-    const cutMs = Date.now() - started;
-    // As a person would next: the check, which records the tests that fail
-    // on the mocks before any change.
-    const checked = carveout(cli, ["check", dir, "--json"]);
-    const baseline = sliceTests(dir);
-    if (baseline.step !== "test") throw new Error(`${item.slug}/${arm}: the slice does not build at B:\n${baseline.output}`);
-    execFileSync("sh", ["-c", existsSync(join(dir, "package-lock.json")) ? "npm ci --no-audit --no-fund --loglevel=error" : "npm install --no-audit --no-fund --loglevel=error"], { cwd: dir });
-    const record = JSON.parse(readFileSync(join(dir, "carveout.json"), "utf8"));
-    meta = { base, entries, files: record.manifest.included.length, cutMs, setupMs: Date.now() - started, checked: checked.code === 0, mockFailures: existsSync(join(dir, "carveout", "baseline.json")) ? JSON.parse(readFileSync(join(dir, "carveout", "baseline.json"), "utf8")).failing.length : 0, baseline: { tests: baseline.tests, pass: baseline.pass, fail: baseline.fail } };
-  }
-  writeFileSync(ready, JSON.stringify(meta));
-  return { dir, ...meta };
 }
 
 function done() {
@@ -169,8 +104,9 @@ async function session(cli, item, arm, n, prepared) {
   mkdirSync(out, { recursive: true });
   const transcript = join(out, "transcript.jsonl");
   try {
-    const agent = await claude({ cwd: work, text: brief(item, arm), transcript, model });
+    const agent = await (backend === "codex" ? codex : claude)({ cwd: work, text: brief(item, arm), transcript, model });
     if (agent.apiError === "usage_limit_reached" || /usage limit/i.test(agent.stderr)) return { limited: true };
+    if (!agent.ok) return { failed: true, agent, out };
     const change = join(out, "change.patch");
     let patch = null;
     let toolWrites = [];
@@ -187,7 +123,7 @@ async function session(cli, item, arm, n, prepared) {
       execFileSync("cp", ["-c", "-R", work, join(out, "slice")]);
       rmSync(join(out, "slice", "node_modules"), { recursive: true, force: true });
     }
-    return { agent, patch, change, out, toolWrites, peeks: peeks(transcript, work) };
+    return { agent, patch, change, out, toolWrites, peeks: backend === "codex" ? null : peeks(transcript, work) };
   } finally {
     discard(work);
   }
@@ -196,7 +132,7 @@ async function session(cli, item, arm, n, prepared) {
 /** The run judged in a clean clone at B; serial, since the clone is shared. */
 function judgeRun(cli, item, arm, prepared, ran) {
   const line = {};
-  const into = cloneOf("sandbox-factory", "bench-target");
+  const into = cloneOf("sandbox-factory", tag === "" ? "bench-target" : `${tag}-bench-target`);
   git(into, ["checkout", "-q", "-f", "--detach", prepared.base]);
   git(into, ["clean", "-q", "-fdx", "-e", "node_modules", "-e", ".e5-lock"]);
   install(into, git(into, ["rev-parse", `${prepared.base}:package-lock.json`]).trim());
@@ -204,7 +140,7 @@ function judgeRun(cli, item, arm, prepared, ran) {
   const files = [...diff.matchAll(/^diff --git a\/(\S+) b\//gm)].map((match) => match[1]);
   line.files = files.length;
   line.outsideScope = files.filter((path) => !within(path, [...allowedOf(item), `${item.package}/test/`]));
-  if (files.length === 0) return { ...line, verdict: "no_change" };
+  if (files.length === 0) return { ...line, verdict: ran.patch?.boundary?.length ? "boundary" : "no_change" };
   const applied = execFileSync("sh", ["-c", `git apply --3way --whitespace=nowarn '${ran.change}' 2>&1; echo "exit=$?"`], { cwd: into }).toString();
   if (!/exit=0\s*$/.test(applied)) return { ...line, verdict: "apply_failed", applyOutput: applied.slice(-1500) };
   for (const hidden of hiddenOf(item)) {
@@ -214,17 +150,37 @@ function judgeRun(cli, item, arm, prepared, ran) {
   if (arm !== "full") {
     // In the slice: the change and the hidden suite, as one patch at B,
     // so a test of a module the change adds finds it.
-    const slice = join(ran.out, "slice");
+    const agentSlice = join(ran.out, "slice");
+    const agentVerdict = verdictOf(prepared.baseline, sliceTests(agentSlice));
+    // Apply the combined patch to a clean cut at B. Applying it a second
+    // time to the agent's edited folder can leave additions unresolved.
+    const slice = join(ran.out, "judged-slice");
+    rmSync(slice, { recursive: true, force: true });
+    execFileSync("cp", ["-c", "-R", prepared.dir, slice]);
     const judged = join(ran.out, "judged.patch");
     git(into, ["add", "-A"]);
+    // The install cache marker belongs to the harness, not to the change.
+    git(into, ["reset", "-q", "--", ".e5-lock"]);
     writeFileSync(judged, git(into, ["diff", "--cached", "--binary", "--full-index", "--no-renames", prepared.base]));
     git(into, ["reset", "-q"]);
     const brought = carveout(cli, ["apply", slice, judged, "--stubs", "--json"]);
-    line.inSlice =
-      brought.code === 0 || brought.code === 5
-        ? verdictOf(prepared.baseline, sliceTests(slice))
-        : { ok: false, reason: `apply failed: ${brought.stderr.slice(-500)}` };
+    if (brought.code === 0 || brought.code === 5) {
+      const appliedInSlice = JSON.parse(brought.stdout);
+      if (!agentVerdict.ok) line.inSlice = agentVerdict;
+      else if (appliedInSlice.outside.length > 0) line.inSlice = { ok: null, reason: "partial apply", outside: appliedInSlice.outside };
+      else {
+        const hiddenTests = sliceTests(slice);
+        // The hidden suite is deliberately under a separate folder and is
+        // run by the judge, not by the repository's ordinary test glob. Its
+        // placement and coverage must not fail the agent's own gate, which
+        // was checked above without the hidden suite.
+        line.inSlice = hiddenVerdictOf(prepared.baseline, hiddenTests);
+      }
+    } else {
+      line.inSlice = { ok: null, reason: `apply failed: ${brought.stderr.slice(-500)}` };
+    }
     rmSync(slice, { recursive: true, force: true });
+    rmSync(agentSlice, { recursive: true, force: true });
   }
   const result = judge(into, item.package, { importers: true });
   delete result.functional?.tests;
@@ -280,6 +236,12 @@ async function main() {
         stopped = true;
         return;
       }
+      if (ran.failed) {
+        log("bench", `model session failed: ${ran.agent.error ?? ran.agent.stderr ?? "unknown error"}; transcript: ${ran.out}/transcript.jsonl`);
+        stopped = true;
+        process.exitCode = 1;
+        return;
+      }
       judging = judging.then(() => {
         log("bench", `${item.slug}/${arm}/${n}: judging`);
         let judged;
@@ -304,7 +266,8 @@ async function main() {
         };
         mkdirSync(dirname(RESULTS), { recursive: true });
         writeFileSync(RESULTS, `${JSON.stringify(line)}\n`, { flag: "a" });
-        log("bench", `${item.slug}/${arm}/${n}: ${line.verdict}, ${line.agent.usage.totalInput} in / ${line.agent.usage.output} out, $${line.agent.costUsd?.toFixed(3)}`);
+        const cost = line.agent.costUsd == null ? "cost unavailable" : `$${line.agent.costUsd.toFixed(3)}`;
+        log("bench", `${item.slug}/${arm}/${n}: ${line.verdict}, ${line.agent.usage.totalInput} in / ${line.agent.usage.output} out, ${cost}`);
       });
     }
   };
@@ -329,15 +292,15 @@ function report() {
   for (const [key, list] of [...groups.entries()].sort()) {
     const count = (verdict) => list.filter((row) => row.verdict === verdict).length;
     const other = list.length - count("accepted") - count("functional") - count("rejected");
-    const inSlice = list.filter((row) => row.inSlice !== undefined);
+    const inSlice = list.filter((row) => typeof row.inSlice?.ok === "boolean");
     process.stdout.write(
-      `| ${key} | ${list.length} | ${count("accepted")} | ${count("functional")} | ${count("rejected")} | ${other} | ${inSlice.length === 0 ? "–" : `${inSlice.filter((row) => row.inSlice.ok).length}/${inSlice.length}`} | ${median(list.map((row) => row.agent.usage.totalInput))} | ${median(list.map((row) => row.agent.usage.output))} | ${median(list.map((row) => row.agent.costUsd))?.toFixed(3)} | ${median(list.map((row) => row.agent.turns))} |\n`,
+      `| ${key} | ${list.length} | ${count("accepted")} | ${count("functional")} | ${count("rejected")} | ${other} | ${inSlice.length === 0 ? "–" : `${inSlice.filter((row) => row.inSlice.ok).length}/${inSlice.length}`} | ${median(list.map((row) => row.agent.usage.totalInput))} | ${median(list.map((row) => row.agent.usage.output))} | ${median(list.map((row) => row.agent.costUsd))?.toFixed(3) ?? "–"} | ${median(list.map((row) => row.agent.turns)) ?? "–"} |\n`,
     );
   }
   process.stdout.write("\nPer case:\n\n| case | arm | run | verdict | in slice | input | output | cost |\n|---|---|---:|---|---|---:|---:|---:|\n");
   for (const row of rows.sort((a, b) => `${a.slug}${a.arm}${a.run}`.localeCompare(`${b.slug}${b.arm}${b.run}`)))
     process.stdout.write(
-      `| ${row.slug} | ${row.arm} | ${row.run} | ${row.verdict} | ${row.inSlice === undefined ? "–" : row.inSlice.ok ? "ok" : "fail"} | ${row.agent.usage.totalInput} | ${row.agent.usage.output} | ${row.agent.costUsd?.toFixed(3)} |\n`,
+      `| ${row.slug} | ${row.arm} | ${row.run} | ${row.verdict} | ${row.inSlice?.ok == null ? "–" : row.inSlice.ok ? "ok" : "fail"} | ${row.agent.usage.totalInput} | ${row.agent.usage.output} | ${row.agent.costUsd?.toFixed(3) ?? "–"} |\n`,
     );
 }
 

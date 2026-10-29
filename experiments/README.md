@@ -153,3 +153,45 @@ script is `e5-replay.mjs`.
   change.
 - **Installs.** One `npm ci` (npm 10.9.2, `--ignore-scripts`) per distinct
   lockfile, kept in the target clone. Test runs get a 4 GB heap cap.
+
+## Replaying benchmark changes for verdict parity
+
+For new benchmark runs, set `BENCH_TAG` and `BENCH_RESULTS` to isolate the
+templates, judging clone, session artifacts and results from earlier runs.
+The model session must succeed before a verdict is recorded. For a slice,
+the judge tests the agent's folder, then applies the submitted change and
+hidden tests together to a fresh template. An incomplete apply is reported
+as an unavailable in-slice verdict, not as a pass or failure. Analysis
+reports the number of unavailable verdicts; they prevent establishing the
+parity bar.
+
+The separate Codex pilot is specified in [PLAN-codex.md](PLAN-codex.md).
+Run `node bench/codex-probe.mjs` first: it checks `npm test`, a denied
+sibling read and a denied network connection in a real Codex session. Use
+`--backend codex --model gpt-6.1-sol --concurrency 1` with a distinct
+`BENCH_TAG` and `BENCH_RESULTS`. The Codex profile denies the other
+workdirs present when its session starts; do not run another benchmark
+concurrently. CLI subscription sessions do not report cost in dollars,
+and the event stream does not give a comparable model-turn count. Those
+metrics are unavailable rather than zero. Codex transcripts have not been
+processed by the Claude-specific peek detector and must be reviewed.
+
+`bench/parity.mjs` replays saved E6 changes into newly cut slices without
+calling a model. It compares each slice verdict with its recorded repository
+verdict. It can also replay full-repository changes and scoped commit changes.
+Use `--from slice`, `--from full`, or `--from commit`, and `--arms` to select
+the slice arms. The script resumes by CLI build and replay version.
+
+```sh
+node bench/parity.mjs --from slice --arms slice-seam,slice-diff
+node bench/parity.mjs --report
+```
+
+Run these from `experiments/`. Set `BENCH_TAG`, `PARITY_RESULTS`, and
+`PARITY_REPO_RESULTS` to separate concurrent runs; tags isolate clones,
+templates, and derived patches. A missing patch, unavailable template, or
+change that `apply` leaves partly outside the slice is excluded and reported,
+not counted as a verdict. A template must pass `check` and its tests after
+the recorded mock baseline is applied. Replay version 2 removes the old install-marker
+artifact and scopes commit patches to the case's allowed code and package
+tests; unversioned replay rows cannot establish parity.

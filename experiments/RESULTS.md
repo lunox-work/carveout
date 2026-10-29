@@ -349,3 +349,55 @@ The same harness and CLI, Sonnet 5.5 on `full` and `slice-seam`.
   orientation.
 - **Next, E6b.** The same bars, a CLI with the fixes, and a corpus grown
   past 11 cases, with briefs that leave the agent something to find.
+
+### Saved-change parity replay
+
+On frozen CLI `81237de+dirty dist:6ab03afe4f0d`, replay version 2 tried
+104 saved slice-agent changes without model calls. Results are in
+`results/parity-v2.jsonl`. Of 68 comparable changes, 48 passed in both
+places, five failed in both, and none passed in the slice while failing in
+the repository. Fifteen failed in the slice while passing in the repository:
+12 identicon replays hit a schema mock in the hidden suite, and three
+context-sources replays failed the slice's per-added-file coverage threshold
+while the repository's whole-package coverage passed.
+
+The remaining 36 are not verdicts: four saved patches are missing, and
+`apply` left part of 32 changes outside the slice (13 ticket-content, six
+jira-spec, and 13 categories). These exclusions prevent a parity claim.
+The replay also does not replace E6's acceptance and efficiency benchmark.
+
+## Exploratory Codex pilot
+
+The separate procedure is in [PLAN-codex.md](PLAN-codex.md). This is not
+the registered Claude E6. Four independent `gpt-6.1-sol` sessions ran
+with Codex CLI `0.164.0-alpha.11.1`, high reasoning effort, and frozen
+carveout `81237de+dirty dist:3084ea8f01c0`. Raw results are in
+`results/bench-codex-pilot-v2.jsonl`.
+
+| Case | Arm | Repository verdict | In-slice verdict | Total input tokens | Output tokens | Minutes |
+| --- | --- | --- | --- | ---: | ---: | ---: |
+| handles | full | accepted | — | 278,529 | 5,591 | 1.90 |
+| handles | slice-seam | accepted | pass | 185,835 | 4,985 | 1.89 |
+| jira-spec | full | accepted | — | 490,507 | 11,629 | 4.47 |
+| jira-spec | slice-seam | accepted | unavailable | 885,904 | 15,243 | 6.60 |
+
+The slice used 33.3% fewer input tokens on handles and 80.6% more on
+jira-spec. One run per arm and two cases are too few for a reliability or
+efficiency claim. Codex's subscription session reported no dollar cost or
+comparable model-turn count; neither is estimated here.
+
+The Jira in-slice verdict is unavailable: `apply` left the hidden
+`hash.test.ts` outside because it contains computed dynamic imports. The
+slice deliberately leaves such tests behind, so the hidden suite was
+incomplete in the slice. All hidden tests ran in the repository judge.
+Both agents' own `npm test` commands passed. There were no scope or
+boundary violations; the four command traces were reviewed. The Codex
+transcripts are not processed by the Claude-specific peek detector.
+
+The first pilot attempt (`results/bench-codex-pilot.jsonl`) was stopped
+after its sandbox prevented Node from resolving a parent directory. Its
+two rows are invalid setup diagnostics. Before the repeated pilot, a live
+probe confirmed that Node and `npm test` worked while a sibling-file read
+and a direct-IP connection were blocked. The same network endpoint was
+reachable from the host. The pilot remains exploratory: E5's registered
+agreement bar, the expanded E6b corpus, and E7 remain open.

@@ -211,6 +211,7 @@ export async function claude({ cwd, text, transcript, model }) {
         usage: usageOf(result),
         tools: toolStats(lines),
         apiError: result?.api_error ?? null,
+        error: result?.is_error === true ? String(result.result ?? result.terminal_reason ?? "model session failed").slice(0, 1000) : null,
         stderr: stderr.slice(-2000),
       });
     });

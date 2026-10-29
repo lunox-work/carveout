@@ -202,6 +202,11 @@ export function verdictOf(baseline, after) {
   };
 }
 
+/** Hidden tests are run separately by the judge, outside the package's glob. */
+export function hiddenVerdictOf(baseline, after) {
+  return verdictOf(baseline, { ...after, gateFailed: false, unrun: false });
+}
+
 /**
  * A seam file as an entry point at `base`. Most seams are files the commit
  * adds, so a person cutting for the ticket starts where the file will go:
