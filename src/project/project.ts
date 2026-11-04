@@ -202,6 +202,14 @@ export interface ProjectStub {
   readonly text: string;
 }
 
+/**
+ * A mock package's version: the floor of the importer's pin when it is a
+ * plain or caret/tilde version, else a marker no real package carries.
+ */
+function mockVersion(pin: string | null): string {
+  return pin?.match(/^[\^~=]?v?(\d+\.\d+\.\d+)$/)?.[1] ?? "0.0.0-carveout";
+}
+
 export interface ProjectInput {
   readonly origin: ProjectOrigin;
   readonly manifest: SliceManifest;
@@ -1424,7 +1432,10 @@ export function generateProject(input: ProjectInput): GeneratedProject {
         text: `${JSON.stringify(
           {
             name,
-            version: "0.0.0-carveout",
+            // At the version the importer pins, so an installed package's
+            // peer range on the mocked one still resolves (E8b: npm 10
+            // refused drizzle-orm's `postgres >=3` against a 0.0.0 mock).
+            version: mockVersion(dependency.version),
             private: true,
             type: "module",
             main: "index.js",
