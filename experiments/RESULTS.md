@@ -1063,6 +1063,63 @@ E6b `slice-seam` template's sources (CLI `ad8b99c8bd40`). Data in
   here). Re-measured on the gated CLI, the three install in 2 seconds at
   50 MB, and the bars hold on all 20 cases.
 
+### E8c: a loose brief
+
+Registered: the E6b corpus × `full` and `slice-seam` × 3 runs on Haiku
+5.5, briefed with the commit's own message in place of the confirmed spec,
+same allowed paths, same calibrated hidden suite. Bars: Phase 5's two
+efficiency bars; acceptance reported with no bar.
+
+- **Runs.** CLI `2c5864b dist:e4197b89cf13` (the computed-import rule as
+  narrowed), 2026-11-04 20:09 to 22:09 SGT, $3.67 (`full` $1.80,
+  `slice-seam` $1.87). The data is in `results/bench-e8c.jsonl`, each row
+  marked `brief: "ticket"`. A first start on `18bdebd` lost three
+  templates to the broad rule (the 12:02–12:04Z rows of
+  `bench-unusable.jsonl`) and was stopped before any session finished.
+- **The briefs.** Nine of the 20 messages are one subject line (8 to 12
+  words); the rest run from 15 to 2,923 words (jira-pages, aws-deploy,
+  identicon), written for a reader of the diff, not for someone about to
+  write it.
+
+| arm          | accepted | other verdicts           |
+| ------------ | -------: | ------------------------ |
+| `full`       |   0 / 60 | rejected 55, no change 5 |
+| `slice-seam` |   0 / 60 | rejected 54, no change 6 |
+
+| Bar                                              | `slice-seam`                                   |
+| ------------------------------------------------ | ---------------------------------------------- |
+| Total input at least 30% lower (median of cases) | 12.1% **higher**; lower in 9 of 20: **fail**   |
+| Cost per accepted run at least 30% lower         | no accepted run in either arm: **unavailable** |
+
+- **Nothing passes, in either arm.** 44 of the 55 `full` rejections and 42
+  of the 54 slice ones are compile failures: the hidden suite does not
+  build against what the agent wrote, because it pins names, signatures
+  and modules the confirmed spec names and the commit message does not.
+  The rest fail hidden tests. 11 runs changed nothing (analysis-params 6
+  of 6, ticket-content 3, workspace-stubs 2): the agent read, found no
+  task it could pin down, and stopped. The pilot's 0 of 12 holds with a
+  calibrated suite; acceptance here is a property of the brief, not of
+  the arm.
+- **The mergeback bars, for the record.** 0 unsafe rows of 41 with an
+  in-slice verdict; 41 of 41 agree; coverage 68% (13 partial applies, 6
+  no-change rows), below the bar.
+- **Where the tokens go.** Both arms read less than with the spec (median
+  case input `full` 467k against E6c's 618k, `slice-seam` 647k against
+  824k) in about the same turns (18): the agent gives up sooner. The
+  slice is lower in 9 of 20 cases, higher in the median case: having to
+  find the code does not make the slice cheaper, it makes the slice's
+  smaller search space pay in half the cases and its stubs and mocks
+  cost in the other half (image-digest, workspace-stubs, oauth-membership
+  read two to three times `full`'s input).
+
+**What E8c says.** With a brief that does not name the files, the slice
+saves no tokens either, and the question the avenue asked (does the
+saving grow when the agent must find the code) has its answer: no, the
+median goes from 24% more input with the spec to 12% more without it,
+and the arm comparison is otherwise degenerate at zero acceptance each.
+A brief loose enough to need a search is too loose for a calibrated
+hidden suite, on this corpus.
+
 ### E8d: scope from the ticket
 
 E7's 60 planning sessions named entries from the spec alone. Each planned
