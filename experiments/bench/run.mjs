@@ -84,13 +84,23 @@ function done() {
 /**
  * `turbo` writes a managed block into AGENTS.md when it detects an agent
  * (E6a: every full run of ticket-content). It is the tool's write, not the
- * agent's change: taken out before the diff, and recorded.
+ * agent's change: taken out before the diff, and recorded. A block the
+ * repository had committed at B is left alone: taking it out would be a
+ * deletion the agent never made (E6b: every full run of step-holds,
+ * context-sources and workspace-stubs was refused for one).
  */
 function stripToolBlocks(work) {
   const stripped = [];
   for (const name of ["AGENTS.md", "CLAUDE.md"]) {
     const path = join(work, name);
     if (!existsSync(path)) continue;
+    let committed = "";
+    try {
+      committed = execFileSync("git", ["-C", work, "show", `HEAD:${name}`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    } catch {
+      // Not committed at B: any block is the tool's.
+    }
+    if (/<!-- BEGIN:turborepo-agent-rules -->/.test(committed)) continue;
     const text = readFileSync(path, "utf8");
     const clean = text.replace(/\n*<!-- BEGIN:turborepo-agent-rules -->[\s\S]*?<!-- END:turborepo-agent-rules -->\n?/, "\n");
     if (clean === text) continue;

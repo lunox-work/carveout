@@ -199,16 +199,26 @@ export async function claude({ cwd, text, transcript, model }) {
           }
         })
         .filter(Boolean);
-      const result = lines.findLast((line) => line.type === "result") ?? null;
+      // A session the agent re-enters (a background `npm test` reporting
+      // back) writes one result line per entry, each with that entry's own
+      // turns, cost and usage: summed, or a session reads as one turn
+      // (E6b: every image-digest row of three arms).
+      const results = lines.filter((line) => line.type === "result");
+      const result = results.at(-1) ?? null;
+      const sum = (pick) => results.reduce((total, line) => total + (pick(line) ?? 0), 0);
+      const usage = results.length === 0 ? usageOf(null) : {
+        ...usageOf({ usage: Object.fromEntries(["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"].map((key) => [key, sum((line) => line.usage?.[key])])) }),
+        byModel: result?.modelUsage ?? null,
+      };
       const init = lines.find((line) => line.type === "system" && line.subtype === "init");
       resolve({
         model: init?.model ?? null,
         ok: code === 0 && result !== null && result.is_error !== true && !timedOut,
         timedOut,
-        costUsd: result?.total_cost_usd ?? null,
-        turns: result?.num_turns ?? null,
+        costUsd: result === null ? null : sum((line) => line.total_cost_usd),
+        turns: result === null ? null : sum((line) => line.num_turns),
         minutes: Math.round((Date.now() - started) / 600) / 100,
-        usage: usageOf(result),
+        usage,
         tools: toolStats(lines),
         apiError: result?.api_error ?? null,
         error: result?.is_error === true ? String(result.result ?? result.terminal_reason ?? "model session failed").slice(0, 1000) : null,
