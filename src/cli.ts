@@ -199,7 +199,7 @@ async function main(argv: readonly string[]) {
                   ? []
                   : [
                       "",
-                      "Tests left behind (they run on neither node:test nor Vitest):",
+                      "Tests left behind (they run on neither node:test nor Vitest, or read a path no slice can carry):",
                       list(plan.walk.untestable),
                     ]),
                 "",

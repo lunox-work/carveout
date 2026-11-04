@@ -411,12 +411,17 @@ export function reach(
       }
     }
     for (const [file, through] of [...candidates].sort(([a], [b]) => compare(a, b))) {
-      // A test is left behind when it runs on neither runner, or reads what
-      // no slice can carry: one such test would block the whole folder.
+      // A test is left behind when it runs on neither runner, or reads a
+      // path or an unresolved module no slice can carry. A computed import
+      // is not such a read: what it names is often a file the test writes
+      // itself, and one that does not resolve in the slice fails at the
+      // baseline, which the verdict discounts (Phase 7, E6c: dropping such
+      // a test hid the one check that caught every wrong change).
       if (
         testRunnerOf(packagesOf.get(file) ?? []) === null ||
         (dependencyEdges.get(file) ?? []).some(
-          (dependency) => dependency.status !== "external",
+          (dependency) =>
+            dependency.status !== "external" && dependency.status !== "dynamic",
         )
       ) {
         untestable.add(file);
