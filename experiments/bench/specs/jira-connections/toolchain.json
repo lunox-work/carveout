@@ -1,0 +1,32 @@
+{
+  "name": "repo",
+  "repo": "../sandbox-factory",
+  "base": "0452f1f3d411256b04f08c13f8c82e80ad9c664b",
+  "package": "packages/db",
+  "packageManager": "npm@10.9.2",
+  "buildFirst": [
+    "packages/core"
+  ],
+  "runner": "node-test",
+  "rootDir": ".",
+  "outDir": "dist-test",
+  "testDir": "packages/db/test",
+  "testPattern": "*.test.ts",
+  "build": "tsc -p tsconfig.test.json",
+  "hiddenDir": "packages/db/test/hidden-jira-connections-confirmed",
+  "seam": [
+    "packages/db/src/cipher.ts",
+    "packages/db/src/jira-connections.ts",
+    "packages/db/src/schema.ts",
+    "packages/db/src/schema/jira.ts"
+  ],
+  "allowedPaths": [
+    "packages/db/src/",
+    "packages/db/src/schema/"
+  ],
+  "examples": [
+    "packages/db/test/schema-modules.test.ts",
+    "packages/db/test/schema.test.ts",
+    "packages/db/test/auth-schema.test.ts"
+  ]
+}

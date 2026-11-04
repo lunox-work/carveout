@@ -1,0 +1,219 @@
+{
+  "slug": "provenance-doc-confirmed",
+  "status": "ok",
+  "reason": null,
+  "publicIds": [
+    "test/provenance-doc-confirmed.test.ts :: [happy-1] a sha256 digest becomes the gh api attestations lookup",
+    "test/provenance-doc-confirmed.test.ts :: [happy-1] a different sha256 digest gives the lookup for that digest",
+    "test/provenance-doc-confirmed.test.ts :: [happy-2] the digest is inserted verbatim with the colon unencoded",
+    "test/provenance-doc-confirmed.test.ts :: [happy-2] a digest with several colons keeps every colon unencoded",
+    "test/provenance-doc-confirmed.test.ts :: [happy-3] the command is a single line with no surrounding whitespace",
+    "test/provenance-doc-confirmed.test.ts :: [happy-3] the command for the unknown fallback with a digest is also one trimmed line",
+    "test/provenance-doc-confirmed.test.ts :: [unhappy-1] the command does not contain \"gh attestation verify\"",
+    "test/provenance-doc-confirmed.test.ts :: [unhappy-1] the command does not contain \"--digest\"",
+    "test/provenance-doc-confirmed.test.ts :: [unhappy-1] the command does not contain \"--repo\"",
+    "test/provenance-doc-confirmed.test.ts :: [unhappy-1] the command does not contain \"oci://\"",
+    "test/provenance-doc-confirmed.test.ts :: [unhappy-1] no old fragment appears for a non-sha256 digest on a dirty build",
+    "test/provenance-doc-confirmed.test.ts :: [unhappy-2] a record with no imageDigest property gives undefined",
+    "test/provenance-doc-confirmed.test.ts :: [unhappy-2] a dirty released record with no imageDigest property gives undefined",
+    "test/provenance-doc-confirmed.test.ts :: [unhappy-3] imageDigest explicitly set to undefined gives undefined",
+    "test/provenance-doc-confirmed.test.ts :: [unhappy-3] the unknown fallback with imageDigest explicitly undefined gives undefined",
+    "test/provenance-doc-confirmed.test.ts :: [boundary-1] the unknown fallback record gives undefined",
+    "test/provenance-doc-confirmed.test.ts :: [boundary-1] a dirty copy of the unknown fallback record gives undefined",
+    "test/provenance-doc-confirmed.test.ts :: [boundary-2] the digest \"sha512:abc\" passes through unchanged",
+    "test/provenance-doc-confirmed.test.ts :: [boundary-2] the digest \"not-a-digest\" passes through unchanged",
+    "test/provenance-doc-confirmed.test.ts :: [boundary-2] the digest \" \" passes through unchanged",
+    "test/provenance-doc-confirmed.test.ts :: [boundary-2] a digest with surrounding whitespace is not trimmed",
+    "test/provenance-doc-confirmed.test.ts :: [boundary-3] an empty imageDigest gives the command ending in attestations/",
+    "test/provenance-doc-confirmed.test.ts :: [boundary-3] an empty imageDigest on the unknown fallback still gives a command",
+    "test/provenance-doc-confirmed.test.ts :: [boundary-4] the same digest gives the same command for identified, no other change",
+    "test/provenance-doc-confirmed.test.ts :: [boundary-4] the same digest gives the same command for unknownBuildInfo, no other change",
+    "test/provenance-doc-confirmed.test.ts :: [boundary-4] the same digest gives the same command for identified, dirty true",
+    "test/provenance-doc-confirmed.test.ts :: [boundary-4] the same digest gives the same command for identified, version \"1.0.0\" and gitRef \"sandbox-factory-v1.0.0\"",
+    "test/provenance-doc-confirmed.test.ts :: [boundary-4] the same digest gives the same command on a dirty unidentified record",
+    "test/provenance-doc-confirmed.test.ts :: [boundary-5] verifyCommand leaves a record with a digest unchanged",
+    "test/provenance-doc-confirmed.test.ts :: [boundary-5] verifyCommand adds no imageDigest key to a record without one",
+    "test/provenance-doc-confirmed.test.ts :: [happy-4] buildInfoSchema accepts a record with a digest and rejects an empty one",
+    "test/provenance-doc-confirmed.test.ts :: [happy-4] buildInfoSchema accepts the unknown fallback with a digest",
+    "test/provenance-doc-confirmed.test.ts :: [happy-5] formatVersion is unchanged by a digest",
+    "test/provenance-doc-confirmed.test.ts :: [happy-5] isIdentified is unchanged by a digest",
+    "test/provenance-doc-confirmed.test.ts :: [happy-5] commitUrl is unchanged by a digest",
+    "test/provenance-doc-confirmed.test.ts :: [happy-5] releaseUrl is unchanged by a digest",
+    "test/provenance-doc-confirmed.test.ts :: [happy-5] sameBuild is unchanged by a digest",
+    "test/provenance-doc-confirmed.test.ts :: [happy-5] buildBanner is unchanged by a digest",
+    "test/provenance-doc-confirmed.test.ts :: [happy-5] releaseUrl still resolves for a released build that has a digest"
+  ],
+  "publicOnSkeleton": {
+    "passed": 20,
+    "total": 39
+  },
+  "publicFailingOnReference": [],
+  "referenceRegressions": [
+    "test/build-info.test.ts :: verifyCommand takes the digest, which needs no registry access"
+  ],
+  "hiddenWritten": 75,
+  "kept": [
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [happy-1] the sha256 digest sha256:9b2c4e1f… becomes exactly the lookup for it",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [happy-1] the sha256 digest sha256:01234567… becomes exactly the lookup for it",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [happy-1] the sha256 digest sha256:00000000… becomes exactly the lookup for it",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [happy-1] the full literal command for a mixed-hex digest",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [happy-1] consecutive calls with different digests each give their own lookup",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [happy-1] the command is the gh api path, with a leading slash and no flags",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [happy-2] the digest \"sha256:a/b\" is inserted without any encoding",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [happy-2] the digest \"sha256:a+b=c\" is inserted without any encoding",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [happy-2] the digest \"sha256:a@b\" is inserted without any encoding",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [happy-2] the digest \"sha256:a?b#c\" is inserted without any encoding",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [happy-2] the digest \"sha256:a&b\" is inserted without any encoding",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [happy-2] the digest \"sha256:a b\" is inserted without any encoding",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [happy-2] the digest \"sha256:é\" is inserted without any encoding",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [happy-2] a mixed-hex sha256 digest keeps its colon unencoded",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [happy-3] the command is one trimmed line for a identified, mixed hex record",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [happy-3] the command is one trimmed line for a dirty identified record",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [happy-3] the command is one trimmed line for a released record",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [unhappy-1] no old fragment appears for a mixed-hex digest",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [unhappy-1] no old fragment appears for a unknown fallback with a digest",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [unhappy-1] no old fragment appears for a empty digest",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [unhappy-1] no old fragment appears for a released build",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [unhappy-2] a unidentified copy of identified record with no imageDigest property gives undefined",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [unhappy-2] a released clean record with no imageDigest property gives undefined",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [unhappy-2] a different sha record with no imageDigest property gives undefined",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [unhappy-2] a record without a digest gives undefined after a call that had one",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [unhappy-3] a dirty record with imageDigest explicitly undefined gives undefined",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [unhappy-3] a released record with imageDigest explicitly undefined gives undefined",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [unhappy-3] explicit undefined gives undefined right after a call with a digest",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-1] the unknown fallback still gives undefined after a call on a copy with a digest",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-1] a plain copy of the unknown fallback gives undefined",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-2] the digest \"sha384:0f0f\" (length 11) passes through unchanged",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-2] the digest \"SHA256:ABCDEF\" (length 13) passes through unchanged",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-2] the digest \"sha256:aaaaaaaaaaaaaaaaaaaaaaa\" (length 70) passes through unchanged",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-2] the digest \"sha256:aaaaaaaaaaaaaaaaaaaaaaa\" (length 72) passes through unchanged",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-2] the digest \"sha256:\" (length 7) passes through unchanged",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-2] the digest \":\" (length 1) passes through unchanged",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-2] the digest \"   \" (length 3) passes through unchanged",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-2] the digest \"\\t\" (length 1) passes through unchanged",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-2] the digest \"a\" (length 1) passes through unchanged",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-2] the digest \"sha256:%3A\" (length 10) passes through unchanged",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-2] the digest \"sha256:aaaa sha256:bbbb\" (length 23) passes through unchanged",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-2] the digest \"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\" (length 10000) passes through unchanged",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-2] a single-space digest gives a command ending in attestations/ and one space",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-2] a malformed digest on the unknown fallback passes through unchanged",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-3] an empty imageDigest on a dirty record gives the bare attestations/ command",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-3] an empty imageDigest on a released record gives the bare attestations/ command",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-3] an empty imageDigest on a dirty unknown fallback record gives the bare attestations/ command",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-4] a mixed-hex digest gives the same command on a identified record",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-4] a mixed-hex digest gives the same command on a unknownBuildInfo record",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-4] a mixed-hex digest gives the same command on a dirty identified record",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-4] a mixed-hex digest gives the same command on a released record",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-4] a mixed-hex digest gives the same command on a dirty released record",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-4] a mixed-hex digest gives the same command on a unidentified with a short sha record",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-4] a mixed-hex digest gives the same command on a sha unknown, rest identified record",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-4] a mixed-hex digest gives the same command on a different commit record",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-4] every base gives one identical command for the same digest",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-4] field order of the record does not matter",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-5] verifyCommand accepts a frozen record and returns the lookup",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-5] verifyCommand leaves a empty digest record deep-equal to its copy",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-5] verifyCommand leaves a unknown fallback with a digest record deep-equal to its copy",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-5] verifyCommand leaves a dirty released with a digest record deep-equal to its copy",
+    "test/hidden-provenance-doc-confirmed/verify-command.test.ts :: [boundary-5] the shared unknown fallback is unchanged by verifyCommand"
+  ],
+  "dropped": [
+    {
+      "id": "test/hidden-provenance-doc-confirmed/other-exports.test.ts :: [happy-4] buildInfoSchema accepts the digest \"sha256:9b2c4e1f7a3d5b8c0e6f2a4d1b7c9e3f5a8d0b2c4e6f1a3d5b7c9e0f2a4d6b8c\" and returns the record",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-provenance-doc-confirmed/other-exports.test.ts :: [happy-4] buildInfoSchema accepts the digest \"sha512:abc\" and returns the record",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-provenance-doc-confirmed/other-exports.test.ts :: [happy-4] buildInfoSchema accepts the digest \"not-a-digest\" and returns the record",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-provenance-doc-confirmed/other-exports.test.ts :: [happy-4] buildInfoSchema rejects an empty digest on the unknown fallback and on a dirty record",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-provenance-doc-confirmed/other-exports.test.ts :: [happy-4] buildInfoSchema still accepts the record with no digest, and versionResponseSchema is the same schema",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-provenance-doc-confirmed/other-exports.test.ts :: [happy-5] formatVersion is unchanged by a digest on a dirty record",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-provenance-doc-confirmed/other-exports.test.ts :: [happy-5] formatVersion is unchanged by a digest on the unknown fallback",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-provenance-doc-confirmed/other-exports.test.ts :: [happy-5] isIdentified stays false for the unknown fallback with a digest",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-provenance-doc-confirmed/other-exports.test.ts :: [happy-5] commitUrl stays undefined for the unknown fallback with a digest",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-provenance-doc-confirmed/other-exports.test.ts :: [happy-5] releaseUrl stays undefined for an unidentified release-shaped record with a digest",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-provenance-doc-confirmed/other-exports.test.ts :: [happy-5] sameBuild still compares only the sha when both sides have digests",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-provenance-doc-confirmed/other-exports.test.ts :: [happy-5] buildBanner is unchanged by a digest on the unknown fallback and a dirty record",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-provenance-doc-confirmed/other-exports.test.ts :: [happy-5] buildBanner never prints the digest",
+      "reason": "Passes on the skeleton."
+    }
+  ],
+  "reference": {
+    "public": {
+      "passed": 39,
+      "total": 39
+    },
+    "hidden": {
+      "passed": 62,
+      "total": 62
+    },
+    "touchedOutsideSrc": [],
+    "removed": [],
+    "existing": {
+      "passed": 46,
+      "total": 47
+    },
+    "notes": "I'm leaving this test failing, and no code change is needed. The spec doesn't support it, and it can't pass alongside the tests the spec requires.\n\n- The test checks that `verifyCommand` returns a command containing `--digest <digest>` and `--repo lunox-work/sandbox-factory`.\n- `spec.md` names this test and says: \"This spec replaces those assertions.\"\n- The spec's rule \"The command never names the gh attestation verify --digest invocation that does not exist\" requires that the result contain neither `--digest` nor `--repo`. It also requires the result to be exactly `gh api /repos/lunox-work/sandbox-factory/attestations/<digest>`.\n- Passing this test would mean bringing back the `gh attestation verify --digest` command. The spec explains that command doesn't work, and bringing it back would fail the spec's own scenarios in `provenance-doc-confirmed.test.ts` and `hidden-provenance-doc-confirmed/verify-command.test.ts`.\n\nThe other existing test for this function, `verifyCommand is undefined when no digest was resolved`, still passes, as do all other existing tests.\n\npackages/shared/test/build-info.test.ts :: verifyCommand takes the digest, which needs no registry access :: spec.md says it replaces this test's `--digest`/`--repo` checks, and its scenarios require the command to contain neither, so it can't pass alongside the spec's tests",
+    "sessions": [
+      {
+        "sessionId": "835e4577-5ae3-4848-a42e-aa205749f978",
+        "model": "claude-opus-5-5",
+        "ok": true,
+        "exitCode": 0,
+        "timedOut": false,
+        "costUsd": 0.1882079,
+        "turns": 6,
+        "durationMs": 26017,
+        "subtype": "success",
+        "apiError": null,
+        "sandboxed": true
+      },
+      {
+        "sessionId": "835e4577-5ae3-4848-a42e-aa205749f978",
+        "model": "claude-opus-5-5",
+        "ok": true,
+        "exitCode": 0,
+        "timedOut": false,
+        "costUsd": 0.2357727,
+        "turns": 1,
+        "durationMs": 6938,
+        "subtype": "success",
+        "apiError": null,
+        "sandboxed": true
+      }
+    ],
+    "costUsd": 0.42398060000000004
+  }
+}

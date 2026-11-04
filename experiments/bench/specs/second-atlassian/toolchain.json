@@ -1,0 +1,32 @@
+{
+  "name": "repo",
+  "repo": "../sandbox-factory",
+  "base": "140be12838752ec32f2b808f5e6d123db7521ee2",
+  "package": "apps/api",
+  "packageManager": "npm@10.9.2",
+  "buildFirst": [
+    "packages/core",
+    "packages/db",
+    "packages/shared"
+  ],
+  "runner": "node-test",
+  "rootDir": ".",
+  "outDir": "dist-test",
+  "testDir": "apps/api/test",
+  "testPattern": "*.test.ts",
+  "build": "tsc -p tsconfig.test.json",
+  "hiddenDir": "apps/api/test/hidden-second-atlassian-confirmed",
+  "seam": [
+    "apps/api/src/env.ts",
+    "apps/api/src/jira/state.ts"
+  ],
+  "allowedPaths": [
+    "apps/api/src/",
+    "apps/api/src/jira/"
+  ],
+  "examples": [
+    "apps/api/test/env-surface.test.ts",
+    "apps/api/test/env.test.ts",
+    "apps/api/test/auth.test.ts"
+  ]
+}

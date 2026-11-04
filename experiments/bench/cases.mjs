@@ -14,7 +14,9 @@ export const CASES = JSON.parse(readFileSync(join(HERE, "e5-cases.json"), "utf8"
 // tag, so neither checks out the other's clone or writes its templates.
 const tag = () => process.env.BENCH_TAG ?? "";
 const templates = () => join(WORK, "bench", tag() === "" ? "templates" : `templates-${tag()}`);
-export const ARMS = ["full", "slice-seam", "slice-diff"];
+// slice-plan (E7): the agent reads the repository and names the entries
+// itself; its template is the full arm's, and its slice is cut per run.
+export const ARMS = ["full", "slice-seam", "slice-diff", "slice-plan"];
 
 export const source = () => cloneOf("sandbox-factory", tag() === "" ? "bench-base" : `${tag()}-base`);
 export const baseOf = (item) => git(source(), ["rev-parse", `${item.commit}^`]).trim();
@@ -30,8 +32,36 @@ export const hiddenOf = (item) =>
     .map((name) => ({ path: `${toolchainOf(item).hiddenDir}/${name}`, from: join(specOf(item), "private", name) }));
 export const within = (path, allowed) => allowed.some((entry) => (entry.endsWith("/") ? path.startsWith(entry) : path === entry));
 
+/**
+ * A slice cut from `entries` at the case's base into `dir`, then checked
+ * as a person would next, its baseline recorded and its packages
+ * installed. Throws when the cut fails or the slice does not pass its
+ * baseline check. The clone is checked out, so callers serialize.
+ */
+export function cutSlice(cli, item, entries, dir) {
+  const repo = source();
+  const base = baseOf(item);
+  const started = Date.now();
+  checkout(repo, base);
+  rmSync(dir, { recursive: true, force: true });
+  const cut = carveout(cli, ["cut", ...entries, "--repo", repo, "--depth", "1", "--max-files", "200", "--with-tests", "--out", dir]);
+  if (cut.code !== 0 && cut.code !== 2) throw new Error(`${item.slug}: cut failed:\n${cut.stderr}`);
+  const cutMs = Date.now() - started;
+  // As a person would next: the check, which records the tests that fail
+  // on the mocks before any change.
+  const checked = carveout(cli, ["check", dir, "--json"]);
+  const baseline = sliceTests(dir);
+  if (checked.code !== 0 || !baseline.ok)
+    throw new Error(`${item.slug}: the slice does not pass its baseline check at B:\n${baseline.output ?? checked.stdout ?? checked.stderr}`);
+  execFileSync("sh", ["-c", existsSync(join(dir, "package-lock.json")) ? "npm ci --no-audit --no-fund --loglevel=error" : "npm install --no-audit --no-fund --loglevel=error"], { cwd: dir });
+  const record = JSON.parse(readFileSync(join(dir, "carveout.json"), "utf8"));
+  return { base, entries, files: record.manifest.included.length, cutMs, setupMs: Date.now() - started, checked: checked.code === 0, mockFailures: existsSync(join(dir, "carveout", "baseline.json")) ? JSON.parse(readFileSync(join(dir, "carveout", "baseline.json"), "utf8")).failing.length : 0, baseline: { tests: baseline.tests, pass: baseline.pass, fail: baseline.fail } };
+}
+
 /** The workdir every run of a case and arm starts from, made once. */
 export function template(cli, item, arm) {
+  // The plan arm starts every run in the repository, as the full arm does.
+  if (arm === "slice-plan") return template(cli, item, "full");
   // A slice is the CLI's output: one template per build of it.
   const home = arm === "full" ? join(templates(), item.slug) : join(templates(), cli.id.split("dist:")[1] ?? "cli", item.slug);
   const dir = join(home, arm);
@@ -58,21 +88,12 @@ export function template(cli, item, arm) {
     if (!built.ok) throw new Error(`${item.slug}: dependencies do not build at B:\n${built.output}`);
     meta = { base, setupMs: Date.now() - started };
   } else {
-    checkout(repo, base);
     const entries = arm === "slice-seam" ? seamEntries(repo, base, item.seam) : packageChange(repo, item).code.filter((path) => packageChange(repo, item).changes.get(path) !== "A");
-    rmSync(dir, { recursive: true, force: true });
-    const cut = carveout(cli, ["cut", ...entries, "--repo", repo, "--depth", "1", "--max-files", "200", "--with-tests", "--out", dir]);
-    if (cut.code !== 0 && cut.code !== 2) throw new Error(`${item.slug}/${arm}: cut failed:\n${cut.stderr}`);
-    const cutMs = Date.now() - started;
-    // As a person would next: the check, which records the tests that fail
-    // on the mocks before any change.
-    const checked = carveout(cli, ["check", dir, "--json"]);
-    const baseline = sliceTests(dir);
-    if (checked.code !== 0 || !baseline.ok)
-      throw new Error(`${item.slug}/${arm}: the slice does not pass its baseline check at B:\n${baseline.output ?? checked.stdout ?? checked.stderr}`);
-    execFileSync("sh", ["-c", existsSync(join(dir, "package-lock.json")) ? "npm ci --no-audit --no-fund --loglevel=error" : "npm install --no-audit --no-fund --loglevel=error"], { cwd: dir });
-    const record = JSON.parse(readFileSync(join(dir, "carveout.json"), "utf8"));
-    meta = { base, entries, files: record.manifest.included.length, cutMs, setupMs: Date.now() - started, checked: checked.code === 0, mockFailures: existsSync(join(dir, "carveout", "baseline.json")) ? JSON.parse(readFileSync(join(dir, "carveout", "baseline.json"), "utf8")).failing.length : 0, baseline: { tests: baseline.tests, pass: baseline.pass, fail: baseline.fail } };
+    try {
+      meta = cutSlice(cli, item, entries, dir);
+    } catch (error) {
+      throw new Error(String(error?.message ?? error).replace(`${item.slug}:`, `${item.slug}/${arm}:`));
+    }
   }
   meta.templateVersion = 2;
   writeFileSync(ready, JSON.stringify(meta));

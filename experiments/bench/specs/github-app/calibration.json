@@ -1,0 +1,341 @@
+{
+  "slug": "github-app-confirmed",
+  "status": "ok",
+  "reason": null,
+  "publicIds": [
+    "test/github-app-confirmed.contract.test.ts :: [happy-19] githubInstallationSettingsUrl builds the page for the account type",
+    "test/github-app-confirmed.contract.test.ts :: [happy-19] any account type other than Organization gets the personal settings page",
+    "test/github-app-confirmed.contract.test.ts :: [happy-20] the organization and Jira contracts still parse as before",
+    "test/github-app-confirmed.contract.test.ts :: [happy-20] registerBoardSchema is not narrowed to GitHub id text",
+    "test/github-app-confirmed.dtos.test.ts :: [happy-13] a complete connection DTO round-trips",
+    "test/github-app-confirmed.dtos.test.ts :: [happy-13] a connection DTO with suspension and uninstall times round-trips",
+    "test/github-app-confirmed.dtos.test.ts :: [unhappy-9] a connection DTO missing or mistyping a field is refused",
+    "test/github-app-confirmed.dtos.test.ts :: [unhappy-9] a nullable connection field set to undefined is refused, since nullable is not optional",
+    "test/github-app-confirmed.dtos.test.ts :: [boundary-4] DTO strings carry no format or length check",
+    "test/github-app-confirmed.dtos.test.ts :: [boundary-4] DTO id and URL fields are plain strings, not GitHub id text",
+    "test/github-app-confirmed.dtos.test.ts :: [unhappy-10] an unknown key on a DTO is refused",
+    "test/github-app-confirmed.dtos.test.ts :: [unhappy-10] an unknown key on the repo DTO is refused with its own name",
+    "test/github-app-confirmed.dtos.test.ts :: [happy-14] a complete installation repository DTO round-trips",
+    "test/github-app-confirmed.dtos.test.ts :: [happy-14] a registered, public installation repository DTO round-trips",
+    "test/github-app-confirmed.dtos.test.ts :: [happy-15] a complete registered repository DTO round-trips",
+    "test/github-app-confirmed.dtos.test.ts :: [happy-15] a synced repository DTO with every nullable field filled round-trips",
+    "test/github-app-confirmed.dtos.test.ts :: [happy-16] the grant DTO carries the login and health, never tokens",
+    "test/github-app-confirmed.dtos.test.ts :: [happy-16] an unhealthy grant parses, and a refresh token is refused like an access token",
+    "test/github-app-confirmed.dtos.test.ts :: [unhappy-11] a repository DTO with a bad field is refused",
+    "test/github-app-confirmed.dtos.test.ts :: [unhappy-11] a repo DTO with a textual size or another casing of a status is refused",
+    "test/github-app-confirmed.requests.test.ts :: [happy-4] a canonical id is accepted and kept as a string",
+    "test/github-app-confirmed.requests.test.ts :: [happy-4] zeros after the first digit and the smallest nineteen-digit id are accepted",
+    "test/github-app-confirmed.requests.test.ts :: [boundary-1] a twenty-digit id is refused",
+    "test/github-app-confirmed.requests.test.ts :: [boundary-1] the largest twenty-digit id is refused like the smallest",
+    "test/github-app-confirmed.requests.test.ts :: [unhappy-3] a non-canonical id is refused rather than normalised",
+    "test/github-app-confirmed.requests.test.ts :: [unhappy-3] trailing whitespace and a trailing newline are refused, not trimmed",
+    "test/github-app-confirmed.requests.test.ts :: [unhappy-4] a numeric externalId is refused, not coerced",
+    "test/github-app-confirmed.requests.test.ts :: [unhappy-4] a missing or null externalId is refused at its path",
+    "test/github-app-confirmed.requests.test.ts :: [happy-5] the link body takes GitHub's installation id as text",
+    "test/github-app-confirmed.requests.test.ts :: [happy-5] the link body takes a nineteen-digit id and strips unknown keys",
+    "test/github-app-confirmed.requests.test.ts :: [unhappy-5] the link body refuses an id that is not GitHub id text",
+    "test/github-app-confirmed.requests.test.ts :: [unhappy-5] the link body refuses a twenty-digit id with the GitHub id message",
+    "test/github-app-confirmed.requests.test.ts :: [happy-17] a register body parses unchanged",
+    "test/github-app-confirmed.requests.test.ts :: [happy-17] a register body with an id beyond the safe integers parses to the same text",
+    "test/github-app-confirmed.requests.test.ts :: [happy-18] unknown keys in a register body are stripped",
+    "test/github-app-confirmed.requests.test.ts :: [happy-18] a stripped key is not validated, whatever its value",
+    "test/github-app-confirmed.requests.test.ts :: [unhappy-12] a register body without a valid role is refused",
+    "test/github-app-confirmed.requests.test.ts :: [unhappy-12] a register body with the role in another casing or empty is refused",
+    "test/github-app-confirmed.responses.test.ts :: [happy-6] an installation parses with nothing but its id",
+    "test/github-app-confirmed.responses.test.ts :: [happy-6] an installation's account needs nothing but its login",
+    "test/github-app-confirmed.responses.test.ts :: [happy-7] an installation with a null account, an unfamiliar selection and an unknown field parses",
+    "test/github-app-confirmed.responses.test.ts :: [happy-7] an unknown field on the account is kept as well",
+    "test/github-app-confirmed.responses.test.ts :: [happy-8] an installation's account type is any string",
+    "test/github-app-confirmed.responses.test.ts :: [happy-8] an installation's account type keeps lowercase and empty values as sent",
+    "test/github-app-confirmed.responses.test.ts :: [boundary-2] an installation id is any safe integer, including zero and negatives",
+    "test/github-app-confirmed.responses.test.ts :: [boundary-2] the most negative safe integer is accepted as an installation id",
+    "test/github-app-confirmed.responses.test.ts :: [unhappy-6] an installation without a usable id or with an account lacking its login is refused",
+    "test/github-app-confirmed.responses.test.ts :: [unhappy-6] an installation id just below the safe range or a null id is refused",
+    "test/github-app-confirmed.responses.test.ts :: [happy-9] a repository parses with only its id and full name, keeping unknown fields",
+    "test/github-app-confirmed.responses.test.ts :: [happy-9] a repository's full name is any string, even empty, with case and spaces kept",
+    "test/github-app-confirmed.responses.test.ts :: [happy-10] a repository's pushed_at may be an ISO string, Unix seconds or null",
+    "test/github-app-confirmed.responses.test.ts :: [happy-10] a pushed_at of zero seconds is kept as the number zero",
+    "test/github-app-confirmed.responses.test.ts :: [unhappy-7] a repository without its id or full name is refused",
+    "test/github-app-confirmed.responses.test.ts :: [unhappy-7] a repository with a null full name or a textual id is refused",
+    "test/github-app-confirmed.responses.test.ts :: [unhappy-8] a repository page without its repositories array is refused",
+    "test/github-app-confirmed.responses.test.ts :: [unhappy-8] a repository page with null repositories is refused, not defaulted",
+    "test/github-app-confirmed.responses.test.ts :: [boundary-3] a repository page with an empty array parses as empty",
+    "test/github-app-confirmed.responses.test.ts :: [boundary-3] an empty repository page keeps a total count of zero",
+    "test/github-app-confirmed.responses.test.ts :: [happy-11] a repository page keeps its repositories in the order GitHub sent",
+    "test/github-app-confirmed.responses.test.ts :: [happy-11] a repository page keeps a repository listed twice",
+    "test/github-app-confirmed.responses.test.ts :: [happy-12] githubTimestamp reads either spelling as ISO, and anything else as null",
+    "test/github-app-confirmed.responses.test.ts :: [happy-12] githubTimestamp reads zero seconds as the epoch and the empty string as null",
+    "test/github-app-confirmed.vocabulary.test.ts :: [happy-1] the constants list their values in order",
+    "test/github-app-confirmed.vocabulary.test.ts :: [happy-1] each enum schema's options are its constant, in the same order",
+    "test/github-app-confirmed.vocabulary.test.ts :: [happy-2] each enum schema accepts its own example values",
+    "test/github-app-confirmed.vocabulary.test.ts :: [happy-2] every listed value, first and last included, is accepted by its schema",
+    "test/github-app-confirmed.vocabulary.test.ts :: [unhappy-1] an enum schema refuses other casing and unknown values",
+    "test/github-app-confirmed.vocabulary.test.ts :: [unhappy-1] an enum schema refuses the empty string and padded values",
+    "test/github-app-confirmed.vocabulary.test.ts :: [unhappy-2] an available installation's status is closed",
+    "test/github-app-confirmed.vocabulary.test.ts :: [unhappy-2] an available installation's status refuses another casing of a listed value",
+    "test/github-app-confirmed.vocabulary.test.ts :: [happy-3] account type and repository selection are free strings in GitHub's casing",
+    "test/github-app-confirmed.vocabulary.test.ts :: [happy-3] account type and repository selection are kept as given, even lowercase or empty"
+  ],
+  "publicOnSkeleton": {
+    "passed": 68,
+    "total": 72
+  },
+  "publicFailingOnReference": [],
+  "referenceRegressions": [],
+  "hiddenWritten": 59,
+  "kept": [
+    "test/hidden-github-app-confirmed/contract.test.ts :: [happy-19] the organization page uses the given login and id",
+    "test/hidden-github-app-confirmed/contract.test.ts :: [happy-19] every other spelling of the account type gets the personal page with that id",
+    "test/hidden-github-app-confirmed/contract.test.ts :: [happy-19] the helper's result depends only on its arguments, call after call",
+    "test/hidden-github-app-confirmed/responses.test.ts :: [happy-12] githubTimestamp reads other Unix seconds as seconds",
+    "test/hidden-github-app-confirmed/responses.test.ts :: [happy-12] githubTimestamp normalises other ISO strings to UTC with milliseconds",
+    "test/hidden-github-app-confirmed/responses.test.ts :: [happy-12] githubTimestamp reads impossible dates and other words as null"
+  ],
+  "dropped": [
+    {
+      "id": "test/hidden-github-app-confirmed/contract.test.ts :: [happy-20] existing organization, membership, board and handle schemas behave as before",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/dtos.test.ts :: [happy-13] a personal, suspended connection DTO round-trips",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/dtos.test.ts :: [unhappy-9] every connection field mistyped is refused",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/dtos.test.ts :: [boundary-4] every connection string field may be empty or free-form",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/dtos.test.ts :: [boundary-4] repository DTO strings may be empty or free-form",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/dtos.test.ts :: [unhappy-10] other unknown keys on the connection DTO are refused by name",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/dtos.test.ts :: [unhappy-10] an unknown key is refused by name on each of the other DTOs",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/dtos.test.ts :: [happy-14] installation repository DTOs with other values round-trip",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/dtos.test.ts :: [happy-15] repo DTOs in each sync status round-trip",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/dtos.test.ts :: [happy-16] the grant DTO keeps other logins and refuses every token-like key",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/dtos.test.ts :: [happy-16] the grant DTO refuses a missing or mistyped login or health",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/dtos.test.ts :: [unhappy-11] an installation repository DTO missing or mistyping any other field is refused",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/dtos.test.ts :: [unhappy-11] a repo DTO missing any field, or mistyping one, is refused",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/requests.test.ts :: [happy-4] ids of every length from one to nineteen digits are accepted verbatim",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/requests.test.ts :: [boundary-1] every id of twenty digits or more is refused with the GitHub id message",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/requests.test.ts :: [unhappy-5] the link body refuses other ids of twenty digits or more",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/requests.test.ts :: [unhappy-3] other non-canonical spellings are refused with the GitHub id message",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/requests.test.ts :: [unhappy-4] other numbers and non-string externalIds are refused at their path",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/requests.test.ts :: [happy-5] the link body keeps other installation ids as text and strips callback fields",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/requests.test.ts :: [unhappy-5] the link body refuses non-canonical text with the GitHub id message",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/requests.test.ts :: [unhappy-5] the link body refuses a missing, null or non-string id at its path",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/requests.test.ts :: [happy-17] register bodies with other ids parse unchanged",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/requests.test.ts :: [happy-18] many unknown keys are stripped, leaving exactly the id and role",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/requests.test.ts :: [unhappy-12] other invalid roles are refused at the role path",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/responses.test.ts :: [happy-6] installations with other ids parse to exactly their id",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/responses.test.ts :: [happy-6] an installation with every optional field filled keeps them all",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/responses.test.ts :: [happy-6] an installation page of bare installations keeps them in GitHub's order",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/responses.test.ts :: [happy-6] an installation event carries an installation that has nothing but its id",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/responses.test.ts :: [happy-7] unknown fields of every JSON type are kept whole on an installation",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/responses.test.ts :: [happy-7] an installation page and the webhook envelope keep unknown fields",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/responses.test.ts :: [happy-8] an installation's account keeps any type with its id",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/responses.test.ts :: [boundary-2] installation ids beyond 32 bits and next to the safe limits are accepted",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/responses.test.ts :: [boundary-2] zero, negative and largest safe installation ids are accepted inside events",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/responses.test.ts :: [unhappy-6] installations with non-integer, unsafe or non-numeric ids are refused",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/responses.test.ts :: [unhappy-6] an installation whose account has no string login is refused",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/responses.test.ts :: [unhappy-6] an installation event whose installation lacks a usable id is refused",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/responses.test.ts :: [happy-9] a full repository payload, with GitHub's other fields, round-trips",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/responses.test.ts :: [happy-9] a repository page and a push event keep unknown fields on the repository",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/responses.test.ts :: [happy-10] other ISO strings and Unix seconds are kept as sent, never converted",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/responses.test.ts :: [unhappy-7] repositories with a missing or mistyped id or full name are refused",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/responses.test.ts :: [unhappy-7] a page or a push event carrying a repository without its full name is refused",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/responses.test.ts :: [unhappy-8] a page with only its count or selection, or a non-array, is refused at repositories",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/responses.test.ts :: [boundary-3] an empty page keeps its selection and extra fields and stays empty",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/responses.test.ts :: [happy-11] a longer page keeps GitHub's order, unsorted by id or name",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/responses.test.ts :: [happy-11] a hundred repositories in descending order are kept in that order",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/vocabulary.test.ts :: [happy-1] the constants hold exactly their listed values and no more",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/vocabulary.test.ts :: [happy-1] the available installation's status options are exactly the installation statuses",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/vocabulary.test.ts :: [happy-2] every sync status and role is accepted inside the repo DTO and the register body",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/vocabulary.test.ts :: [happy-2] each connect outcome parses to itself through safeParse",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/vocabulary.test.ts :: [unhappy-1] an enum schema refuses upper case, a neighbour's values and non-strings",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/vocabulary.test.ts :: [unhappy-2] an available installation's status refuses a connect outcome, null, a number or absence",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/vocabulary.test.ts :: [happy-3] account type and repository selection keep values beyond the examples",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-github-app-confirmed/vocabulary.test.ts :: [happy-3] the available installation DTO keeps account type and selection in GitHub's casing",
+      "reason": "Passes on the skeleton."
+    }
+  ],
+  "reference": {
+    "public": {
+      "passed": 72,
+      "total": 72
+    },
+    "hidden": {
+      "passed": 6,
+      "total": 6
+    },
+    "touchedOutsideSrc": [],
+    "removed": [],
+    "existing": {
+      "passed": 126,
+      "total": 126
+    },
+    "notes": "The GitHub contract is now in a new file, `packages/shared/src/github.ts`. All the tests pass: 72 in the visible suite, 59 in the hidden one, and 257 in the package's whole suite. The production build (`tsc -p tsconfig.json`) and Prettier are clean too.\n\n**What changed**\n- **Where the code lives:** the spec says the exports belong in `src/github.ts`, but the working copy had them written straight into `index.ts`. I moved that whole block, unchanged, into `github.ts`, which starts with a header comment in the same style as `jira.ts`. `index.ts` is now back to its committed version plus one line: `export * from \"./github.js\";`. Every export name and signature is the same as before.\n- **`githubTimestamp`:** a number is read as Unix seconds, and a non-empty string is parsed as a date. Both come back as UTC ISO text, such as `\"2023-11-14T22:13:20.000Z\"`. Anything else returns `null`: `null`, `undefined`, `\"\"`, numbers that aren't finite, impossible dates like month 13 or hour 25, and words like `\"nope\"`.\n- **`githubInstallationSettingsUrl`:** only the exact account type `\"Organization\"` gets the `https://github.com/organizations/<login>/settings/installations/<id>` page. Every other value, including `\"organization\"` and `\"ORGANIZATION\"`, gets `https://github.com/settings/installations/<id>`.\n- **Small cleanup:** the two request schemas both checked the same pattern `^[1-9][0-9]{0,18}$`. They now share one private schema, `githubIdTextSchema`, which keeps the message `Expected a GitHub id.` Behaviour is unchanged.\n\nFailing tests left:\nnone",
+    "sessions": [
+      {
+        "sessionId": "6bd04afc-e468-40f3-996f-e25056440554",
+        "model": "claude-opus-5-5",
+        "ok": true,
+        "exitCode": 0,
+        "timedOut": false,
+        "costUsd": 0.4820314,
+        "turns": 12,
+        "durationMs": 70705,
+        "subtype": "success",
+        "apiError": null,
+        "sandboxed": true
+      }
+    ],
+    "costUsd": 0.4820314
+  }
+}

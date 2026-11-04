@@ -1,0 +1,33 @@
+{
+  "name": "repo",
+  "repo": "../sandbox-factory",
+  "base": "40092347917aa980400c6435d1ce578375afdb9d",
+  "package": "apps/worker",
+  "packageManager": "npm@10.9.2",
+  "buildFirst": [
+    "packages/core",
+    "packages/db",
+    "packages/shared",
+    "packages/github"
+  ],
+  "runner": "node-test",
+  "rootDir": ".",
+  "outDir": "dist-test",
+  "testDir": "apps/worker/test",
+  "testPattern": "*.test.ts",
+  "build": "tsc -p tsconfig.test.json",
+  "hiddenDir": "apps/worker/test/hidden-touched-repos-confirmed",
+  "seam": [
+    "apps/worker/src/tools/sandbox-build.ts",
+    "apps/worker/src/tools/starter-check.ts",
+    "apps/worker/src/tools/starter.ts"
+  ],
+  "allowedPaths": [
+    "apps/worker/src/tools/"
+  ],
+  "examples": [
+    "apps/worker/test/sandbox-build.test.ts",
+    "apps/worker/test/starter.test.ts",
+    "apps/worker/test/abstractions.test.ts"
+  ]
+}

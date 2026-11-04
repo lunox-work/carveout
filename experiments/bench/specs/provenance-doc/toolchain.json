@@ -1,0 +1,27 @@
+{
+  "name": "repo",
+  "repo": "../sandbox-factory",
+  "base": "a53c549eceb531f64c9c0bb8113c46fe5bd09d2f",
+  "package": "packages/shared",
+  "packageManager": "npm@10.9.2",
+  "buildFirst": [
+    "packages/core"
+  ],
+  "runner": "node-test",
+  "rootDir": ".",
+  "outDir": "dist-test",
+  "testDir": "packages/shared/test",
+  "testPattern": "*.test.ts",
+  "build": "tsc -p tsconfig.test.json",
+  "hiddenDir": "packages/shared/test/hidden-provenance-doc-confirmed",
+  "seam": [
+    "packages/shared/src/build-info.ts"
+  ],
+  "allowedPaths": [
+    "packages/shared/src/"
+  ],
+  "examples": [
+    "packages/shared/test/build-info-resolver.test.ts",
+    "packages/shared/test/build-info.test.ts"
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "name": "repo",
+  "repo": "../sandbox-factory",
+  "base": "f58e8766f7de3debbc4fce9c427b1f32d3ea0775",
+  "package": "packages/shared",
+  "packageManager": "npm@10.9.2",
+  "buildFirst": [
+    "packages/core"
+  ],
+  "runner": "node-test",
+  "rootDir": ".",
+  "outDir": "dist-test",
+  "testDir": "packages/shared/test",
+  "testPattern": "*.test.ts",
+  "build": "tsc -p tsconfig.test.json",
+  "hiddenDir": "packages/shared/test/hidden-jira-contract-confirmed",
+  "seam": [
+    "packages/shared/src/index.ts"
+  ],
+  "allowedPaths": [
+    "packages/shared/src/"
+  ],
+  "examples": [
+    "packages/shared/test/schemas.test.ts",
+    "packages/shared/test/build-info-resolver.test.ts",
+    "packages/shared/test/build-info.test.ts"
+  ]
+}

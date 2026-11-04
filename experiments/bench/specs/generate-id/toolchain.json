@@ -1,0 +1,33 @@
+{
+  "name": "repo",
+  "repo": "../sandbox-factory",
+  "base": "61e8e1116cfaac44b4e7f1f4cc315f6e14428372",
+  "package": "packages/db",
+  "packageManager": "npm@10.9.2",
+  "buildFirst": [
+    "packages/core"
+  ],
+  "runner": "node-test",
+  "rootDir": ".",
+  "outDir": "dist-test",
+  "testDir": "packages/db/test",
+  "testPattern": "*.test.ts",
+  "build": "tsc -p tsconfig.test.json",
+  "hiddenDir": "packages/db/test/hidden-generate-id-confirmed",
+  "seam": [
+    "packages/db/src/mapping.ts",
+    "packages/db/src/schema.ts",
+    "packages/db/src/schema/auth.ts",
+    "packages/db/src/schema/organizations.ts",
+    "packages/db/src/schema/todos.ts"
+  ],
+  "allowedPaths": [
+    "packages/db/src/",
+    "packages/db/src/schema/"
+  ],
+  "examples": [
+    "packages/db/test/mapping.test.ts",
+    "packages/db/test/schema.test.ts",
+    "packages/db/test/organizations.test.ts"
+  ]
+}

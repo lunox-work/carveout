@@ -213,6 +213,62 @@ they say nothing about carveout.
   the mocks: 3 in identicon (shared's handle schema, whose validator is in
   core) and none in most others. They are counted, not judged.
 
+### E5 on the grown corpus (2026-11-04)
+
+Phase 6 grew the corpus (below) and replayed every case on the fixed CLI,
+`2592b02` plus the three fixes E5 found this round (dist `ad8b99c8bd40`,
+uncommitted at the time of the run). 26 cases: the 11 above and 15 new ones
+from `duediligence/evidence/in-repo-e6b/`.
+
+**Usable cases.** The oracle passes on 21 of 26. Besides the three above,
+build-commit and sliced-fixtures fail even with the commit's whole package
+change: both need changes the commit made in other packages.
+
+| Bar                                                         | Result                                   | Verdict  |
+| ----------------------------------------------------------- | ---------------------------------------- | -------- |
+| Round trip byte-identical in at least 90% of in-slice diffs | 50 of 52; 42 of 42 on the usable cases   | **pass** |
+| Every round-tripped patch applies at B                      | 52 of 52                                 | **pass** |
+| In-slice and post-merge verdicts agree in at least 95%      | 28 of 42 usable rows (67%)               | **fail** |
+| No slice-passes, repository-fails case caused by carveout   | 0; the two are coverage (below)          | **pass** |
+
+- **Slice passes, repository fails (2).** step-holds/seam as before, and
+  second-atlassian/diff: the commit adds `src/jira/state.ts`, which the
+  diff-mode cut (changed files, not added ones) has no folder for, so
+  `apply` named it outside and the merge lacked it. Coverage, not mechanics.
+- **Slice fails, repository passes (12 rows, 6 cases).** All new, and all
+  one shape: the package's tests are integration tests on a mocked service.
+  jira-pages, jira-boards, jira-connections, oauth-membership and
+  generate-id are `packages/db` or `apps/api` cases whose tests run
+  against `postgres`; in the slice that is a recording mock, so the
+  commit's own new tests fail there (jira-boards: 13 of 13 added tests),
+  while the repository runs them on a database. generate-id fails the
+  slice's coverage gate as well. touched-repos (`apps/worker`) does not
+  build: the folder relaxes `noImplicitAny` for a callback passed to the
+  untyped `typescript-compiler` package, and under `strictNullChecks` without it
+  TypeScript types a bare `[]` as `never[]`, which one brought-along test
+  pushes into. A known limit now, not fixed: the relax trades one error
+  class for another.
+- **Defects E5 found and fixed this round** (all three made whole package
+  families uncuttable; none showed on the 11 cases of E6a):
+  - A doc comment containing the word "import" ran the import regex on to
+    the first real import below it, which was then neither rewritten by
+    `cut` nor restored by `patch`: every `apps/api` slice failed to
+    resolve `sandbox-factory`.
+  - `drizzle-orm` was mocked as a service SDK; its schema builders carry
+    the types `packages/db` modules need, so no db slice built. It is
+    installed now; the driver (`postgres`) stays mocked.
+  - The fixture fetched real types for packages the folder would mock, so
+    the implicit-any probe passed on types the folder never has, and the
+    folder's build failed on `TS7006`. Service packages are untyped in the
+    fixture now, as in the folder.
+- **Reading.** On the E6a corpus the agreement bar missed by one row; on
+  the grown corpus it fails outright, and the cause is not round-trip
+  mechanics (42 of 42) but what a slice can run: a package whose tests
+  need a live service has no in-slice verdict. E6b judges every arm in the
+  repository, so this does not bias the arms against each other, but it
+  says the slice arms' agents work without a passing test run in these
+  cases.
+
 ## E6a: a slice against the whole repository
 
 The bars are in [PLAN-benchmark.md](PLAN-benchmark.md), Phase 5, and the

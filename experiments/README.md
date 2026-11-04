@@ -154,6 +154,30 @@ script is `e5-replay.mjs`.
 - **Installs.** One `npm ci` (npm 10.9.2, `--ignore-scripts`) per distinct
   lockfile, kept in the target clone. Test runs get a 4 GB heap cap.
 
+## E6b and E7: the grown corpus and the plan arm
+
+The rules are in [PLAN-benchmark.md](PLAN-benchmark.md), Phase 6. What
+the plan leaves open:
+
+- **Candidates** come from a discovery pass over sandbox-factory's
+  first-parent history that, unlike duediligence's `discover`, lets a commit
+  touch several packages; the (commit, package) pair is the candidate, and
+  `check` scopes the commit to the package's allowed paths as it does for
+  the 11. The case set is `duediligence/evidence/in-repo-e6b/` (cases,
+  ledger, specs), run with `--cases`.
+- **Specs** are the `<slug>-confirmed` arm's, copied into `bench/specs/<slug>/`
+  as the 11 were; a case that reaches the bench has `corpus: "e6b"` in
+  `e5-cases.json`.
+- **Runs** use `BENCH_TAG=e6b` and `BENCH_RESULTS=results/bench-e6b.jsonl`,
+  so E6a's rows (keyed by case, arm, model and run, not by CLI) do not
+  stand in for E6b's. `bench/analyze.mjs --cases <the corpus>` reads them,
+  and `--arm slice-plan` reads E7.
+- **The plan arm's slice** is cut per run from the entries the planning
+  session wrote, with the slice arms' flags, in the shared clone one at a
+  time. The cut folder is removed after judging; its entries, file count
+  and baseline stay in the result line under `setup`, and the planning
+  session under `plan`.
+
 ## Replaying benchmark changes for verdict parity
 
 For new benchmark runs, set `BENCH_TAG` and `BENCH_RESULTS` to isolate the

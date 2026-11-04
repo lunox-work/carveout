@@ -1,0 +1,31 @@
+{
+  "name": "repo",
+  "repo": "../sandbox-factory",
+  "base": "6252a72ae82de3f54e556e57faa7f76e24542ddf",
+  "package": "packages/core",
+  "packageManager": "npm@10.9.2",
+  "buildFirst": [],
+  "runner": "node-test",
+  "rootDir": ".",
+  "outDir": "dist-test",
+  "testDir": "packages/core/test",
+  "testPattern": "*.test.ts",
+  "build": "tsc -p tsconfig.test.json",
+  "hiddenDir": "packages/core/test/hidden-workspace-stubs-confirmed",
+  "seam": [
+    "packages/core/src/analysis.ts",
+    "packages/core/src/sandbox/project.ts",
+    "packages/core/src/sandbox/provenance.ts",
+    "packages/core/src/slice/manifest.ts"
+  ],
+  "allowedPaths": [
+    "packages/core/src/",
+    "packages/core/src/sandbox/",
+    "packages/core/src/slice/"
+  ],
+  "examples": [
+    "packages/core/test/analysis.test.ts",
+    "packages/core/test/bounty.test.ts",
+    "packages/core/test/grading.test.ts"
+  ]
+}

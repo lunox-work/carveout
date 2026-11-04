@@ -1,0 +1,207 @@
+{
+  "slug": "generate-id-confirmed",
+  "status": "ok",
+  "reason": null,
+  "publicIds": [
+    "test/generate-id-confirmed.mapping.test.ts :: [happy-1] ID_PREFIXES holds exactly the six prefixes in declaration order",
+    "test/generate-id-confirmed.mapping.test.ts :: [happy-1] ID_PREFIXES starts with the default prefix todo and ends with bpr",
+    "test/generate-id-confirmed.mapping.test.ts :: [boundary-1] every prefix is lowercase letters only and none repeats",
+    "test/generate-id-confirmed.mapping.test.ts :: [boundary-1] every generated id splits at its first underscore back into its prefix",
+    "test/generate-id-confirmed.mapping.test.ts :: [boundary-2] ID_PREFIXES is not frozen",
+    "test/generate-id-confirmed.mapping.test.ts :: [boundary-2] ID_PREFIXES is a plain extensible array as declared",
+    "test/generate-id-confirmed.mapping.test.ts :: [happy-2] the package root re-exports the same ID_PREFIXES object",
+    "test/generate-id-confirmed.mapping.test.ts :: [happy-2] the package root's generateId is the same function as mapping's",
+    "test/generate-id-confirmed.mapping.test.ts :: [happy-3] each listed prefix produces an id carrying that prefix",
+    "test/generate-id-confirmed.mapping.test.ts :: [happy-3] the uuid part is exactly 36 lowercase characters for every prefix",
+    "test/generate-id-confirmed.mapping.test.ts :: [happy-4] generateId with no argument uses the todo prefix",
+    "test/generate-id-confirmed.mapping.test.ts :: [happy-4] generateId() and generateId of the first listed prefix share the todo shape but differ",
+    "test/generate-id-confirmed.mapping.test.ts :: [boundary-3] generateId(undefined) falls back to the todo prefix",
+    "test/generate-id-confirmed.mapping.test.ts :: [boundary-3] a missing optional prefix property falls back to the todo prefix",
+    "test/generate-id-confirmed.mapping.test.ts :: [happy-5] 1000 calls to generateId(jri) are pairwise distinct and jri-prefixed",
+    "test/generate-id-confirmed.mapping.test.ts :: [happy-5] two consecutive calls with the same prefix differ",
+    "test/generate-id-confirmed.mapping.test.ts :: [boundary-4] 100 ids per listed prefix are pairwise distinct, and so are their suffixes",
+    "test/generate-id-confirmed.mapping.test.ts :: [boundary-4] one id per listed prefix gives six distinct uuid suffixes",
+    "test/generate-id-confirmed.mapping.test.ts :: [unhappy-1] a value cast past IdPrefix is stringified into the id without an error",
+    "test/generate-id-confirmed.mapping.test.ts :: [unhappy-1] null does not trigger the default prefix",
+    "test/generate-id-confirmed.mapping.test.ts :: [concurrency-1] interleaved async tasks each receive distinct brn ids",
+    "test/generate-id-confirmed.mapping.test.ts :: [concurrency-1] tasks that yield between every call still receive distinct ids",
+    "test/generate-id-confirmed.mapping.test.ts :: [happy-6] newTodoRow defaults to a todo-prefixed id",
+    "test/generate-id-confirmed.mapping.test.ts :: [happy-6] two default newTodoRow ids are distinct todo ids",
+    "test/generate-id-confirmed.mapping.test.ts :: [happy-7] newTodoRow uses a given id verbatim",
+    "test/generate-id-confirmed.mapping.test.ts :: [happy-7] newTodoRow given an explicit undefined id still generates a todo id",
+    "test/generate-id-confirmed.mapping.test.ts :: [happy-8] rowToTodo maps a row to the domain todo",
+    "test/generate-id-confirmed.mapping.test.ts :: [happy-8] rowToTodo keeps a done flag and millisecond precision",
+    "test/generate-id-confirmed.schema.test.ts :: [happy-9] each schema module's runtime exports are exactly its tables",
+    "test/generate-id-confirmed.schema.test.ts :: [happy-9] the cycling modules do not re-export each other's tables",
+    "test/generate-id-confirmed.schema.test.ts :: [happy-10] each table keeps its Postgres table name",
+    "test/generate-id-confirmed.schema.test.ts :: [happy-10] userEmail is the snake_case user_email and the nine names are distinct",
+    "test/generate-id-confirmed.schema.test.ts :: [happy-11] the barrel's runtime exports are the nine tables",
+    "test/generate-id-confirmed.schema.test.ts :: [happy-11] the barrel's keys are exactly the union of the three modules' keys",
+    "test/generate-id-confirmed.schema.test.ts :: [happy-12] each barrel export is the identical object from its module",
+    "test/generate-id-confirmed.schema.test.ts :: [happy-12] the package root's tables are the identical objects from their modules",
+    "test/generate-id-confirmed.schema.test.ts :: [happy-13] authSchema still holds the barrel's tables and not todos or userEmail",
+    "test/generate-id-confirmed.schema.test.ts :: [happy-13] authSchema holds exactly the seven auth and organization tables, by identity",
+    "test/generate-id-confirmed.schema.test.ts :: [happy-14] every foreign key points at the right table with the right action",
+    "test/generate-id-confirmed.schema.test.ts :: [happy-14] session's cross-module reference to organization sets null, beside its cascading user reference",
+    "test/generate-id-confirmed.schema.test.ts :: [boundary-5] with auth.js loaded first, the cross-module foreign keys resolve",
+    "test/generate-id-confirmed.schema.test.ts :: [boundary-5] with organizations.js loaded first, the cross-module foreign keys resolve",
+    "test/generate-id-confirmed.schema.test.ts :: [happy-15] user, verification and organization have no foreign keys",
+    "test/generate-id-confirmed.schema.test.ts :: [happy-15] the tables with any foreign key are exactly the six that reference another",
+    "test/generate-id-confirmed.schema.test.ts :: [happy-16] each named index or unique constraint is still on its table",
+    "test/generate-id-confirmed.schema.test.ts :: [happy-16] only user_email_one_primary is partial, on is_primary",
+    "test/generate-id-confirmed.schema.test.ts :: [boundary-6] column-level defaults survive the move",
+    "test/generate-id-confirmed.schema.test.ts :: [boundary-6] the false defaults are declared defaults, not absent ones"
+  ],
+  "publicOnSkeleton": {
+    "passed": 37,
+    "total": 48
+  },
+  "publicFailingOnReference": [],
+  "referenceRegressions": [],
+  "hiddenWritten": 42,
+  "kept": [
+    "test/hidden-generate-id-confirmed/mapping.test.ts :: [boundary-1] hidden: twenty ids per prefix split at the first underscore into prefix and a bare uuid",
+    "test/hidden-generate-id-confirmed/mapping.test.ts :: [boundary-1] hidden: prefixes are pairwise distinct across all pairs",
+    "test/hidden-generate-id-confirmed/mapping.test.ts :: [happy-2] hidden: the root's ID_PREFIXES is the mapping list, with all six entries",
+    "test/hidden-generate-id-confirmed/mapping.test.ts :: [happy-2] hidden: every prefix from the root's list yields its own id through the root's generateId",
+    "test/hidden-generate-id-confirmed/mapping.test.ts :: [happy-3] hidden: fifty ids per prefix in reverse order carry their prefix and length",
+    "test/hidden-generate-id-confirmed/mapping.test.ts :: [happy-3] hidden: the uuid part has version 4 and an RFC 4122 variant every time",
+    "test/hidden-generate-id-confirmed/mapping.test.ts :: [happy-3] hidden: a non-default prefix is used verbatim, not replaced by todo",
+    "test/hidden-generate-id-confirmed/mapping.test.ts :: [happy-4] hidden: generateId() is still todo-prefixed right after calls with other prefixes",
+    "test/hidden-generate-id-confirmed/mapping.test.ts :: [boundary-3] hidden: undefined falls back to todo even right after a non-default prefix",
+    "test/hidden-generate-id-confirmed/mapping.test.ts :: [happy-5] hidden: 5000 jri ids are pairwise distinct, well formed, and so are their suffixes",
+    "test/hidden-generate-id-confirmed/mapping.test.ts :: [boundary-4] hidden: ids generated round-robin across prefixes never share a uuid suffix",
+    "test/hidden-generate-id-confirmed/mapping.test.ts :: [boundary-4] hidden: alternating two prefixes gives distinct suffixes in each pair",
+    "test/hidden-generate-id-confirmed/mapping.test.ts :: [unhappy-1] hidden: other cast values are stringified as a template literal would",
+    "test/hidden-generate-id-confirmed/mapping.test.ts :: [unhappy-1] hidden: a long unlisted prefix is kept whole",
+    "test/hidden-generate-id-confirmed/mapping.test.ts :: [unhappy-1] hidden: unlisted values are neither lower-cased nor trimmed nor mapped to todo",
+    "test/hidden-generate-id-confirmed/mapping.test.ts :: [unhappy-1] hidden: null gives distinct null-prefixed ids, also right after a default call",
+    "test/hidden-generate-id-confirmed/mapping.test.ts :: [concurrency-1] hidden: interleaved tasks with mixed prefixes each get their own prefix and distinct ids",
+    "test/hidden-generate-id-confirmed/mapping.test.ts :: [concurrency-1] hidden: 200 tasks of 20 brn ids with uneven yields are all distinct",
+    "test/hidden-generate-id-confirmed/mapping.test.ts :: [happy-6] hidden: newTodoRow's default id stays todo after generateId is called with other prefixes",
+    "test/hidden-generate-id-confirmed/mapping.test.ts :: [happy-7] hidden: newTodoRow keeps other given ids verbatim"
+  ],
+  "dropped": [
+    {
+      "id": "test/hidden-generate-id-confirmed/mapping.test.ts :: [happy-1] hidden: each position holds its prefix and the array has no extra own keys",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-generate-id-confirmed/mapping.test.ts :: [boundary-2] hidden: ID_PREFIXES is neither frozen nor sealed",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-generate-id-confirmed/mapping.test.ts :: [happy-8] hidden: rowToTodo maps other rows, dropping userId",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-generate-id-confirmed/schema.test.ts :: [happy-9] hidden: no module carries a table name that belongs to another module",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-generate-id-confirmed/schema.test.ts :: [happy-9] hidden: each module's exports are tables with their expected Postgres names",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-generate-id-confirmed/schema.test.ts :: [happy-10] hidden: the table names read the same through the barrel and the package root",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-generate-id-confirmed/schema.test.ts :: [happy-11] hidden: the barrel exports nine distinct table objects and nothing from mapping",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-generate-id-confirmed/schema.test.ts :: [happy-12] hidden: barrel, root and module values are the same object for every table",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-generate-id-confirmed/schema.test.ts :: [happy-13] hidden: authSchema's user and organization are the barrel's and the root's objects",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-generate-id-confirmed/schema.test.ts :: [happy-14] hidden: foreign keys read through the barrel reference the target's own id column",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-generate-id-confirmed/schema.test.ts :: [happy-14] hidden: each referencing table has exactly the foreign keys listed for it",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-generate-id-confirmed/schema.test.ts :: [boundary-5] hidden: with organizations.js loaded first, all nine foreign keys resolve to the live tables",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-generate-id-confirmed/schema.test.ts :: [boundary-5] hidden: with auth.js loaded first, all nine foreign keys resolve to the live tables",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-generate-id-confirmed/schema.test.ts :: [boundary-5] hidden: with todos.js loaded first, the cross-module foreign keys resolve",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-generate-id-confirmed/schema.test.ts :: [boundary-5] hidden: with the schema.js barrel loaded first, the cross-module foreign keys resolve",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-generate-id-confirmed/schema.test.ts :: [happy-15] hidden: user, verification and organization have no foreign keys through barrel and root",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-generate-id-confirmed/schema.test.ts :: [happy-16] hidden: todos' index is user_id then created_at descending",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-generate-id-confirmed/schema.test.ts :: [happy-16] hidden: the lower(email) unique indexes are on lower of the email column",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-generate-id-confirmed/schema.test.ts :: [happy-16] hidden: user_email_one_primary is unique on user_id where is_primary",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-generate-id-confirmed/schema.test.ts :: [happy-16] hidden: the named unique constraints and plain indexes read through the barrel",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-generate-id-confirmed/schema.test.ts :: [boundary-6] hidden: the literal defaults read the same through the barrel",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-generate-id-confirmed/schema.test.ts :: [boundary-6] hidden: every table's created_at keeps its now() default",
+      "reason": "Passes on the skeleton."
+    }
+  ],
+  "reference": {
+    "public": {
+      "passed": 48,
+      "total": 48
+    },
+    "hidden": {
+      "passed": 20,
+      "total": 20
+    },
+    "touchedOutsideSrc": [],
+    "removed": [],
+    "existing": {
+      "passed": 156,
+      "total": 156
+    },
+    "notes": "All 238 tests in the package pass, including both `generate-id-confirmed.*` files and the two hidden suites. Nothing fails.\n\nMost of the spec was already in the working tree: the three modules under `src/schema/`, the barrel in `src/schema.ts`, and `ID_PREFIXES`/`IdPrefix` in `mapping.ts`. I compared the moved tables with the original `schema.ts` from the commit, and the only differences are the import lines and one comment about the import cycle. No table changed.\n\nTwo things were still missing, and I fixed both:\n- **`src/mapping.ts:57`** — `generateId` took a prefix but ignored it and always returned `todo_<uuid>`. It now returns `` `${prefix}_${crypto.randomUUID()}` ``, so passing nothing or `undefined` still gives `todo_`, and other values go in unchecked as the spec says.\n- **`src/index.ts:18-19`** — the package root now also re-exports `ID_PREFIXES` and the `IdPrefix` type from `./mapping.js`.\n\nnone",
+    "sessions": [
+      {
+        "sessionId": "53a76449-c9f2-4d7f-b67b-612471fe4e6d",
+        "model": "claude-opus-5-5",
+        "ok": true,
+        "exitCode": 0,
+        "timedOut": false,
+        "costUsd": 0.2577408,
+        "turns": 8,
+        "durationMs": 48210,
+        "subtype": "success",
+        "apiError": null,
+        "sandboxed": true
+      }
+    ],
+    "costUsd": 0.2577408
+  }
+}

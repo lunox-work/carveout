@@ -1,0 +1,30 @@
+{
+  "name": "repo",
+  "repo": "../sandbox-factory",
+  "base": "8fd1ac09eb973282c4aaef2d782e5a25afe309cd",
+  "package": "apps/api",
+  "packageManager": "npm@10.9.2",
+  "buildFirst": [
+    "packages/core",
+    "packages/db",
+    "packages/shared"
+  ],
+  "runner": "node-test",
+  "rootDir": ".",
+  "outDir": "dist-test",
+  "testDir": "apps/api/test",
+  "testPattern": "*.test.ts",
+  "build": "tsc -p tsconfig.test.json",
+  "hiddenDir": "apps/api/test/hidden-aws-deploy-confirmed",
+  "seam": [
+    "apps/api/src/routes.ts"
+  ],
+  "allowedPaths": [
+    "apps/api/src/"
+  ],
+  "examples": [
+    "apps/api/test/routes.test.ts",
+    "apps/api/test/auth.test.ts",
+    "apps/api/test/env.test.ts"
+  ]
+}

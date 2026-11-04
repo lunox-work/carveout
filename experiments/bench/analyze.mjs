@@ -13,18 +13,32 @@
 //   (an arm's cost over a case's runs divided by its accepted runs) must
 //   both be at least 30% lower.
 //
-//   node experiments/bench/analyze.mjs [--model claude-haiku-5-5] [--json]
+//   node experiments/bench/analyze.mjs [--model claude-haiku-5-5] [--arm slice-seam]
+//                                      [--cases a,b,...] [--json]
+//
+// --arm names the slice arm held to the bars (default slice-seam; E7 holds
+// slice-plan to the same ones). --cases restricts every count to the cases
+// named, so E6b is read on its corpus and E6a's on its own.
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { HERE } from "../lib.mjs";
 
 const args = process.argv.slice(2);
-const at = args.indexOf("--model");
-const model = at === -1 ? "claude-haiku-5-5" : args[at + 1];
+const option = (name, fallback) => {
+  const at = args.indexOf(name);
+  return at === -1 ? fallback : args[at + 1];
+};
+const model = option("--model", "claude-haiku-5-5");
+const SLICE = option("--arm", "slice-seam");
+const only = option("--cases", null)?.split(",") ?? null;
 const path = process.env.BENCH_RESULTS ?? join(HERE, "results", "bench.jsonl");
 const rows = existsSync(path)
-  ? readFileSync(path, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)).filter((row) => row.model === model)
+  ? readFileSync(path, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .filter((row) => row.model === model && (only === null || only.includes(row.slug)))
   : [];
 
 const median = (values) => {
@@ -65,10 +79,10 @@ const acceptance = Object.fromEntries(
   }),
 );
 const full = acceptance.full ?? { accepted: 0, runs: 0 };
-const seam = acceptance["slice-seam"] ?? { accepted: 0, runs: 0 };
+const seam = acceptance[SLICE] ?? { accepted: 0, runs: 0 };
 const lower = full.runs > 0 && seam.runs > 0 ? newcombeLower(seam.accepted, seam.runs, full.accepted, full.runs) : null;
-const falsePass = byArm("slice-seam").filter((row) => row.inSlice?.ok === true && !accepted(row));
-const unknownParity = byArm("slice-seam").filter((row) => row.inSlice?.ok !== true && row.inSlice?.ok !== false);
+const falsePass = byArm(SLICE).filter((row) => row.inSlice?.ok === true && !accepted(row));
+const unknownParity = byArm(SLICE).filter((row) => row.inSlice?.ok !== true && row.inSlice?.ok !== false);
 
 /** Per case, an arm's median of `value` over its runs. */
 const perCase = (arm, value) => Object.fromEntries(cases.map((slug) => [slug, median(rows.filter((r) => r.slug === slug && r.arm === arm).map(value))]));
@@ -77,7 +91,7 @@ const costPerAccepted = (arm) =>
     cases.map((slug) => {
       const list = rows.filter((r) => r.slug === slug && r.arm === arm);
       const ok = list.filter(accepted).length;
-      return [slug, ok === 0 || list.some((r) => typeof r.agent.costUsd !== "number") ? null : list.reduce((sum, r) => sum + r.agent.costUsd, 0) / ok];
+      return [slug, ok === 0 || list.some((r) => typeof r.agent?.costUsd !== "number") ? null : list.reduce((sum, r) => sum + r.agent.costUsd, 0) / ok];
     }),
   );
 const paired = (slice, base) => {
@@ -85,14 +99,15 @@ const paired = (slice, base) => {
   return { perCase: reductions, median: median(reductions.map((r) => r.reduction)), lower: reductions.filter((r) => r.reduction > 0).length };
 };
 const metrics = {
-  totalInput: (r) => r.agent.usage.totalInput,
-  output: (r) => r.agent.usage.output,
-  cost: (r) => r.agent.costUsd,
+  // A plan_failed run has only its planning session; its agent is that session.
+  totalInput: (r) => r.agent?.usage.totalInput,
+  output: (r) => r.agent?.usage.output,
+  cost: (r) => r.agent?.costUsd,
   // Codex's JSONL command events are not a count of model turns. Earlier
   // pilot rows put that command count here; it cannot support this metric.
-  turns: (r) => r.agent.backend === "codex-cli" ? null : r.agent.turns,
-  minutes: (r) => r.agent.minutes,
-  toolResultBytes: (r) => r.agent.tools.resultBytes,
+  turns: (r) => r.agent?.backend === "codex-cli" ? null : r.agent?.turns,
+  minutes: (r) => r.agent?.minutes,
+  toolResultBytes: (r) => r.agent?.tools.resultBytes,
 };
 const efficiency = {};
 for (const arm of arms.filter((a) => a !== "full")) {
@@ -102,30 +117,31 @@ for (const arm of arms.filter((a) => a !== "full")) {
 
 const report = {
   model,
+  arm: SLICE,
   cases: cases.length,
   acceptance,
   nonInferiority: { difference: seam.runs && full.runs ? seam.accepted / seam.runs - full.accepted / full.runs : null, lower95: lower, pass: lower !== null && lower > -0.1 },
-  slicePassedRepositoryFailed: { runs: falsePass.length, of: byArm("slice-seam").length, share: byArm("slice-seam").length ? falsePass.length / byArm("slice-seam").length : null, unknown: unknownParity.length, cases: falsePass.map((r) => `${r.slug}/${r.run}`) },
+  slicePassedRepositoryFailed: { runs: falsePass.length, of: byArm(SLICE).length, share: byArm(SLICE).length ? falsePass.length / byArm(SLICE).length : null, unknown: unknownParity.length, cases: falsePass.map((r) => `${r.slug}/${r.run}`) },
   efficiency,
   bars: {
-    totalInput: (efficiency["slice-seam"]?.totalInput.median ?? -1) >= 0.3,
-    costPerAccepted: efficiency["slice-seam"]?.costPerAccepted.median == null ? null : efficiency["slice-seam"].costPerAccepted.median >= 0.3,
+    totalInput: (efficiency[SLICE]?.totalInput.median ?? -1) >= 0.3,
+    costPerAccepted: efficiency[SLICE]?.costPerAccepted.median == null ? null : efficiency[SLICE].costPerAccepted.median >= 0.3,
   },
 };
 
 if (args.includes("--json")) process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 else {
   const pct = (v) => (v == null ? "–" : `${(v * 100).toFixed(1)}%`);
-  const experiment = rows.some((row) => row.agent.backend === "codex-cli") ? "Exploratory Codex analysis" : "E6";
+  const experiment = rows.some((row) => row.agent?.backend === "codex-cli") ? "Exploratory Codex analysis" : SLICE === "slice-plan" ? "E7" : "E6";
   process.stdout.write(`${experiment} on ${model}, ${cases.length} cases\n\n| arm | accepted | runs | verdicts |\n|---|---:|---:|---|\n`);
   for (const [arm, a] of Object.entries(acceptance)) process.stdout.write(`| ${arm} | ${a.accepted} | ${a.runs} | ${Object.entries(a.verdicts).map(([v, n]) => `${v} ${n}`).join(", ")} |\n`);
-  process.stdout.write(`\nNon-inferiority, slice-seam - full: ${pct(report.nonInferiority.difference)}, one-sided 95% lower bound ${pct(lower)} (bar: above -10%): ${report.nonInferiority.pass ? "pass" : "fail"}\n`);
+  process.stdout.write(`\nNon-inferiority, ${SLICE} - full: ${pct(report.nonInferiority.difference)}, one-sided 95% lower bound ${pct(lower)} (bar: above -10%): ${report.nonInferiority.pass ? "pass" : "fail"}\n`);
   process.stdout.write(`Slice passed, repository failed: ${falsePass.length} of ${report.slicePassedRepositoryFailed.of} (${pct(report.slicePassedRepositoryFailed.share)}; bar: at most 5%)\n`);
   if (unknownParity.length) process.stdout.write(`In-slice verdict unavailable: ${unknownParity.length}; the parity bar cannot be established from these runs.\n`);
   for (const [arm, metric] of Object.entries(efficiency)) {
     process.stdout.write(`\n${arm} against full, median over cases of the per-case reduction (cases where it is lower):\n\n| metric | median reduction | lower in |\n|---|---:|---:|\n`);
     for (const [name, m] of Object.entries(metric)) process.stdout.write(`| ${name} | ${pct(m.median)} | ${m.lower}/${m.perCase.length} |\n`);
   }
-  process.stdout.write(`\nPer case, total input reduction (slice-seam): ${(efficiency["slice-seam"]?.totalInput.perCase ?? []).map((r) => `${r.slug} ${pct(r.reduction)}`).join(", ")}\n`);
+  process.stdout.write(`\nPer case, total input reduction (${SLICE}): ${(efficiency[SLICE]?.totalInput.perCase ?? []).map((r) => `${r.slug} ${pct(r.reduction)}`).join(", ")}\n`);
   process.stdout.write(`\nBars: total input ${report.bars.totalInput ? "pass" : "fail"}, cost per accepted run ${report.bars.costPerAccepted == null ? "unavailable" : report.bars.costPerAccepted ? "pass" : "fail"}\n`);
 }

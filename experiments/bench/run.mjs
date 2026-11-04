@@ -11,6 +11,11 @@
 //               commit, no history), installed, its dependencies built
 //   slice-seam  a cut at B from the case's seam (judge.mjs seamEntries)
 //   slice-diff  a cut at B from the files the commit changed: a ceiling
+//   slice-plan  E7: a session in the repository at B, read-only in effect,
+//               names the entries with `carveout plan`; a slice is cut
+//               from them per run and a second session works in it. Both
+//               sessions' tokens count. No usable entries, or a cut that
+//               fails its baseline check, is the verdict `plan_failed`.
 //
 // Every workdir is prepared off the clock, once per case and arm, and
 // copied per run with APFS clones. The agent is briefed with the case's
@@ -26,11 +31,11 @@
 // a session the usage limit refused is not recorded.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { HERE, WORK, carveout, cloneOf, frozenCli, git } from "../lib.mjs";
+import { HERE, ROOT, WORK, carveout, cloneOf, frozenCli, git } from "../lib.mjs";
 import { hiddenVerdictOf, install, judge, log, sliceTests, verdictOf } from "../judge.mjs";
-import { ARMS, BENCH, CASES, allowedOf, hiddenOf, specOf, template, within } from "./cases.mjs";
+import { ARMS, BENCH, CASES, allowedOf, cutSlice, hiddenOf, specOf, template, within } from "./cases.mjs";
 import { WORK_ROOT, claude, discard, peeks } from "./lib.mjs";
 import { codex } from "./codex.mjs";
 
@@ -56,7 +61,7 @@ if (backend === "codex" && concurrency !== 1) throw new Error("Codex sessions re
 for (const arm of arms) if (!ARMS.includes(arm)) throw new Error(`unknown arm ${arm}`);
 
 function brief(item, arm) {
-  const text = readFileSync(join(BENCH, "prompts", arm === "full" ? "full.md" : "slice.md"), "utf8");
+  const text = readFileSync(join(BENCH, "prompts", arm === "full" ? "full.md" : arm === "plan" ? "plan.md" : "slice.md"), "utf8");
   return text
     .replaceAll("{{package}}", item.package)
     .replaceAll("{{allowed}}", allowedOf(item).map((path) => `\`${path}\``).join(", "))
@@ -95,18 +100,92 @@ function stripToolBlocks(work) {
   return stripped;
 }
 
+/**
+ * The frozen CLI laid into the workdir at `.carveout/`, with its own
+ * TypeScript: the repository's may be another major version, and the
+ * workspace the CLI lives in is denied to the session.
+ */
+function layCli(cli, work) {
+  const home = join(work, ".carveout");
+  cpSync(dirname(dirname(cli.bin)), join(home, "dist"), { recursive: true });
+  cpSync(join(ROOT, "package.json"), join(home, "package.json"));
+  cpSync(realpathSync(join(ROOT, "node_modules", "typescript")), join(home, "node_modules", "typescript"), { recursive: true });
+  return home;
+}
+
+/** Sums two sessions' measurements; each kept whole under `phases`. */
+function combine(plan, work) {
+  const add = (a, b) => (a == null && b == null ? null : (a ?? 0) + (b ?? 0));
+  const calls = { ...plan.tools.calls };
+  for (const [name, count] of Object.entries(work.tools.calls)) calls[name] = (calls[name] ?? 0) + count;
+  return {
+    model: work.model ?? plan.model,
+    ok: plan.ok && work.ok,
+    timedOut: plan.timedOut || work.timedOut,
+    costUsd: add(plan.costUsd, work.costUsd),
+    turns: add(plan.turns, work.turns),
+    minutes: Math.round(((plan.minutes ?? 0) + (work.minutes ?? 0)) * 100) / 100,
+    usage: Object.fromEntries(["input", "cacheWrite", "cacheRead", "totalInput", "output"].map((key) => [key, add(plan.usage[key], work.usage[key])])),
+    tools: { calls, resultBytes: add(plan.tools.resultBytes, work.tools.resultBytes) },
+    apiError: work.apiError ?? plan.apiError,
+    error: work.error ?? plan.error,
+    stderr: work.stderr,
+    phases: { plan, work },
+  };
+}
+
+/**
+ * The plan arm's first session: in a copy of the repository at B, the agent
+ * names the slice's entries. Resolves with the session and the entries that
+ * exist at B, as the brief asked for them in `.carveout/entries`.
+ */
+async function planSession(cli, item, n, prepared, out) {
+  const work = mkdtempSync(join(WORK_ROOT, `${item.slug}-plan-${n}-`));
+  execFileSync("cp", ["-c", "-R", `${prepared.dir}/.`, work]);
+  const home = layCli(cli, work);
+  try {
+    const agent = await claude({ cwd: work, text: brief(item, "plan"), transcript: join(out, "plan-transcript.jsonl"), model });
+    const raw = existsSync(join(home, "entries")) ? readFileSync(join(home, "entries"), "utf8") : "";
+    const named = raw.split("\n").map((line) => line.trim().replace(/^\.\//, "").replace(/\/$/, "")).filter((line) => line !== "" && !line.startsWith("#"));
+    const entries = [...new Set(named)].filter((path) => !path.startsWith(".carveout") && !path.startsWith("..") && !path.startsWith("/") && existsSync(join(work, path)) && (statSync(join(work, path)).isFile() || statSync(join(work, path)).isDirectory()));
+    return { agent, entries, named, peeks: peeks(join(out, "plan-transcript.jsonl"), work) };
+  } finally {
+    discard(work);
+  }
+}
+
+// Cuts happen in the shared clone, one at a time.
+let cutting = Promise.resolve();
+
 /** The session, and the change it leaves, from a copy of the template. */
 async function session(cli, item, arm, n, prepared) {
-  const work = mkdtempSync(join(WORK_ROOT, `${item.slug}-${arm}-${n}-`));
-  execFileSync("cp", ["-c", "-R", `${prepared.dir}/.`, work]);
   const out = join(RUNS, item.slug, `${arm}-${model}`, String(n));
   rmSync(out, { recursive: true, force: true });
   mkdirSync(out, { recursive: true });
+  let plan = null;
+  if (arm === "slice-plan") {
+    const planned = await planSession(cli, item, n, prepared, out);
+    if (planned.agent.apiError === "usage_limit_reached" || /usage limit/i.test(planned.agent.stderr)) return { limited: true };
+    if (!planned.agent.ok) return { failed: true, agent: planned.agent, out };
+    plan = { agent: planned.agent, entries: planned.entries, named: planned.named, peeks: planned.peeks };
+    if (planned.entries.length === 0) return { planFailed: "no entry the agent named exists at B", plan, out };
+    const dir = join(out, "cut");
+    try {
+      const meta = await (cutting = cutting.then(() => cutSlice(cli, item, planned.entries, dir), () => cutSlice(cli, item, planned.entries, dir)));
+      prepared = { dir, ...meta };
+    } catch (error) {
+      rmSync(dir, { recursive: true, force: true });
+      return { planFailed: String(error?.message ?? error).slice(0, 3000), plan, out };
+    }
+  }
+  const work = mkdtempSync(join(WORK_ROOT, `${item.slug}-${arm}-${n}-`));
+  execFileSync("cp", ["-c", "-R", `${prepared.dir}/.`, work]);
   const transcript = join(out, "transcript.jsonl");
   try {
-    const agent = await (backend === "codex" ? codex : claude)({ cwd: work, text: brief(item, arm), transcript, model });
+    let agent = await (backend === "codex" ? codex : claude)({ cwd: work, text: brief(item, arm), transcript, model });
     if (agent.apiError === "usage_limit_reached" || /usage limit/i.test(agent.stderr)) return { limited: true };
     if (!agent.ok) return { failed: true, agent, out };
+    if (plan !== null) agent = combine(plan.agent, agent);
     const change = join(out, "change.patch");
     let patch = null;
     let toolWrites = [];
@@ -123,7 +202,8 @@ async function session(cli, item, arm, n, prepared) {
       execFileSync("cp", ["-c", "-R", work, join(out, "slice")]);
       rmSync(join(out, "slice", "node_modules"), { recursive: true, force: true });
     }
-    return { agent, patch, change, out, toolWrites, peeks: backend === "codex" ? null : peeks(transcript, work) };
+    const seen = backend === "codex" ? null : peeks(transcript, work);
+    return { agent, patch, change, out, toolWrites, peeks: plan === null ? seen : [...plan.peeks, ...(seen ?? [])], plan, prepared: plan === null ? null : prepared };
   } finally {
     discard(work);
   }
@@ -244,30 +324,34 @@ async function main() {
       }
       judging = judging.then(() => {
         log("bench", `${item.slug}/${arm}/${n}: judging`);
+        const used = ran.prepared ?? prepared;
         let judged;
         try {
-          judged = judgeRun(cli, item, arm, prepared, ran);
+          judged = ran.planFailed !== undefined ? { verdict: "plan_failed", reason: ran.planFailed } : judgeRun(cli, item, arm, used, ran);
         } catch (error) {
           judged = { verdict: "judge_error", output: String(error?.stack ?? error).slice(-2000) };
         }
+        // The plan arm's slice is this run's alone; its measurements stay in the line.
+        if (ran.prepared) rmSync(ran.prepared.dir, { recursive: true, force: true });
         const line = {
           slug: item.slug,
           arm,
           model,
           run: n,
           cli: cli.id,
-          setup: { setupMs: prepared.setupMs, ...(prepared.files === undefined ? {} : { files: prepared.files, cutMs: prepared.cutMs, entries: prepared.entries }) },
-          agent: ran.agent,
-          patch: ran.patch,
-          peeks: ran.peeks,
-          toolWrites: ran.toolWrites,
+          setup: { setupMs: used.setupMs, ...(used.files === undefined ? {} : { files: used.files, cutMs: used.cutMs, entries: used.entries, baseline: used.baseline }) },
+          agent: ran.agent ?? ran.plan?.agent ?? null,
+          plan: ran.plan === undefined || ran.plan === null ? undefined : { entries: ran.plan.entries, named: ran.plan.named, peeks: ran.plan.peeks, agent: ran.plan.agent },
+          patch: ran.patch ?? null,
+          peeks: ran.peeks ?? ran.plan?.peeks ?? null,
+          toolWrites: ran.toolWrites ?? [],
           ...judged,
           at: new Date().toISOString(),
         };
         mkdirSync(dirname(RESULTS), { recursive: true });
         writeFileSync(RESULTS, `${JSON.stringify(line)}\n`, { flag: "a" });
-        const cost = line.agent.costUsd == null ? "cost unavailable" : `$${line.agent.costUsd.toFixed(3)}`;
-        log("bench", `${item.slug}/${arm}/${n}: ${line.verdict}, ${line.agent.usage.totalInput} in / ${line.agent.usage.output} out, ${cost}`);
+        const cost = line.agent?.costUsd == null ? "cost unavailable" : `$${line.agent.costUsd.toFixed(3)}`;
+        log("bench", `${item.slug}/${arm}/${n}: ${line.verdict}, ${line.agent?.usage.totalInput ?? "?"} in / ${line.agent?.usage.output ?? "?"} out, ${cost}`);
       });
     }
   };

@@ -241,6 +241,61 @@ E7 then adds `slice-plan`, with the planning tokens counted against it.
 It's the arm that answers whether slicing pays when nobody hands the agent
 its entries.
 
+## Phase 6: E6b and E7 (registered 2026-11-04, before any data)
+
+**The corpus.** Grown by a rule, not by hand, from sandbox-factory's
+first-parent, non-merge `feat`/`fix`/`perf` commits since 2026-09-15:
+
+- A candidate is a (commit, package) pair where the package is one of
+  `packages/core`, `packages/shared`, `packages/db`, `apps/api` or
+  `apps/worker` (`apps/web` is left out: E5 found web slices under
+  `NodeNext` unusable); the package's changed files include no harness
+  file, at least one non-test source file and at least one test file that
+  imports a changed source file or the package's `src/index`; the seam
+  diff adds 20 to 700 lines; and there are at most 8 seam files.
+- The commits of the 11 existing cases are left out. One case per commit:
+  the package with the most tests importing its changed files, ties to the
+  larger seam diff.
+- **The seam** is mechanical: the changed non-test source files that the
+  commit's tests import directly, `index.ts` barrels dropped when another
+  file qualifies; when the tests import only the package index, every
+  changed non-test source file but the barrel. `allowed` is the seam
+  files' folders. The seam is the slice's entries, not what the agent is
+  told (the agent gets the spec and the allowed paths).
+- **Usability**, in this order, with every failure recorded and the case
+  left out: duediligence's `in-repo.mjs check` (the commit's package
+  changes alone build at B and regress no existing test); the drafted and
+  the simulated-developer-confirmed spec and the calibrated hidden suite
+  (`prepare`, as for the 11, with no person in the loop); E5's replay on
+  the frozen CLI; and a template of every arm that builds at B.
+- The rule yields 40 candidates (`duediligence/evidence/in-repo-e6b/`);
+  they are checked newest first until the usable corpus, with the 8 usable
+  cases of E6a, reaches 30, or the candidates run out. The number reached is
+  reported, and the bars are read on that corpus.
+
+**E6b.** The usable corpus × `full`, `slice-seam` and `slice-diff` × 3
+runs, on Haiku 5.5, on one frozen CLI that holds `05f4f9f` and `01691fd`.
+The bars are Phase 5's, unchanged. The 8 E6a cases are rerun on the new
+CLI with the rest; E6a's rows stay in `results/bench.jsonl` under their
+CLI id and are not pooled with E6b's.
+
+**E7.** The same corpus × `slice-plan` × 3 runs, on Haiku 5.5, judged as
+the slice arms are, against E6b's `full` rows. `slice-plan` is two
+sessions: in a copy of the repository at B, with the frozen CLI laid in at
+`.carveout/`, the agent is given the spec and asked only to name the
+slice's entries (`bench/prompts/plan.md`); the harness cuts those entries
+with the slice arms' flags, checks the cut and installs it; a second
+session works in it under the slice brief. Every measurement sums the two
+sessions. A run whose named entries do not exist at B, or whose cut fails
+its baseline check, is `plan_failed`: not accepted, and its planning
+session's tokens count. Bars: `slice-plan` is held to the four bars of
+Phase 5 in place of `slice-seam`; its `plan_failed` share is reported
+with no bar.
+
+**Order.** E5 on the frozen CLI for every case first. Then E6b. Then E7.
+A run the usage limit stops is resumed, never restarted: a case, arm and
+run with a line is done.
+
 ## Confounds, and how each is handled
 
 - **The seam names where to work.** The slice saves searching that the

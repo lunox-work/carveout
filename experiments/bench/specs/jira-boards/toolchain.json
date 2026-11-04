@@ -1,0 +1,29 @@
+{
+  "name": "repo",
+  "repo": "../sandbox-factory",
+  "base": "cf35fa7ff6dbc423d16b46d41050db1f7077a03e",
+  "package": "packages/db",
+  "packageManager": "npm@10.9.2",
+  "buildFirst": [
+    "packages/core"
+  ],
+  "runner": "node-test",
+  "rootDir": ".",
+  "outDir": "dist-test",
+  "testDir": "packages/db/test",
+  "testPattern": "*.test.ts",
+  "build": "tsc -p tsconfig.test.json",
+  "hiddenDir": "packages/db/test/hidden-jira-boards-confirmed",
+  "seam": [
+    "packages/db/src/jira-boards.ts",
+    "packages/db/src/schema.ts"
+  ],
+  "allowedPaths": [
+    "packages/db/src/"
+  ],
+  "examples": [
+    "packages/db/test/jira-connections.test.ts",
+    "packages/db/test/schema-modules.test.ts",
+    "packages/db/test/schema.test.ts"
+  ]
+}

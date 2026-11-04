@@ -1,0 +1,30 @@
+{
+  "name": "repo",
+  "repo": "../sandbox-factory",
+  "base": "7456ae4d193c3fba378284075d9a2980f6ff585d",
+  "package": "apps/api",
+  "packageManager": "npm@10.9.2",
+  "buildFirst": [
+    "packages/core",
+    "packages/db",
+    "packages/shared"
+  ],
+  "runner": "node-test",
+  "rootDir": ".",
+  "outDir": "dist-test",
+  "testDir": "apps/api/test",
+  "testPattern": "*.test.ts",
+  "build": "tsc -p tsconfig.test.json",
+  "hiddenDir": "apps/api/test/hidden-image-digest-confirmed",
+  "seam": [
+    "apps/api/src/image-digest.ts"
+  ],
+  "allowedPaths": [
+    "apps/api/src/"
+  ],
+  "examples": [
+    "apps/api/test/auth.test.ts",
+    "apps/api/test/env.test.ts",
+    "apps/api/test/routes.test.ts"
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "name": "repo",
+  "repo": "../sandbox-factory",
+  "base": "2f2d47afcce63ff7c6e4da753a8d9285efcc9d67",
+  "package": "packages/shared",
+  "packageManager": "npm@10.9.2",
+  "buildFirst": [
+    "packages/core"
+  ],
+  "runner": "node-test",
+  "rootDir": ".",
+  "outDir": "dist-test",
+  "testDir": "packages/shared/test",
+  "testPattern": "*.test.ts",
+  "build": "tsc -p tsconfig.test.json",
+  "hiddenDir": "packages/shared/test/hidden-github-app-confirmed",
+  "seam": [
+    "packages/shared/src/index.ts"
+  ],
+  "allowedPaths": [
+    "packages/shared/src/"
+  ],
+  "examples": [
+    "packages/shared/test/jira-schemas.test.ts",
+    "packages/shared/test/schemas.test.ts",
+    "packages/shared/test/bounty.test.ts"
+  ]
+}

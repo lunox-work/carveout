@@ -1,0 +1,406 @@
+{
+  "slug": "jira-contract-confirmed",
+  "status": "ok",
+  "reason": null,
+  "publicIds": [
+    "test/jira-contract-confirmed.test.ts :: [happy-1] trimTrailingSlashes removes one or many trailing slashes",
+    "test/jira-contract-confirmed.test.ts :: [happy-1] trimTrailingSlashes keeps the slashes before the trailing run",
+    "test/jira-contract-confirmed.test.ts :: [boundary-1] trimTrailingSlashes returns a URL with no trailing slash unchanged",
+    "test/jira-contract-confirmed.test.ts :: [boundary-1] trimTrailingSlashes leaves inner double slashes and a single character alone",
+    "test/jira-contract-confirmed.test.ts :: [boundary-2] trimTrailingSlashes returns the empty string for the empty string",
+    "test/jira-contract-confirmed.test.ts :: [boundary-2] trimTrailingSlashes trims all-slash strings to the empty string",
+    "test/jira-contract-confirmed.test.ts :: [boundary-3] trimTrailingSlashes keeps trailing backslashes",
+    "test/jira-contract-confirmed.test.ts :: [boundary-3] trimTrailingSlashes does not trim a slash followed by a space or a tab",
+    "test/jira-contract-confirmed.test.ts :: [boundary-4] trimTrailingSlashes returns the right output for long runs of slashes",
+    "test/jira-contract-confirmed.test.ts :: [boundary-4] trimTrailingSlashes handles each long input within 250 ms",
+    "test/jira-contract-confirmed.test.ts :: [happy-2] jiraStatusCategorySchema accepts each category",
+    "test/jira-contract-confirmed.test.ts :: [happy-2] JIRA_STATUS_CATEGORIES is Jira's three categories plus unknown, in order",
+    "test/jira-contract-confirmed.test.ts :: [unhappy-1] jiraStatusCategorySchema refuses Jira's display names",
+    "test/jira-contract-confirmed.test.ts :: [unhappy-1] jiraStatusCategorySchema refuses Jira's 'undefined' and the empty string",
+    "test/jira-contract-confirmed.test.ts :: [happy-3] jiraIssueResponseSchema parses an issue with no fields block",
+    "test/jira-contract-confirmed.test.ts :: [happy-3] jiraIssueResponseSchema adds no fields block to an issue without one",
+    "test/jira-contract-confirmed.test.ts :: [happy-4] jiraIssueResponseSchema parses a full Jira issue unchanged",
+    "test/jira-contract-confirmed.test.ts :: [happy-4] jiraIssueResponseSchema keeps the nulls Jira sent rather than dropping them",
+    "test/jira-contract-confirmed.test.ts :: [boundary-5] jiraIssueResponseSchema parses an empty fields block",
+    "test/jira-contract-confirmed.test.ts :: [boundary-5] jiraIssueResponseSchema keeps an unrecognised status category key unchanged",
+    "test/jira-contract-confirmed.test.ts :: [boundary-6] jiraIssueResponseSchema keeps unknown keys at every level",
+    "test/jira-contract-confirmed.test.ts :: [boundary-6] jiraIssueResponseSchema keeps an unknown key nested inside a known field",
+    "test/jira-contract-confirmed.test.ts :: [unhappy-2] jiraIssueResponseSchema refuses an issue without an id or a key",
+    "test/jira-contract-confirmed.test.ts :: [unhappy-2] jiraIssueResponseSchema refuses a numeric id and mistyped fields",
+    "test/jira-contract-confirmed.test.ts :: [boundary-7] jiraIssuePageResponseSchema parses a page without issues to an empty list",
+    "test/jira-contract-confirmed.test.ts :: [boundary-7] jiraIssuePageResponseSchema returns pages with a token or offsets unchanged",
+    "test/jira-contract-confirmed.test.ts :: [unhappy-3] jiraIssuePageResponseSchema refuses a page with one bad issue",
+    "test/jira-contract-confirmed.test.ts :: [unhappy-3] jiraIssuePageResponseSchema refuses a page whose only issue lacks a key",
+    "test/jira-contract-confirmed.test.ts :: [happy-5] jiraBoardResponseSchema parses a board with only id and name",
+    "test/jira-contract-confirmed.test.ts :: [happy-5] jiraBoardResponseSchema parses a board with a type and location unchanged",
+    "test/jira-contract-confirmed.test.ts :: [unhappy-4] jiraBoardResponseSchema refuses a string id",
+    "test/jira-contract-confirmed.test.ts :: [unhappy-4] jiraBoardResponseSchema refuses a board missing its id or name",
+    "test/jira-contract-confirmed.test.ts :: [boundary-8] board and sprint pages without values parse to an empty list",
+    "test/jira-contract-confirmed.test.ts :: [boundary-8] jiraBoardPageResponseSchema returns a last page with values unchanged",
+    "test/jira-contract-confirmed.test.ts :: [happy-6] jiraSprintResponseSchema parses a sprint with null dates and goal",
+    "test/jira-contract-confirmed.test.ts :: [happy-6] jiraSprintResponseSchema parses a sprint with only id and name unchanged",
+    "test/jira-contract-confirmed.test.ts :: [unhappy-5] jiraSprintResponseSchema refuses a string id",
+    "test/jira-contract-confirmed.test.ts :: [unhappy-5] jiraSprintPageResponseSchema refuses a page holding a sprint with a string id",
+    "test/jira-contract-confirmed.test.ts :: [happy-7] tokenResponseSchema parses a token without a refresh token or scope",
+    "test/jira-contract-confirmed.test.ts :: [happy-7] tokenResponseSchema parses a full token response unchanged",
+    "test/jira-contract-confirmed.test.ts :: [unhappy-6] tokenResponseSchema refuses a token missing the access token or expiry",
+    "test/jira-contract-confirmed.test.ts :: [unhappy-6] tokenResponseSchema refuses an expiry sent as a string",
+    "test/jira-contract-confirmed.test.ts :: [boundary-9] accessibleResourceSchema gives a resource without scopes an empty list",
+    "test/jira-contract-confirmed.test.ts :: [boundary-9] accessibleResourceSchema defaults scopes to an empty list when an avatar is present",
+    "test/jira-contract-confirmed.test.ts :: [unhappy-7] accessibleResourceSchema refuses a resource missing its id",
+    "test/jira-contract-confirmed.test.ts :: [unhappy-7] accessibleResourceSchema refuses a resource missing its url or name",
+    "test/jira-contract-confirmed.test.ts :: [happy-8] jiraIssueDtoSchema parses the valid issue DTO to itself",
+    "test/jira-contract-confirmed.test.ts :: [happy-8] jiraIssueDtoSchema keeps the nulls already in the valid issue DTO",
+    "test/jira-contract-confirmed.test.ts :: [happy-9] jiraIssueDtoSchema accepts null in every nullable field",
+    "test/jira-contract-confirmed.test.ts :: [happy-9] jiraIssueDtoSchema accepts a null url on its own",
+    "test/jira-contract-confirmed.test.ts :: [boundary-10] jiraIssueDtoSchema drops a description and other unknown keys",
+    "test/jira-contract-confirmed.test.ts :: [boundary-10] jiraIssueDtoSchema output carries no description key",
+    "test/jira-contract-confirmed.test.ts :: [boundary-11] jiraIssueDtoSchema accepts an empty summary, a free-form key and a free-form created",
+    "test/jira-contract-confirmed.test.ts :: [boundary-11] jiraIssueDtoSchema accepts an empty summary on its own",
+    "test/jira-contract-confirmed.test.ts :: [unhappy-8] jiraIssueDtoSchema refuses a status category outside the enum",
+    "test/jira-contract-confirmed.test.ts :: [unhappy-8] jiraIssueDtoSchema refuses missing nullable keys, null lists and strings, and a numeric id",
+    "test/jira-contract-confirmed.test.ts :: [happy-10] jiraIssuePageDtoSchema parses a page of the valid issue DTO unchanged",
+    "test/jira-contract-confirmed.test.ts :: [happy-10] jiraIssuePageDtoSchema returns empty pages with offsets or a token unchanged",
+    "test/jira-contract-confirmed.test.ts :: [unhappy-9] jiraIssuePageDtoSchema refuses a page without issues",
+    "test/jira-contract-confirmed.test.ts :: [unhappy-9] jiraIssuePageDtoSchema refuses a page with cursors but no issues",
+    "test/jira-contract-confirmed.test.ts :: [happy-11] jiraBoardDtoSchema parses the valid board DTO to itself",
+    "test/jira-contract-confirmed.test.ts :: [happy-11] jiraBoardDtoSchema accepts a null project key and name",
+    "test/jira-contract-confirmed.test.ts :: [unhappy-10] jiraBoardDtoSchema refuses a string id",
+    "test/jira-contract-confirmed.test.ts :: [unhappy-10] jiraBoardDtoSchema refuses a board missing its type or project key",
+    "test/jira-contract-confirmed.test.ts :: [happy-12] jiraSprintDtoSchema parses a sprint with null dates and goal to itself",
+    "test/jira-contract-confirmed.test.ts :: [happy-12] jiraSprintDtoSchema keeps the null dates and goal as null",
+    "test/jira-contract-confirmed.test.ts :: [unhappy-11] jiraSprintDtoSchema refuses a sprint missing its state",
+    "test/jira-contract-confirmed.test.ts :: [unhappy-11] jiraSprintDtoSchema refuses a sprint whose state is undefined",
+    "test/jira-contract-confirmed.test.ts :: [happy-13] jiraSiteDtoSchema parses a site with or without an avatar unchanged",
+    "test/jira-contract-confirmed.test.ts :: [happy-13] jiraSiteDtoSchema drops scopes",
+    "test/jira-contract-confirmed.test.ts :: [unhappy-12] jiraSiteDtoSchema refuses a site missing its cloudId",
+    "test/jira-contract-confirmed.test.ts :: [unhappy-12] jiraSiteDtoSchema refuses an accessible resource's id in place of a cloudId",
+    "test/jira-contract-confirmed.test.ts :: [happy-14] todoSchema still parses a well-formed todo to itself",
+    "test/jira-contract-confirmed.test.ts :: [happy-14] handleSchema still lowercases and trims, and the build-info exports are still re-exported"
+  ],
+  "publicOnSkeleton": {
+    "passed": 64,
+    "total": 74
+  },
+  "publicFailingOnReference": [],
+  "referenceRegressions": [],
+  "hiddenWritten": 83,
+  "kept": [
+    "test/hidden-jira-contract-confirmed/trim-trailing-slashes.test.ts :: [happy-1] hidden: trimTrailingSlashes removes runs of 2, 4, 7, 10 and 500 slashes",
+    "test/hidden-jira-contract-confirmed/trim-trailing-slashes.test.ts :: [happy-1] hidden: trimTrailingSlashes keeps inner and leading slashes before the trailing run",
+    "test/hidden-jira-contract-confirmed/trim-trailing-slashes.test.ts :: [happy-1] hidden: trimTrailingSlashes does not remove the path segment before the trailing run",
+    "test/hidden-jira-contract-confirmed/trim-trailing-slashes.test.ts :: [happy-1] hidden: trimTrailingSlashes keeps non-ASCII text and surrogate pairs before the run",
+    "test/hidden-jira-contract-confirmed/trim-trailing-slashes.test.ts :: [happy-1] hidden: trimming an already trimmed result changes nothing",
+    "test/hidden-jira-contract-confirmed/trim-trailing-slashes.test.ts :: [boundary-1] hidden: trimTrailingSlashes returns other URLs and paths without a trailing slash unchanged",
+    "test/hidden-jira-contract-confirmed/trim-trailing-slashes.test.ts :: [boundary-1] hidden: trimTrailingSlashes leaves long inner slash runs and other single characters alone",
+    "test/hidden-jira-contract-confirmed/trim-trailing-slashes.test.ts :: [boundary-2] hidden: trimTrailingSlashes trims all-slash strings of other lengths to the empty string",
+    "test/hidden-jira-contract-confirmed/trim-trailing-slashes.test.ts :: [boundary-3] hidden: trimTrailingSlashes removes slashes after a backslash but keeps the backslash",
+    "test/hidden-jira-contract-confirmed/trim-trailing-slashes.test.ts :: [boundary-3] hidden: trimTrailingSlashes keeps a slash followed by other whitespace",
+    "test/hidden-jira-contract-confirmed/trim-trailing-slashes.test.ts :: [boundary-3] hidden: trimTrailingSlashes removes only the slashes after trailing whitespace",
+    "test/hidden-jira-contract-confirmed/trim-trailing-slashes.test.ts :: [boundary-3] hidden: trimTrailingSlashes keeps slash look-alikes that are not U+002F",
+    "test/hidden-jira-contract-confirmed/trim-trailing-slashes.test.ts :: [boundary-4] hidden: a long inner run followed by text and one slash is trimmed within 250 ms",
+    "test/hidden-jira-contract-confirmed/trim-trailing-slashes.test.ts :: [boundary-4] hidden: 100,000 slashes followed by text come back unchanged within 250 ms",
+    "test/hidden-jira-contract-confirmed/trim-trailing-slashes.test.ts :: [boundary-4] hidden: an inner run of 60,000 and a trailing run of 60,000 are handled within 250 ms",
+    "test/hidden-jira-contract-confirmed/trim-trailing-slashes.test.ts :: [boundary-4] hidden: 2,000,000 slashes trim to the empty string within 250 ms",
+    "test/hidden-jira-contract-confirmed/trim-trailing-slashes.test.ts :: [boundary-4] hidden: a long run after a long non-slash prefix is trimmed within 250 ms"
+  ],
+  "dropped": [
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-2] hidden: every JIRA_STATUS_CATEGORIES entry parses to itself, in any order",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-2] hidden: JIRA_STATUS_CATEGORIES has exactly four entries and the schema's options match it",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [unhappy-1] hidden: jiraStatusCategorySchema refuses other casings, padding and Jira display names",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [unhappy-1] hidden: jiraStatusCategorySchema refuses non-string values",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-3] hidden: jiraIssueResponseSchema parses other id/key pairs with no fields block unchanged",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-4] hidden: jiraIssueResponseSchema parses an issue with assignee, priority, parent and dates present unchanged",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-4] hidden: jiraIssueResponseSchema keeps null created and labels-free fields unchanged",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-4] hidden: jiraIssueResponseSchema accepts undefined for the nullish members",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-4] hidden: jiraIssueResponseSchema parses an empty label list and empty nested objects unchanged",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [boundary-5] hidden: jiraIssueResponseSchema returns an empty fields block unchanged",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [boundary-5] hidden: jiraIssueResponseSchema keeps other unrecognised status category keys as free strings",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [boundary-5] hidden: jiraIssueResponseSchema accepts a status without a category and a category without a key",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [boundary-6] hidden: jiraIssueResponseSchema keeps unknown keys in every nested object",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [boundary-6] hidden: jiraIssuePageResponseSchema keeps unknown keys on the page and on each issue",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [unhappy-2] hidden: jiraIssueResponseSchema refuses an empty object and null or numeric keys",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [unhappy-2] hidden: jiraIssueResponseSchema refuses other mistyped members of fields",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [unhappy-2] hidden: jiraIssueResponseSchema refuses null for members that are optional but not nullish",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [boundary-7] hidden: jiraIssuePageResponseSchema defaults issues to [] when only cursors are sent",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [boundary-7] hidden: jiraIssuePageResponseSchema gives each parse its own empty list",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [boundary-7] hidden: jiraIssuePageResponseSchema returns a page of many issues with every cursor unchanged",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [unhappy-3] hidden: jiraIssuePageResponseSchema refuses a page with one bad issue at any position",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-5] hidden: jiraBoardResponseSchema parses a kanban board with a partial location unchanged",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-5] hidden: jiraBoardResponseSchema keeps unknown keys on the board and its location",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [unhappy-4] hidden: jiraBoardResponseSchema refuses null or mistyped ids and names",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [boundary-8] hidden: board and sprint pages default values to [] alongside isLast and offsets",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [boundary-8] hidden: board and sprint pages with several values and cursors come back unchanged",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [boundary-8] hidden: board and sprint pages keep unknown keys",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-6] hidden: jiraSprintResponseSchema parses a sprint with string dates and goal unchanged",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-6] hidden: jiraSprintResponseSchema keeps unknown keys and mixes null and string dates",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [unhappy-5] hidden: jiraSprintResponseSchema refuses a string id even with every other field present",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [unhappy-5] hidden: jiraSprintPageResponseSchema refuses a string-id sprint after valid ones",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-7] hidden: tokenResponseSchema parses partial token responses and keeps unknown keys",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [unhappy-6] hidden: tokenResponseSchema refuses an empty object and null or mistyped required fields",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [boundary-9] hidden: accessibleResourceSchema defaults scopes for another site and keeps unknown keys",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [boundary-9] hidden: accessibleResourceSchema keeps the scopes Atlassian sent",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [unhappy-7] hidden: accessibleResourceSchema refuses an empty object and null or mistyped id, url or name",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-8] hidden: jiraIssueDtoSchema parses other well-formed issue DTOs to themselves",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-8] hidden: jiraIssueDtoSchema output has exactly the fifteen issue DTO keys",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-9] hidden: jiraIssueDtoSchema accepts null in each nullable field on its own",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-9] hidden: jiraIssueDtoSchema keeps every nullable field null rather than dropping it",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [boundary-10] hidden: jiraIssueDtoSchema drops Jira-shaped and other unknown keys",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [boundary-10] hidden: jiraIssuePageDtoSchema drops unknown keys on the page and on each issue",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [boundary-11] hidden: jiraIssueDtoSchema accepts empty and free-form strings in every string field",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [boundary-11] hidden: jiraIssueDtoSchema accepts a relative url and a lowercase key on their own",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [unhappy-8] hidden: jiraIssueDtoSchema refuses the valid DTO with any one key missing",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [unhappy-8] hidden: jiraIssueDtoSchema refuses undefined in each nullable field",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [unhappy-8] hidden: jiraIssueDtoSchema refuses null in each non-nullable field",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [unhappy-8] hidden: jiraIssueDtoSchema refuses other status categories and mistyped values",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-10] hidden: jiraIssuePageDtoSchema parses a page of several issues with every cursor unchanged",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-10] hidden: jiraIssuePageDtoSchema returns pages with a single cursor unchanged",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [unhappy-9] hidden: jiraIssuePageDtoSchema refuses a page whose issues are absent, undefined or null",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-11] hidden: jiraBoardDtoSchema parses other boards and null project fields to themselves",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-11] hidden: jiraBoardDtoSchema drops unknown keys",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [unhappy-10] hidden: jiraBoardDtoSchema refuses the valid board with any one key missing",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [unhappy-10] hidden: jiraBoardDtoSchema refuses null or mistyped ids, names and types",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-12] hidden: jiraSprintDtoSchema parses sprints with string dates and goal to themselves",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-12] hidden: jiraSprintDtoSchema drops unknown keys",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [unhappy-11] hidden: jiraSprintDtoSchema refuses a missing state even with string dates, and a null or numeric state",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-13] hidden: jiraSiteDtoSchema drops scopes but keeps the avatar",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-13] hidden: jiraSiteDtoSchema drops other unknown keys and an accessible resource's id",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-13] hidden: jiraSiteDtoSchema parses another site unchanged",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [unhappy-12] hidden: jiraSiteDtoSchema refuses a missing cloudId even with an avatar and scopes, and a null cloudId",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-14] hidden: todoSchema still parses a done todo with another id to itself",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-14] hidden: handleSchema still lowercases and trims other handles",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-14] hidden: every export of build-info is re-exported unchanged from the index",
+      "reason": "Passes on the skeleton."
+    },
+    {
+      "id": "test/hidden-jira-contract-confirmed/jira-schemas.test.ts :: [happy-14] hidden: the existing schema exports are still present on the index",
+      "reason": "Passes on the skeleton."
+    }
+  ],
+  "reference": {
+    "public": {
+      "passed": 74,
+      "total": 74
+    },
+    "hidden": {
+      "passed": 17,
+      "total": 17
+    },
+    "touchedOutsideSrc": [],
+    "removed": [],
+    "existing": {
+      "passed": 70,
+      "total": 70
+    },
+    "notes": "I've implemented the spec, and the whole `packages/shared` suite passes: 227 tests, 0 failures. That covers `jira-contract-confirmed.test.ts`, both hidden test files, and the existing schema and build-info tests. `npm test` with its coverage gate also exits 0.\n\nWhen I started, `index.ts` already had all the Jira schemas and types written out; only `trimTrailingSlashes` threw `not implemented`.\n\n- **`src/jira.ts` (new):** the spec says `index.ts` should re-export `./jira.js` the way it re-exports `./build-info.js`. So I moved the Jira block into this file unchanged, and it imports only `zod`.\n- **`trimTrailingSlashes`:** it walks back from the end of the string while the character is `/` (U+002F), then cuts there with one `slice`. It uses no regex, takes linear time, never throws, and leaves backslashes and trailing whitespace alone. It works the same way as the private helper in `packages/client`.\n- **`src/index.ts`:** it now has `export * from \"./jira.js\";` just before the build-info re-export. Every export keeps its name and signature, and the other exports are unchanged.\n\nTests left failing: none",
+    "sessions": [
+      {
+        "sessionId": "36f431e6-cd88-492f-9aa8-234412aea686",
+        "model": "claude-opus-5-5",
+        "ok": true,
+        "exitCode": 0,
+        "timedOut": false,
+        "costUsd": 0.3123948000000001,
+        "turns": 13,
+        "durationMs": 57729,
+        "subtype": "success",
+        "apiError": null,
+        "sandboxed": true
+      }
+    ],
+    "costUsd": 0.3123948000000001
+  }
+}

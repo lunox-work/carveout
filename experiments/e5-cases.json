@@ -126,6 +126,186 @@
         "packages/core/src/sources.ts"
       ],
       "subject": "feat(bounties): sync Jira and repository context into bounties, versioned per source (#80)"
+    },
+    {
+      "slug": "github-app",
+      "repo": "sandbox-factory",
+      "commit": "ee404f26df153d278203dc3cbe9d4cc79f698f71",
+      "package": "packages/shared",
+      "seam": [
+        "packages/shared/src/index.ts"
+      ],
+      "subject": "feat(github): connect GitHub App installations and track repository pointers (#66)",
+      "corpus": "e6b"
+    },
+    {
+      "slug": "jira-pages",
+      "repo": "sandbox-factory",
+      "commit": "854ffac2ff59d70a70cf8ff8de61f977033fb845",
+      "package": "packages/db",
+      "seam": [
+        "packages/db/src/jira-boards.ts"
+      ],
+      "subject": "feat(web): open Jira sites, boards and tickets as their own pages (#42)",
+      "corpus": "e6b"
+    },
+    {
+      "slug": "oauth-membership",
+      "repo": "sandbox-factory",
+      "commit": "1b7ce0d00cea1ff5a58d0a8a37103877983a73b6",
+      "package": "apps/api",
+      "seam": [
+        "apps/api/src/routes.ts"
+      ],
+      "subject": "fix(jira): re-check membership when the OAuth callback lands (#34)",
+      "corpus": "e6b"
+    },
+    {
+      "slug": "jira-boards",
+      "repo": "sandbox-factory",
+      "commit": "89a20d1670ee472d0d6172be37782f8a2b7753b2",
+      "package": "packages/db",
+      "seam": [
+        "packages/db/src/jira-boards.ts",
+        "packages/db/src/schema.ts"
+      ],
+      "subject": "feat(jira): register boards and query their oldest backlog tickets (#33)",
+      "corpus": "e6b"
+    },
+    {
+      "slug": "second-atlassian",
+      "repo": "sandbox-factory",
+      "commit": "db01e231fdfa7127ad590a4c32ac3a2095e8b9d4",
+      "package": "apps/api",
+      "seam": [
+        "apps/api/src/env.ts",
+        "apps/api/src/jira/state.ts"
+      ],
+      "subject": "feat(jira): add a second Atlassian app for connecting a client's site (#30)",
+      "corpus": "e6b"
+    },
+    {
+      "slug": "jira-connections",
+      "repo": "sandbox-factory",
+      "commit": "140be12838752ec32f2b808f5e6d123db7521ee2",
+      "package": "packages/db",
+      "seam": [
+        "packages/db/src/cipher.ts",
+        "packages/db/src/jira-connections.ts",
+        "packages/db/src/schema.ts",
+        "packages/db/src/schema/jira.ts"
+      ],
+      "subject": "feat(jira): store Jira connections with encrypted tokens (#29)",
+      "corpus": "e6b"
+    },
+    {
+      "slug": "jira-contract",
+      "repo": "sandbox-factory",
+      "commit": "1e0efe482611b6dc11dc71840a5ae9f200d33147",
+      "package": "packages/shared",
+      "seam": [
+        "packages/shared/src/index.ts"
+      ],
+      "subject": "feat(jira): recover the Jira integration package and its wire contract (#25)",
+      "corpus": "e6b"
+    },
+    {
+      "slug": "generate-id",
+      "repo": "sandbox-factory",
+      "commit": "f58e8766f7de3debbc4fce9c427b1f32d3ea0775",
+      "package": "packages/db",
+      "seam": [
+        "packages/db/src/mapping.ts",
+        "packages/db/src/schema.ts",
+        "packages/db/src/schema/auth.ts",
+        "packages/db/src/schema/organizations.ts",
+        "packages/db/src/schema/todos.ts"
+      ],
+      "subject": "feat(db): generalise generateId and split the schema into modules (#26)",
+      "corpus": "e6b"
+    },
+    {
+      "slug": "provenance-doc",
+      "repo": "sandbox-factory",
+      "commit": "35829c927ef025ed8e6c6753175887b57d11c599",
+      "package": "packages/shared",
+      "seam": [
+        "packages/shared/src/build-info.ts"
+      ],
+      "subject": "fix: document a provenance lookup that actually exists (#45)",
+      "corpus": "e6b"
+    },
+    {
+      "slug": "image-digest",
+      "repo": "sandbox-factory",
+      "commit": "a59b37f15e34b61a7f3c4df35969aa1b7547a037",
+      "package": "apps/api",
+      "seam": [
+        "apps/api/src/image-digest.ts"
+      ],
+      "subject": "feat: attest the deployed image and report its digest at /version (#43)",
+      "corpus": "e6b"
+    },
+    {
+      "slug": "aws-deploy",
+      "repo": "sandbox-factory",
+      "commit": "09eb7d714b1843038e908ca1acb689738192ce84",
+      "package": "apps/api",
+      "seam": [
+        "apps/api/src/routes.ts"
+      ],
+      "subject": "feat: deploy to AWS via CloudFront, Fargate and Neon (#32)",
+      "corpus": "e6b"
+    },
+    {
+      "slug": "build-commit",
+      "repo": "sandbox-factory",
+      "commit": "3e825a8cdeb0c862df5c700a92133fd0c7692830",
+      "package": "packages/shared",
+      "seam": [
+        "packages/shared/src/build-info.ts"
+      ],
+      "subject": "feat: report and attest the commit each build came from (#29)",
+      "corpus": "e6b"
+    },
+    {
+      "slug": "workspace-stubs",
+      "repo": "sandbox-factory",
+      "commit": "f448c0b29e0c52b3c3dc360495e0b1b6274e4f04",
+      "package": "packages/core",
+      "seam": [
+        "packages/core/src/analysis.ts",
+        "packages/core/src/sandbox/project.ts",
+        "packages/core/src/sandbox/provenance.ts",
+        "packages/core/src/slice/manifest.ts"
+      ],
+      "subject": "fix(slice): stub workspace packages and check slices against published types (#130)",
+      "corpus": "e6b"
+    },
+    {
+      "slug": "sliced-fixtures",
+      "repo": "sandbox-factory",
+      "commit": "c93f0e5b9037a7c39759a8ffcec87cc4f4e28e12",
+      "package": "apps/api",
+      "seam": [
+        "apps/api/src/analysis/routes.ts",
+        "apps/api/src/pricing/profiler.ts"
+      ],
+      "subject": "feat(sandbox): sliced builds write their own fixtures, and the scope reads abstractions and the data model (#100)",
+      "corpus": "e6b"
+    },
+    {
+      "slug": "touched-repos",
+      "repo": "sandbox-factory",
+      "commit": "aaf77e964e983127c157940a39e16b06cf844ddd",
+      "package": "apps/worker",
+      "seam": [
+        "apps/worker/src/tools/sandbox-build.ts",
+        "apps/worker/src/tools/starter-check.ts",
+        "apps/worker/src/tools/starter.ts"
+      ],
+      "subject": "fix(sandbox): fixes from real runs — touched repositories, refused checks, test counts (#132)",
+      "corpus": "e6b"
     }
   ]
 }
