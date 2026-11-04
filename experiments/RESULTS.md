@@ -1238,3 +1238,73 @@ the harness and the judge. The data is in `results/bench-e8f.jsonl`.
 the repository on this corpus, at a fifth of the cost; so does the weaker
 model in the repository, at less. The slice is not what makes Haiku
 enough here; the corpus is.
+
+### E8g: a large repository
+
+Registered: candidates from cal.com and n8n by Phase 6's rule; if the
+repository's install, build and test at B do not complete on this
+machine, that is the result, with the step that failed and its time.
+Time-boxed to 30 minutes, 2026-11-04 22:25 to 22:33 SGT, n8n first.
+
+| step                                          | result                                                                                         | time           |
+| --------------------------------------------- | ---------------------------------------------------------------------------------------------- | -------------- |
+| clone (`--filter=blob:none`, one branch)      | 449 MB                                                                                         | under 1 min    |
+| discover, Phase 6's rule, whole repository    | 40 candidates, every one spanning packages (`packages/@n8n/*`, `modules/*`)                    | 1 min 7 s      |
+| discover, one package each                    | `packages/cli`, `core`, `workflow`: 20 each, one to seven files, with tests                    | 30 s each      |
+| **install at HEAD** (`pnpm 12.4.2`, corepack) | **killed at 1.15 GB free**: 3,116 of 3,317 packages added, 2.7 GB `node_modules`, 5.1 GB store | **2 min 12 s** |
+| build, test                                   | not reached                                                                                    |                |
+
+- **The failing step is the install, for disk.** The machine had 4.6 GB
+  free after the clone (13 GB of this benchmark's own `full` templates
+  sit on the same disk); n8n's install wants about 8 GB between the
+  content-addressed store and the linked `node_modules`. cal.com was not
+  attempted: nothing was left to attempt it with. The model arms did not
+  run.
+- **E8b's n8n measurement, the half that was possible.** One slice at
+  the base of `96cfba9` (`packages/workflow`, "Keep the ExpressionError
+  name in minified builds", 1 file, 1 test): the cut reads n8n's whole
+  graph and returns in 5.5 s (4.0 s at depth 2), 2 files, 140 KB on disk,
+  no blocker, against an install that had not finished at 2 min 12 s and
+  2.7 GB. Then two limits of the cut, not of the machine:
+  - the slice's `package.json` carries `"typescript": "catalog:typescript"`,
+    a pnpm catalog reference npm rejects (`EUNSUPPORTEDPROTOCOL`), and
+    pnpm cannot resolve without the workspace's catalog file;
+  - the slice has no lockfile, because carveout writes one from
+    `package-lock.json` only, so `npm ci` refuses before that.
+    A slice of a pnpm workspace with catalogs needs the catalog resolved at
+    cut time; not in this round.
+- **The walk's own limit on n8n's layout.** `--with-tests` carried no
+  test at either depth: the commit's test (`native-evaluation-parity`)
+  does not import the entry at B. Phase 6's rule picks commits whose
+  tests import the change; on n8n those tests reach it through the
+  package barrel or a built artefact, and the two-file slice shows the
+  seam, not the feature.
+
+**What E8g says.** The avenue's premise holds, a repository this size
+cannot be read or installed casually, and the slice's cut is cheap
+against it (5 s and 140 KB against minutes and gigabytes). What it does
+not show is a working slice: catalog references and the missing lockfile
+stop the install, and the seam carries no test. The benefit a large
+repository offers is real and this CLI does not yet collect it.
+
+### What Phase 8 says
+
+Seven avenues, registered before data, on the corpus Phase 5 built.
+
+| avenue                      | bar                         | result                                                            |
+| --------------------------- | --------------------------- | ----------------------------------------------------------------- |
+| E8a exposure                | none                        | `full` agents read 2 files outside the slice (median), no secrets |
+| E8b setup time and disk     | ≥50% lower, both            | **pass**: 0.35× time, 0.12× disk; ~3 s and ~300 MB on this repo   |
+| E8c loose brief             | Phase 5 efficiency          | **fail**: 12% more input; 0 of 60 accepted in both arms           |
+| E8d scope from the ticket   | none                        | plans cover the change in 38 of 60; ρ 0.25 with size              |
+| E8e slice as the judge      | ≥50% lower judge time       | **fail**: 1.1× slower                                             |
+| E8f weaker model in a slice | within 10 pts, ≥50% cheaper | cost **pass** (81%), bound -10.1; Haiku `full` is cheaper still   |
+| E8g large repository        | feasibility, then Phase 5   | install does not complete here; cut 5 s, slice does not install   |
+
+The slice's measurable wins on this corpus are the ones that do not
+involve a model: a smaller tree to install and read, a bounded view, a
+cheap cut. Every bar that puts a model in the slice fails or is taken by
+a control: the token saving does not appear (Phase 5, E6c, E8c), the
+judge is not faster (E8e), and a weaker model does as well in the
+repository as in the slice (E8f). The one mergeback number from model
+runs (E6c) sits above the 2% bar on a rule since fixed and not re-run.
