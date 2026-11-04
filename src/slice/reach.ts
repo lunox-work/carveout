@@ -394,9 +394,12 @@ export function reach(
     }
     /** Each test outside the slice that imports it, with the barrels it goes through. */
     const candidates = new Map<string, Set<string>>();
+    /** Tests that also reach a file the slice holds neither way. */
+    const strays = new Set<string>();
     for (const file of files) {
       if (depthOf.has(file) || !isTestPath(file)) continue;
       for (const { link, edge } of outgoing.get(file) ?? []) {
+        if (!depthOf.has(edge.to) && !barrels.has(edge.to)) strays.add(file);
         if (link.relation !== "imports" || link.typeOnly) continue;
         const through = barrels.get(edge.to);
         if (depthOf.has(edge.to)) candidates.set(file, candidates.get(file) ?? new Set());
@@ -413,16 +416,21 @@ export function reach(
     for (const [file, through] of [...candidates].sort(([a], [b]) => compare(a, b))) {
       // A test is left behind when it runs on neither runner, or reads a
       // path or an unresolved module no slice can carry. A computed import
-      // is not such a read: what it names is often a file the test writes
-      // itself, and one that does not resolve in the slice fails at the
-      // baseline, which the verdict discounts (Phase 7, E6c: dropping such
-      // a test hid the one check that caught every wrong change).
+      // is not such a read when the slice holds everything else the test
+      // reaches: what it names is often a file the test writes itself, and
+      // one that does not resolve fails at the baseline, which the verdict
+      // discounts (Phase 7, E6c: dropping such a test hid the one check
+      // that caught every wrong change). A computed import beside an
+      // import of a file outside the slice (a `typeof import` of a root
+      // script, say) still leaves the test behind: that file is not cut.
+      const reads = dependencyEdges.get(file) ?? [];
       if (
         testRunnerOf(packagesOf.get(file) ?? []) === null ||
-        (dependencyEdges.get(file) ?? []).some(
+        reads.some(
           (dependency) =>
             dependency.status !== "external" && dependency.status !== "dynamic",
-        )
+        ) ||
+        (strays.has(file) && reads.some((dependency) => dependency.status === "dynamic"))
       ) {
         untestable.add(file);
         continue;

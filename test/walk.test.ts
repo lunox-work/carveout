@@ -136,6 +136,8 @@ test("tests that import the slice come along on request", () => {
     "app.plain.test.ts": 'import { one } from "./app.js";\nvoid one;\n',
     // A computed import comes along: what it names is the baseline's business.
     "app.url.test.ts": 'import { test } from "node:test";\nimport { one } from "./app.js";\nconst m = await import(new URL("../x.mjs", import.meta.url).href);\ntest("one", () => void [one, m]);\n',
+    // Beside an import of a file the slice does not hold, it does not.
+    "app.url.stray.test.ts": 'import { test } from "node:test";\nimport { one } from "./app.js";\nimport { two } from "./other.js";\nconst m = await import(new URL("../x.mjs", import.meta.url).href);\ntest("one", () => void [one, two, m]);\n',
     "other.ts": 'import { one } from "./app.js";\nexport const two = one + 1;\n',
   };
   const without = walk(files, ["app.ts"]);
@@ -143,7 +145,7 @@ test("tests that import the slice come along on request", () => {
   assert.deepEqual(without.tests, []);
   const withTests = walk(files, ["app.ts"], undefined, { tests: true });
   assert.deepEqual(withTests.tests, ["app.test.ts", "app.url.test.ts", "app.vi.test.ts"]);
-  assert.deepEqual(withTests.untestable, ["app.plain.test.ts"]);
+  assert.deepEqual(withTests.untestable, ["app.plain.test.ts", "app.url.stray.test.ts"]);
   assert.deepEqual(withTests.included, ["app.test.ts", "app.ts", "app.url.test.ts", "app.vi.test.ts"]);
   assert.equal(withTests.depthOf["app.test.ts"], 1);
 });
