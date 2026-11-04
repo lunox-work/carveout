@@ -30,7 +30,7 @@ const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript r
 
   carveout cut   <entry>... --out <dir> [--repo <dir>] [--max-files N] [--depth N]
                  [--with-tests] [--mock <package>]... [--install <package>]...
-                 [--offline] [--widen-literals] [--json]
+                 [--live <package>]... [--offline] [--widen-literals] [--json]
       Copies the slice to <dir> at its repository paths, with a .d.ts stub and a
       recording mock for every module it imports from outside, mock packages for
       what it does not install, package.json, tsconfig.json and a lockfile.
@@ -102,6 +102,7 @@ async function main(argv: readonly string[]) {
       depth: { type: "string" },
       mock: { type: "string", multiple: true },
       install: { type: "string", multiple: true },
+      live: { type: "string", multiple: true },
       offline: { type: "boolean" },
       "widen-literals": { type: "boolean" },
       "with-tests": { type: "boolean" },
@@ -271,12 +272,16 @@ async function main(argv: readonly string[]) {
           fail(`${name} is given to both --mock and --install.`);
         choices[name] = "approved-package";
       }
+      for (const name of values.live ?? [])
+        if (choices[name] === "runtime-mock")
+          fail(`${name} is given to both --mock and --live.`);
       const result = await cutSlice({
         repo,
         out: values.out,
         entryPoints: positionals,
         budget,
         choices,
+        ...(values.live === undefined ? {} : { live: values.live }),
         ...(values["with-tests"] === true ? { tests: true } : {}),
         ...(values.offline === true ? { offline: true } : {}),
         ...(values["widen-literals"] === true ? { widenLiterals: true } : {}),

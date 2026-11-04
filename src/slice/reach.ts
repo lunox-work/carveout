@@ -96,8 +96,10 @@ export interface ReachResult {
 
 export interface ReachOptions {
   /**
-   * Also include each test file outside the slice that imports it and runs
-   * on `node:test` or Vitest. Tests count against the file budget.
+   * Also include each test file outside the slice that imports it, directly
+   * or through a barrel that re-exports from it, and runs on `node:test` or
+   * Vitest. Such a barrel comes along too, its other re-exports cut. Tests
+   * and barrels count against the file budget.
    */
   readonly tests?: boolean;
 }
@@ -370,13 +372,45 @@ export function reach(
   const tests: string[] = [];
   const untestable = new Set<string>();
   if (options.tests === true && dropped.size === 0) {
-    const reached = [...depthOf.keys()];
-    const candidates = new Set<string>();
-    for (const file of reached)
-      for (const edge of incoming.get(file) ?? [])
-        if (!depthOf.has(edge.from) && isTestPath(edge.from))
-          candidates.add(edge.from);
-    for (const file of [...candidates].sort(compare)) {
+    // A barrel outside the slice that re-exports from inside it, with the
+    // names it forwards from there and the depth of the nearest. A test
+    // that takes one of those names through the barrel exercises the
+    // slice, so it comes along, and the barrel with it: at the depth of
+    // what it forwards, as a re-export is, its other re-exports cut.
+    const barrels = new Map<string, { depth: number; names: Set<string> }>();
+    for (const [file, outs] of outgoing) {
+      if (depthOf.has(file) || isTestPath(file)) continue;
+      for (const { link, edge } of outs) {
+        if (link.forwards === null || link.typeOnly) continue;
+        const depth = depthOf.get(edge.to);
+        if (depth === undefined) continue;
+        const entry = barrels.get(file) ?? { depth, names: new Set<string>() };
+        entry.depth = Math.min(entry.depth, depth);
+        if (link.forwards === EVERYTHING)
+          for (const name of exported(edge.to).names) entry.names.add(name);
+        else for (const [, as] of link.forwards) entry.names.add(as);
+        barrels.set(file, entry);
+      }
+    }
+    /** Each test outside the slice that imports it, with the barrels it goes through. */
+    const candidates = new Map<string, Set<string>>();
+    for (const file of files) {
+      if (depthOf.has(file) || !isTestPath(file)) continue;
+      for (const { link, edge } of outgoing.get(file) ?? []) {
+        if (link.relation !== "imports" || link.typeOnly) continue;
+        const through = barrels.get(edge.to);
+        if (depthOf.has(edge.to)) candidates.set(file, candidates.get(file) ?? new Set());
+        else if (
+          through !== undefined &&
+          (link.names === null || link.names.some((name) => through.names.has(name)))
+        ) {
+          const set = candidates.get(file) ?? new Set<string>();
+          set.add(edge.to);
+          candidates.set(file, set);
+        }
+      }
+    }
+    for (const [file, through] of [...candidates].sort(([a], [b]) => compare(a, b))) {
       // A test is left behind when it runs on neither runner, or reads what
       // no slice can carry: one such test would block the whole folder.
       if (
@@ -388,10 +422,12 @@ export function reach(
         untestable.add(file);
         continue;
       }
-      if (depthOf.size >= maxFiles) {
+      const entering = [...through].filter((barrel) => !depthOf.has(barrel)).sort(compare);
+      if (depthOf.size + entering.length >= maxFiles) {
         dropped.add(file);
         continue;
       }
+      for (const barrel of entering) depthOf.set(barrel, barrels.get(barrel)?.depth ?? 0);
       const nearest = Math.min(
         ...(outgoing.get(file) ?? [])
           .map(({ edge }) => depthOf.get(edge.to))

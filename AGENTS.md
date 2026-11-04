@@ -26,8 +26,9 @@ What to tell them, accurately:
 
 - The folder's own code is copied unchanged, except for the import
   rewrites, which `carveout patch` undoes.
-- Every module outside the slice is a mock: tests in the folder show the
-  slice working against mocks, not against the repository.
+- Every module outside the slice is a mock, and every service package
+  too unless cut with `--live`: tests in the folder show the slice working
+  against mocks, not against the repository.
 - By default the stubs keep literal values from the cut modules.
   `--widen-literals` removes them. Neither option hides the slice's own
   source, so do not hand the folder to someone who should not read it.

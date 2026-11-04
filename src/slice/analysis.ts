@@ -20,6 +20,12 @@ export interface SliceParams {
   readonly budget: SliceBudget;
   /** Also bring along the tests outside the slice that import it. */
   readonly tests: boolean;
+  /**
+   * Service packages kept real rather than mocked: installed and typed as
+   * the repository has them, with the environment their importers read
+   * left to the shell. Absent when none.
+   */
+  readonly live?: readonly string[];
 }
 
 export function canonicalJson(value: unknown): string {

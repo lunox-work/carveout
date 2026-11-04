@@ -499,6 +499,8 @@ export async function analyseSlice(input: {
     const services = new Set(
       externals.packages.map((item) => packageNameOf(item.specifier)),
     );
+    // A live service package is installed and typed as any other.
+    for (const name of input.params.live ?? []) services.delete(name);
     for (const name of namesOf(files)) {
       if (workspaces.has(name) || services.has(name)) continue;
       const from = importerOf(files, name);

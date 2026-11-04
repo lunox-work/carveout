@@ -83,6 +83,18 @@ const seam = acceptance[SLICE] ?? { accepted: 0, runs: 0 };
 const lower = full.runs > 0 && seam.runs > 0 ? newcombeLower(seam.accepted, seam.runs, full.accepted, full.runs) : null;
 const falsePass = byArm(SLICE).filter((row) => row.inSlice?.ok === true && !accepted(row));
 const unknownParity = byArm(SLICE).filter((row) => row.inSlice?.ok !== true && row.inSlice?.ok !== false);
+// Phase 7 (PLAN-benchmark.md): the unsafe direction over the rows with an
+// in-slice verdict, with its one-sided 95% upper bound; the share of judged
+// rows that have one; and Phase 2's agreement, reported beside them.
+const judged = byArm(SLICE).filter((row) => row.inSlice?.ok === true || row.inSlice?.ok === false);
+const agreeing = judged.filter((row) => row.inSlice.ok === accepted(row));
+const safeMiss = judged.filter((row) => row.inSlice.ok === false && accepted(row));
+const mergeback = {
+  unsafe: { runs: falsePass.length, of: judged.length, share: judged.length ? falsePass.length / judged.length : null, upper95: judged.length ? wilson(falsePass.length, judged.length, 1.6449)[1] : null, cases: falsePass.map((r) => `${r.slug}/${r.run}`) },
+  verdictCoverage: { runs: judged.length, of: byArm(SLICE).length, share: byArm(SLICE).length ? judged.length / byArm(SLICE).length : null },
+  agreement: { runs: agreeing.length, of: judged.length, share: judged.length ? agreeing.length / judged.length : null },
+  safeDirection: { runs: safeMiss.length, cases: safeMiss.map((r) => `${r.slug}/${r.run}`) },
+};
 
 /** Per case, an arm's median of `value` over its runs. */
 const perCase = (arm, value) => Object.fromEntries(cases.map((slug) => [slug, median(rows.filter((r) => r.slug === slug && r.arm === arm).map(value))]));
@@ -122,10 +134,13 @@ const report = {
   acceptance,
   nonInferiority: { difference: seam.runs && full.runs ? seam.accepted / seam.runs - full.accepted / full.runs : null, lower95: lower, pass: lower !== null && lower > -0.1 },
   slicePassedRepositoryFailed: { runs: falsePass.length, of: byArm(SLICE).length, share: byArm(SLICE).length ? falsePass.length / byArm(SLICE).length : null, unknown: unknownParity.length, cases: falsePass.map((r) => `${r.slug}/${r.run}`) },
+  mergeback,
   efficiency,
   bars: {
     totalInput: (efficiency[SLICE]?.totalInput.median ?? -1) >= 0.3,
     costPerAccepted: efficiency[SLICE]?.costPerAccepted.median == null ? null : efficiency[SLICE].costPerAccepted.median >= 0.3,
+    unsafe: mergeback.unsafe.share == null ? null : mergeback.unsafe.share <= 0.02,
+    verdictCoverage: mergeback.verdictCoverage.share == null ? null : mergeback.verdictCoverage.share >= 0.9,
   },
 };
 
@@ -138,6 +153,10 @@ else {
   process.stdout.write(`\nNon-inferiority, ${SLICE} - full: ${pct(report.nonInferiority.difference)}, one-sided 95% lower bound ${pct(lower)} (bar: above -10%): ${report.nonInferiority.pass ? "pass" : "fail"}\n`);
   process.stdout.write(`Slice passed, repository failed: ${falsePass.length} of ${report.slicePassedRepositoryFailed.of} (${pct(report.slicePassedRepositoryFailed.share)}; bar: at most 5%)\n`);
   if (unknownParity.length) process.stdout.write(`In-slice verdict unavailable: ${unknownParity.length}; the parity bar cannot be established from these runs.\n`);
+  process.stdout.write(`\nMergeback (Phase 7), over the ${judged.length} rows with an in-slice verdict:\n`);
+  process.stdout.write(`  unsafe direction (slice passed, repository failed): ${mergeback.unsafe.runs} (${pct(mergeback.unsafe.share)}, one-sided 95% upper bound ${pct(mergeback.unsafe.upper95)}; bar: at most 2%): ${report.bars.unsafe == null ? "unavailable" : report.bars.unsafe ? "pass" : "fail"}${mergeback.unsafe.cases.length ? ` — ${mergeback.unsafe.cases.join(", ")}` : ""}\n`);
+  process.stdout.write(`  verdict coverage: ${mergeback.verdictCoverage.runs} of ${mergeback.verdictCoverage.of} (${pct(mergeback.verdictCoverage.share)}; bar: at least 90%): ${report.bars.verdictCoverage == null ? "unavailable" : report.bars.verdictCoverage ? "pass" : "fail"}\n`);
+  process.stdout.write(`  agreement (Phase 2, reported): ${mergeback.agreement.runs} of ${mergeback.agreement.of} (${pct(mergeback.agreement.share)}); safe direction ${mergeback.safeDirection.runs}${mergeback.safeDirection.cases.length ? ` — ${mergeback.safeDirection.cases.join(", ")}` : ""}\n`);
   for (const [arm, metric] of Object.entries(efficiency)) {
     process.stdout.write(`\n${arm} against full, median over cases of the per-case reduction (cases where it is lower):\n\n| metric | median reduction | lower in |\n|---|---:|---:|\n`);
     for (const [name, m] of Object.entries(metric)) process.stdout.write(`| ${name} | ${pct(m.median)} | ${m.lower}/${m.perCase.length} |\n`);

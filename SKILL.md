@@ -60,14 +60,17 @@ data.
 
 `--with-tests` also brings the test files outside the slice that import it
 (`*.test.*`, `*.spec.*`, `__tests__/`), when they run on `node:test` or
-Vitest. The plan lists as left behind the tests on other runners, and those
-that make an import no slice can carry: a computed dynamic import, or one
-that resolves to no file.
+Vitest. A test that reaches a slice module through a barrel outside the
+slice counts; the barrel comes along at the depth of what it forwards, its
+other re-exports cut. The plan lists as left behind the tests on other
+runners, and those that make an import no slice can carry: a computed
+dynamic import, or one that resolves to no file.
 
 ## 2. Cut
 
 ```sh
 carveout cut <entry>... --out <empty folder> [--depth N] [--max-files N] [--with-tests]
+             [--mock <pkg>]... [--install <pkg>]... [--live <pkg>]...
 ```
 
 What the folder holds:
@@ -91,6 +94,14 @@ How packages are handled:
   `--install <pkg>` also adds a package the slice does not import, at the
   version the repository's lockfile has. The cut prints the optional peers
   this applies to.
+- `--live <pkg>` keeps a service package real: installed and typed as the
+  repository has it, and the environment the files that import it read is
+  left out of `carveout.env`, so the shell's values or the code's own
+  defaults apply. Use it when the package's tests need the service itself
+  (a database driver against a local server) and the person has it
+  running; the folder's README then says so. Otherwise the tests of such a
+  package fail on the mock before any change, and `npm test` can only
+  report them as the baseline.
 
 The rest of the cut's behaviour:
 
@@ -143,9 +154,12 @@ the cut run too. When the package's own test sets coverage thresholds
 (`--test-coverage-lines` and the like), it holds the source files added
 after the cut to them. It loads each such file, so one no test imports
 counts as uncovered. When coverage falls short, `npm test` says so in a line
-of its own. A test added where the package's script would not run it (the
-script's `--test` pattern, such as `test/*.test.ts`) fails `npm test`, which
-names it to move, because in the repository it would cover nothing.
+of its own. When the package's script also runs `assert-all-covered`, a
+source file added under the package that no test loads fails `npm test`,
+which names it, as the repository's script would. A test added where the
+package's script would not run it (the script's `--test` pattern, such as
+`test/*.test.ts`) fails `npm test`, which names it to move, because in the
+repository it would cover nothing.
 
 ## 4. Work in the folder
 

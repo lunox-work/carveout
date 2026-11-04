@@ -62,7 +62,8 @@ billing-slice/
   repository's tsconfig. `noImplicitAny` too, unless the slice does not
   compile under it with its stubs and untyped packages, which the cut says. Node's types come at the repository's version.
   When the package's own test sets coverage thresholds, `npm test` holds
-  the source files you add to them.
+  the source files you add to them, and fails, as the package's script
+  does, on a file you add that no test loads (`assert-all-covered`).
 - **Credentials.** A credentials file is never copied, and a credential
   found in anything written blocks the cut.
 
@@ -100,7 +101,7 @@ are found by name first, and the compiler confirms each one.
 | `carveout status <dir>`                  | Says whether a cut now would write the same folder, and names what changed. Exits 4 if stale.                  |
 | `carveout patch <dir>`                   | Prints the edits as a patch for the repository (`--output <file>`), with full blob ids for `git apply --3way`. |
 | `carveout merge <dir> --into <checkout>` | Patches, applies with `--3way` in the checkout you name, and runs `--verify <cmd>` there.                      |
-| `carveout apply <dir> <patch>`           | Brings a patch for the repository into the folder, imports rewritten; `--stubs` adds the stubs it needs.       |
+| `carveout apply <dir> <patch>`           | Brings a patch for the repository into the folder, imports rewritten; `--stubs` adds the stubs it needs. A module the patch adds past the cut's reach joins the folder as an entry, with its tests. |
 
 Options for `plan` and `cut`:
 
@@ -109,14 +110,21 @@ Options for `plan` and `cut`:
 - `--max-files N` (default 40)
 - `--with-tests`, which also brings the tests outside the slice that import
   it (`*.test.*`, `*.spec.*`, `__tests__/`) and run on `node:test` or
-  Vitest. `npm test` in the folder runs them. Without a lockfile Vitest is
-  mocked like any package; cut with `--install vitest`.
+  Vitest, directly or through a barrel outside the slice that re-exports
+  from it; such a barrel comes along, its other re-exports cut. `npm test`
+  in the folder runs them. Without a lockfile Vitest is mocked like any
+  package; cut with `--install vitest`.
 - `--json`
 
 Options for `cut` only:
 
 - `--mock <pkg>` and `--install <pkg>`, which take precedence over the
   defaults;
+- `--live <pkg>`, which keeps a service package real: installed and typed
+  as the repository has it, with the environment its importers read left
+  out of `carveout.env` for the shell to supply, so the code's own
+  defaults apply otherwise. For tests that need the service itself, such
+  as a database driver against a local server;
 - `--widen-literals`, which writes `string` in stubs in place of literal
   values;
 - `--offline`.
@@ -200,8 +208,9 @@ What to tell them, accurately:
 
 - The folder's own code is copied unchanged, except for the import
   rewrites, which `carveout patch` undoes.
-- Every module outside the slice is a mock: tests in the folder show the
-  slice working against mocks, not against the repository.
+- Every module outside the slice is a mock, and every service package
+  too unless cut with `--live`: tests in the folder show the slice working
+  against mocks, not against the repository.
 - By default the stubs keep literal values from the cut modules.
   `--widen-literals` removes them. Neither option hides the slice's own
   source, so do not hand the folder to someone who should not read it.

@@ -296,6 +296,74 @@ with no bar.
 A run the usage limit stops is resumed, never restarted: a case, arm and
 run with a line is done.
 
+## Phase 7: the mergeback claim (registered 2026-11-04, before any data)
+
+E5 and E6b leave "a change that passes in the slice passes after the
+merge" unestablished. Phase 2's agreement bar counts the safe direction
+(the slice fails on a mock, the repository passes) with the unsafe one
+(the slice passes, the repository fails), and on the grown corpus the safe
+direction alone fails it (28 of 42). The in-slice verdict was unavailable
+in 23 E6b rows. This phase fixes the causes found and splits the bar.
+
+**The fixes**, all code, none of it a model, in the CLI the runs name:
+
+1. `cut --live <package>`: a service package kept real, installed and
+   typed as the repository has it, with the environment its importers
+   read left out of `carveout.env`. For packages whose tests need the
+   service itself (`packages/db`, `apps/api` on `postgres`), so the slice
+   has a verdict where before it had only a red baseline.
+2. `--with-tests` carries a test that reaches a slice module through a
+   barrel outside the slice, and the barrel with it (workspace-stubs's
+   three unsafe rows).
+3. `npm test` in a slice holds the package's never-loaded-file guard
+   (`assert-all-covered`) over the files the change adds (generate-id).
+4. `apply` takes the modules a change adds past the cut's reach as entries
+   of their own, with their tests, so the judge's clean cut reaches them
+   (the 23 unavailable verdicts).
+
+Not in this round: a typecheck of the slice's outside importers (M6).
+`BOUNDARY.md` still lists them unchecked.
+
+**Bars**, read on rows with an in-slice verdict (`ok` true or false; not
+a partial apply, a failed apply, or an install or build failure in the
+judged slice). Phase 2's 95% agreement bar is still reported, unchanged.
+
+- Unsafe direction: the slice passes and the repository fails in at most
+  2% of such rows, with the one-sided 95% upper bound reported beside the
+  count, and every such row classified by hand as a carveout gap, a judge
+  gap or a spec-suite defect. A carveout gap is a defect to fix before
+  the next run, as in Phase 2.
+- Verdict coverage: at least 90% of judged slice rows have an in-slice
+  verdict.
+- Safe-direction disagreements are reported with their cause, no bar.
+
+**Live services.** A case's slice is cut with `--live <driver>` when the
+case's package imports the driver directly in its sources or tests
+(`from "postgres"`), reads its connection from the environment with a
+local default (`DATABASE_URL`, `127.0.0.1:5432`), and the judge's host
+runs that service, as the repository's own test needs. On this corpus
+that is `packages/db` alone: `apps/api` reaches the database through the
+`db` workspace package, which the slice mocks whatever the driver is, so
+its integration tests stay in the safe direction until a slice can hold a
+workspace package's sources (not in this round). The same host serves
+`full`; when the service is down, the repository's tests skip, and so do
+the slice's. The choice is recorded per case in the result line's
+`setup`; the rule is fixed before the run.
+
+**Order**, cheapest first, each a gate for the next:
+
+1. The parity replay (`bench/parity.mjs --from slice`, no model) of the
+   saved E6a and E6b slice-arm changes on the fixed CLI, each judged in
+   its slice with its hidden suite. Gate: zero unsafe rows among the
+   comparable ones. A failure sends the fix back before any model run.
+2. E5 on the fixed CLI for every case in `e5-cases.json`, with the live
+   rule above. Gate: Phase 2's round-trip and apply bars, and the unsafe
+   bar.
+3. E6c: the E6b corpus × `full`, `slice-seam` and `slice-diff` × 3 runs,
+   on Haiku 5.5, Phase 5's bars plus the two above. 120 slice rows can
+   meet the 2% bar only at zero unsafe rows (upper bound 2.5%); that is
+   reported as such, not rounded to a pass.
+
 ## Confounds, and how each is handled
 
 - **The seam names where to work.** The slice saves searching that the

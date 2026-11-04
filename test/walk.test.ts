@@ -148,6 +148,25 @@ test("tests that import the slice come along on request", () => {
   assert.equal(withTests.depthOf["app.test.ts"], 1);
 });
 
+test("a test that reaches the slice through a barrel comes along, and the barrel with it", () => {
+  const files = {
+    ...BARREL,
+    "lib/a.test.ts": 'import { test } from "node:test";\nimport { a } from "./index.js";\ntest("a", () => void a());\n',
+    "lib/b.test.ts": 'import { test } from "node:test";\nimport { b } from "./index.js";\ntest("b", () => void b());\n',
+    "lib/all.test.ts": 'import { test } from "node:test";\nimport * as lib from "./index.js";\ntest("all", () => void lib);\n',
+  };
+  const result = walk(files, ["lib/a.ts"], undefined, { tests: true });
+  // b is not in the slice, so the test of b through the barrel stays behind.
+  assert.deepEqual(result.tests, ["lib/a.test.ts", "lib/all.test.ts"]);
+  assert.deepEqual(result.included, ["lib/a.test.ts", "lib/a.ts", "lib/all.test.ts", "lib/index.ts"]);
+  // The barrel sits at the depth of what it forwards, as a re-export does,
+  // and its other re-exports are cut.
+  assert.equal(result.depthOf["lib/index.ts"], 0);
+  assert.equal(result.depthOf["lib/a.test.ts"], 1);
+  assert.deepEqual([...new Set(result.cuts.outbound.map((edge) => edge.to))].sort(), ["lib/b.ts", "lib/c.ts"]);
+  assert.deepEqual(walk(files, ["lib/a.ts"]).included, ["lib/a.ts"]);
+});
+
 test("the files a full budget leaves out are named", () => {
   const result = walk(
     {

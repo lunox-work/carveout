@@ -213,6 +213,14 @@ export interface CutRequest extends SliceRequest {
    * outside. Off by default: the stubs then type-check as the source does.
    */
   readonly widenLiterals?: boolean;
+  /**
+   * Service packages kept real rather than mocked (`--live`): installed and
+   * typed as the repository has them, and the environment the files that
+   * import them read is left out of `carveout.env`, so the shell's values
+   * or the code's own defaults apply. For a package whose tests need the
+   * service itself: a database driver against a local server.
+   */
+  readonly live?: readonly string[];
   readonly log?: (line: string) => void;
 }
 
@@ -248,6 +256,8 @@ export interface CarveoutRecord {
     readonly widenLiterals: boolean;
     /** Absent in records made before tests could be brought along. */
     readonly tests?: boolean;
+    /** Service packages kept real; absent when none. */
+    readonly live?: readonly string[];
   };
   /**
    * The repository's files the cut resolved with, beyond the slice: compiler
@@ -493,10 +503,16 @@ export async function computeCut(
   log(`Read the imports of ${built.files.length} files.`);
   const commitSha = git(repo, ["rev-parse", "HEAD"]);
   const signal = AbortSignal.timeout(15 * 60_000);
+  const live = [...new Set(request.live ?? [])].sort(compare);
   const analysis = await analyseSlice({
     sourceDir: repo,
     graph: built.graph,
-    params: { entryPoints, budget, tests: request.tests === true },
+    params: {
+      entryPoints,
+      budget,
+      tests: request.tests === true,
+      ...(live.length === 0 ? {} : { live }),
+    },
     source: {
       commitSha,
       isDirty: (paths) =>
@@ -515,11 +531,25 @@ export async function computeCut(
         }),
   });
   const { manifest, contract, contractJson } = analysis;
+  // A live package is installed, whatever the default for its service.
+  const choices = {
+    ...request.choices,
+    ...Object.fromEntries(live.map((name) => [name, "approved-package" as const])),
+  };
   const scope = resolveScope({
     manifest,
     contract,
-    ...(request.choices === undefined ? {} : { choices: request.choices }),
+    ...(Object.keys(choices).length === 0 ? {} : { choices }),
   });
+  // The environment the live packages' importers read stays the shell's.
+  const liveFiles = new Set(
+    manifest.externals.packages
+      .filter((item) => live.includes(packageNameOf(item.specifier)))
+      .flatMap((item) => item.files),
+  );
+  const liveEnvironment = manifest.externals.environment
+    .filter((item) => item.files.some((file) => liveFiles.has(file)))
+    .map((item) => item.name);
   // Images, fonts and media are copied byte for byte, beside the sources.
   const binaries = manifest.included
     .map((file) => file.path)
@@ -599,6 +629,7 @@ export async function computeCut(
     ),
     ...(compilerOptions === undefined ? {} : { compilerOptions }),
     ...(coverage === null ? {} : { coverage }),
+    ...(live.length === 0 ? {} : { live, liveEnvironment }),
     keepsImplicitAny: analysis.keepsImplicitAny,
     hasNodeTypes: nodeTypes !== null,
   });
@@ -607,7 +638,7 @@ export async function computeCut(
   const required = new Set(
     manifest.requiredBuildInputs.packages.map((item) => item.name),
   );
-  const asked = Object.entries(request.choices ?? {})
+  const asked = Object.entries(choices)
     .filter(
       ([name, choice]) => choice === "approved-package" && !required.has(name),
     )
@@ -795,6 +826,7 @@ export async function computeCut(
         offline: request.offline === true,
         widenLiterals: request.widenLiterals === true,
         tests: request.tests === true,
+        ...(live.length === 0 ? {} : { live }),
       },
       inputs: resolutionInputs(repo, manifest.requiredBuildInputs.configs),
     },

@@ -127,6 +127,7 @@ export async function statusProject(
       offline: request.offline,
       widenLiterals: request.widenLiterals,
       tests: request.tests === true,
+      ...(request.live === undefined ? {} : { live: request.live }),
     });
   } catch (error) {
     return {

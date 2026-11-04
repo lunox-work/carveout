@@ -171,6 +171,9 @@ export function sliceTests(dir) {
       // What fails npm test besides a test: the coverage gate, or a test
       // the repository's script would not run.
       gateFailed: /coverage does not meet threshold/.test(run.full),
+      // The repository's never-loaded-file guard, held in the slice since
+      // the fixes of 2026-11-04.
+      guardFailed: /never-loaded-file guard/.test(run.full),
       unrun: /so it would not run these/.test(run.full),
       ...(run.ok ? {} : { output: run.output.slice(-3000) }),
     };
@@ -192,8 +195,9 @@ export function verdictOf(baseline, after) {
   const added = Object.keys(now).filter((name) => !(name in before));
   const addedFailing = added.filter((name) => !now[name]);
   return {
-    ok: regressions.length === 0 && addedFailing.length === 0 && after.gateFailed !== true && after.unrun !== true,
+    ok: regressions.length === 0 && addedFailing.length === 0 && after.gateFailed !== true && after.guardFailed !== true && after.unrun !== true,
     ...(after.gateFailed === true ? { gateFailed: true } : {}),
+    ...(after.guardFailed === true ? { guardFailed: true } : {}),
     ...(after.unrun === true ? { unrun: true } : {}),
     regressions,
     added: added.length,
@@ -204,7 +208,7 @@ export function verdictOf(baseline, after) {
 
 /** Hidden tests are run separately by the judge, outside the package's glob. */
 export function hiddenVerdictOf(baseline, after) {
-  return verdictOf(baseline, { ...after, gateFailed: false, unrun: false });
+  return verdictOf(baseline, { ...after, gateFailed: false, guardFailed: false, unrun: false });
 }
 
 /**

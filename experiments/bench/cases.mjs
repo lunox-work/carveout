@@ -2,7 +2,7 @@
 // run.mjs and parity.mjs: a case's base B, its confirmed spec and hidden
 // suite, and one template per case and arm (per CLI build for a slice).
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { HERE, WORK, carveout, checkout, cloneOf, git } from "../lib.mjs";
@@ -44,7 +44,8 @@ export function cutSlice(cli, item, entries, dir) {
   const started = Date.now();
   checkout(repo, base);
   rmSync(dir, { recursive: true, force: true });
-  const cut = carveout(cli, ["cut", ...entries, "--repo", repo, "--depth", "1", "--max-files", "200", "--with-tests", "--out", dir]);
+  const live = liveOf(repo, base, item);
+  const cut = carveout(cli, ["cut", ...entries, "--repo", repo, "--depth", "1", "--max-files", "200", "--with-tests", ...live.flatMap((name) => ["--live", name]), "--out", dir]);
   if (cut.code !== 0 && cut.code !== 2) throw new Error(`${item.slug}: cut failed:\n${cut.stderr}`);
   const cutMs = Date.now() - started;
   // As a person would next: the check, which records the tests that fail
@@ -55,7 +56,23 @@ export function cutSlice(cli, item, entries, dir) {
     throw new Error(`${item.slug}: the slice does not pass its baseline check at B:\n${baseline.output ?? checked.stdout ?? checked.stderr}`);
   execFileSync("sh", ["-c", existsSync(join(dir, "package-lock.json")) ? "npm ci --no-audit --no-fund --loglevel=error" : "npm install --no-audit --no-fund --loglevel=error"], { cwd: dir });
   const record = JSON.parse(readFileSync(join(dir, "carveout.json"), "utf8"));
-  return { base, entries, files: record.manifest.included.length, cutMs, setupMs: Date.now() - started, checked: checked.code === 0, mockFailures: existsSync(join(dir, "carveout", "baseline.json")) ? JSON.parse(readFileSync(join(dir, "carveout", "baseline.json"), "utf8")).failing.length : 0, baseline: { tests: baseline.tests, pass: baseline.pass, fail: baseline.fail } };
+  return { base, entries, live, files: record.manifest.included.length, cutMs, setupMs: Date.now() - started, checked: checked.code === 0, mockFailures: existsSync(join(dir, "carveout", "baseline.json")) ? JSON.parse(readFileSync(join(dir, "carveout", "baseline.json"), "utf8")).failing.length : 0, baseline: { tests: baseline.tests, pass: baseline.pass, fail: baseline.fail } };
+}
+
+/**
+ * The service packages a case's slice keeps real (PLAN-benchmark.md, Phase
+ * 7): a driver the package's own sources or tests import directly, whose
+ * connection they read from the environment with a local default, and
+ * which the judge's host serves as the repository's own test needs. A
+ * package that reaches the driver through a workspace package gets
+ * nothing: the slice mocks that package whatever the driver is. Fixed
+ * before the run.
+ */
+export function liveOf(repo, base, item) {
+  const LIVE = [{ specifier: "postgres", package: "postgres" }];
+  const imports = (specifier) =>
+    spawnSync("git", ["-C", repo, "grep", "-l", "-e", `from "${specifier}"`, base, "--", `${item.package}/src`, `${item.package}/test`], { encoding: "utf8" }).stdout.trim() !== "";
+  return LIVE.filter(({ specifier }) => imports(specifier)).map(({ package: name }) => name);
 }
 
 /** The workdir every run of a case and arm starts from, made once. */

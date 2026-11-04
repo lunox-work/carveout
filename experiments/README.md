@@ -178,6 +178,25 @@ the plan leaves open:
   and baseline stay in the result line under `setup`, and the planning
   session under `plan`.
 
+## Phase 7: the mergeback claim
+
+The rules are in [PLAN-benchmark.md](PLAN-benchmark.md), Phase 7. What
+the judge does differently from 2026-11-04:
+
+- **Live services.** `cutSlice` in `bench/cases.mjs` adds `--live <driver>`
+  for a case whose package imports the driver directly (`liveOf`); the
+  choice is in the result line's `setup`. The host must run the service the
+  repository's own test connects to, or the tests skip in both arms.
+- **The guard.** `sliceTests` reads `npm test`'s never-loaded-file line as
+  `guardFailed`, and `verdictOf` fails on it as it does on the coverage
+  gate; `hiddenVerdictOf` ignores both, as before.
+- **Added modules.** The judged slice's `apply --stubs` now carries a
+  module the change adds past the cut's reach, so "partial apply" means a
+  changed file outside the slice, not an added one.
+- **Analysis.** `bench/analyze.mjs` reports the unsafe count with its
+  one-sided 95% upper bound and the verdict-coverage share beside Phase 2's
+  agreement.
+
 ## Replaying benchmark changes for verdict parity
 
 For new benchmark runs, set `BENCH_TAG` and `BENCH_RESULTS` to isolate the

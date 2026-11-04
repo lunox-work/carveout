@@ -4,9 +4,11 @@
  * `applyPatch` brings a repository patch into a slice: it applies the
  * patch to a scratch clone at the cut's commit, cuts again in memory with
  * the recorded request, and writes the slice's files the patch touched as
- * that cut writes them, imports rewritten. Paths outside the slice and
- * stubs the change would need are reported; nothing else in the folder or
- * its record changes, so `patch` still diffs against the cut's commit.
+ * that cut writes them, imports rewritten. A module the patch adds past
+ * the cut's reach joins the slice as an entry of its own, with its tests.
+ * Paths outside the slice and stubs the change would need are reported;
+ * nothing else in the folder or its record changes, so `patch` still diffs
+ * against the cut's commit.
  *
  * `mergeProject` takes a slice's edits the other way: `patch`, then
  * `git apply --3way` into a checkout the caller names, then a verify
@@ -108,24 +110,33 @@ export async function applyPatch(
       offline: record.request.offline,
       widenLiterals: record.request.widenLiterals,
       tests: record.request.tests === true,
+      ...(record.request.live === undefined ? {} : { live: record.request.live }),
       ...(options.log === undefined ? {} : { log: options.log }),
     };
     const cuts: ComputedCut[] = [await computeCut(request)];
     const reached = (cut: ComputedCut) =>
       new Set(cut.record.manifest.included.map((file) => file.path));
-    // A test the patch adds is reached only from the tests' side: cut again
-    // bringing tests along, with room for them, and take only those.
-    const tests = [...touched.entries()].filter(
-      ([path, status]) => status !== "D" && isTestPath(path) && !reached(cuts[0]!).has(path),
+    // What the patch adds that the entries do not reach is still the
+    // change: a module added past the depth, and the tests of it or of the
+    // slice, which are reached only from the tests' side. Cut again with
+    // the added modules as entries too, bringing tests along, with room for
+    // them, and take only those files from it.
+    const first = reached(cuts[0]!);
+    const beyond = [...touched.entries()].filter(
+      ([path, status]) => status !== "D" && !first.has(path),
     );
-    if (tests.length > 0)
+    const modules = beyond
+      .filter(([path, status]) => status === "A" && !isTestPath(path) && /\.[cm]?[jt]sx?$/.test(path))
+      .map(([path]) => path);
+    if (modules.length > 0 || beyond.some(([path]) => isTestPath(path)))
       cuts.push(
         await computeCut({
           ...request,
+          entryPoints: [...request.entryPoints, ...modules],
           tests: true,
           budget: {
             ...record.request.budget,
-            maxFiles: record.request.budget.maxFiles + tests.length,
+            maxFiles: record.request.budget.maxFiles + beyond.length,
           },
         }),
       );
@@ -144,10 +155,7 @@ export async function applyPatch(
         } else outside.push(path);
         continue;
       }
-      const cut = cuts.find(
-        (candidate, index) =>
-          reached(candidate).has(path) && (index === 0 || isTestPath(path)),
-      );
+      const cut = cuts.find((candidate) => reached(candidate).has(path));
       if (cut === undefined) {
         outside.push(path);
         continue;
