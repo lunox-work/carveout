@@ -1197,7 +1197,44 @@ against Haiku 5.5 `slice-seam` from E6b's rerun of the same 8 cases (CLI
   reaches 22 of 24 at $0.034, so most of that saving is the model's price,
   not the slice's; the slice adds 2 runs out of 24 and costs 18% less per
   accepted run than Haiku `full`.
-- Not a result yet: the two arms ran on different CLIs and harness
-  versions, the harness strip changed between them, and the E6b rerun's
-  Haiku `full` refusals are the artifact. The registered run (Sonnet
-  `full` × 3 on the fixed harness) is pending behind Phase 7's gates.
+- Not a result on its own: the two arms ran on different CLIs and
+  harness versions, the harness strip changed between them, and the E6b
+  rerun's Haiku `full` refusals are the artifact. The registered run is
+  below.
+
+**The registered run.** Sonnet 5.5 `full` × 3 on the 8 cases, spec
+briefs, the shared `full` templates, harness of `4dde419`, 2026-11-04
+22:11 to 22:24 SGT, $3.69. Beside it, E6c's Haiku rows on the same 8
+cases (CLI `1009bdd`, spec briefs, the same harness), so the pair shares
+the harness and the judge. The data is in `results/bench-e8f.jsonl`.
+
+| arm                      | accepted | cost per accepted run | median input | median output | median minutes |
+| ------------------------ | -------: | --------------------: | -----------: | ------------: | -------------: |
+| Sonnet `full` (E8f)      |  24 / 24 |                $0.154 |      107,768 |         4,771 |            0.7 |
+| Haiku `slice-seam` (E6c) |  24 / 24 |                $0.029 |      320,797 |        11,773 |            0.9 |
+| Haiku `full` (E6c)       |  24 / 24 |                $0.023 |      287,052 |        10,525 |            1.0 |
+
+| Bar                                                                     | Result                                | Verdict         |
+| ----------------------------------------------------------------------- | ------------------------------------- | --------------- |
+| Haiku-in-slice within 10 points of Sonnet-in-full (one-sided 95% bound) | 0 points, bound -10.1 (24 of 24 each) | **fail** at 0.1 |
+| Cost per accepted run at least 50% lower                                | 81% lower                             | **pass**        |
+
+- **The bar's first half fails on arithmetic, not on data**: at 24 of 24
+  in both arms the difference is 0 and a one-sided 95% Newcombe bound on
+  24 runs sits at -10.1, a tenth of a point past -10. With 36 runs each
+  it would pass. Read as registered, the bar fails; read as a ceiling
+  effect, the 8 cases cannot separate any two arms (the Phase 5 confound
+  list foresaw this).
+- **The cost half passes, and the control takes it away.** Haiku in the
+  repository is also 24 of 24, at $0.023 per accepted run: 85% below
+  Sonnet. The 81% saving is the model's price; the slice costs 25% more
+  than Haiku `full` on these cases (it reads 12% more input), as E6c
+  found on all 20.
+- **Sonnet reads a third of what Haiku reads** (108k against 287k input)
+  and writes less than half, in 0.7 minutes: the stronger model needs no
+  slice to be frugal.
+
+**What E8f says.** A weaker model in a slice matches a stronger one in
+the repository on this corpus, at a fifth of the cost; so does the weaker
+model in the repository, at less. The slice is not what makes Haiku
+enough here; the corpus is.
