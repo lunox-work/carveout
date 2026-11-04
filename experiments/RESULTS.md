@@ -224,12 +224,12 @@ from `duediligence/evidence/in-repo-e6b/`.
 build-commit and sliced-fixtures fail even with the commit's whole package
 change: both need changes the commit made in other packages.
 
-| Bar                                                         | Result                                   | Verdict  |
-| ----------------------------------------------------------- | ---------------------------------------- | -------- |
-| Round trip byte-identical in at least 90% of in-slice diffs | 50 of 52; 42 of 42 on the usable cases   | **pass** |
-| Every round-tripped patch applies at B                      | 52 of 52                                 | **pass** |
-| In-slice and post-merge verdicts agree in at least 95%      | 28 of 42 usable rows (67%)               | **fail** |
-| No slice-passes, repository-fails case caused by carveout   | 0; the two are coverage (below)          | **pass** |
+| Bar                                                         | Result                                 | Verdict  |
+| ----------------------------------------------------------- | -------------------------------------- | -------- |
+| Round trip byte-identical in at least 90% of in-slice diffs | 50 of 52; 42 of 42 on the usable cases | **pass** |
+| Every round-tripped patch applies at B                      | 52 of 52                               | **pass** |
+| In-slice and post-merge verdicts agree in at least 95%      | 28 of 42 usable rows (67%)             | **fail** |
+| No slice-passes, repository-fails case caused by carveout   | 0; the two are coverage (below)        | **pass** |
 
 - **Slice passes, repository fails (2).** step-holds/seam as before, and
   second-atlassian/diff: the commit adds `src/jira/state.ts`, which the
@@ -678,6 +678,7 @@ for `slice-plan`, unchanged in direction.
 - **The lever is the slice's baseline, not the cut.** Phase 7's `--live`
   keeps the service real, so the api and db slices start green; that is
   the next run's question for every slice arm.
+
 ## Exploratory Codex pilot
 
 The separate procedure is in [PLAN-codex.md](PLAN-codex.md). This is not
@@ -686,12 +687,12 @@ with Codex CLI `0.164.0-alpha.11.1`, high reasoning effort, and frozen
 carveout `81237de+dirty dist:3084ea8f01c0`. Raw results are in
 `results/bench-codex-pilot-v2.jsonl`.
 
-| Case | Arm | Repository verdict | In-slice verdict | Total input tokens | Output tokens | Minutes |
-| --- | --- | --- | --- | ---: | ---: | ---: |
-| handles | full | accepted | — | 278,529 | 5,591 | 1.90 |
-| handles | slice-seam | accepted | pass | 185,835 | 4,985 | 1.89 |
-| jira-spec | full | accepted | — | 490,507 | 11,629 | 4.47 |
-| jira-spec | slice-seam | accepted | unavailable | 885,904 | 15,243 | 6.60 |
+| Case      | Arm        | Repository verdict | In-slice verdict | Total input tokens | Output tokens | Minutes |
+| --------- | ---------- | ------------------ | ---------------- | -----------------: | ------------: | ------: |
+| handles   | full       | accepted           | —                |            278,529 |         5,591 |    1.90 |
+| handles   | slice-seam | accepted           | pass             |            185,835 |         4,985 |    1.89 |
+| jira-spec | full       | accepted           | —                |            490,507 |        11,629 |    4.47 |
+| jira-spec | slice-seam | accepted           | unavailable      |            885,904 |        15,243 |    6.60 |
 
 The slice used 33.3% fewer input tokens on handles and 80.6% more on
 jira-spec. One run per arm and two cases are too few for a reliability or
@@ -728,11 +729,11 @@ The saved E6b and E6a slice-arm changes and each case's commit, replayed
 into a clean cut at B and judged there, 228 replays (176 of saved
 changes, 52 of commits). Postgres served `--live` for `packages/db`.
 
-| Bar                                                     | Result                                                                 | Verdict  |
-| ------------------------------------------------------- | ---------------------------------------------------------------------- | -------- |
-| Gate: zero unsafe rows among the comparable ones        | 2 of 163 (1.2%, one-sided 95% upper bound 3.9%)                        | **fail** |
-| Verdict coverage at least 90% of judged slice rows      | 163 of 176 (92.6%)                                                     | pass     |
-| Phase 2's agreement, reported                           | 105 both pass, 50 both fail, 71 safe disagreements, 2 unsafe           |          |
+| Bar                                                | Result                                                       | Verdict  |
+| -------------------------------------------------- | ------------------------------------------------------------ | -------- |
+| Gate: zero unsafe rows among the comparable ones   | 2 of 163 (1.2%, one-sided 95% upper bound 3.9%)              | **fail** |
+| Verdict coverage at least 90% of judged slice rows | 163 of 176 (92.6%)                                           | pass     |
+| Phase 2's agreement, reported                      | 105 both pass, 50 both fail, 71 safe disagreements, 2 unsafe |          |
 
 - **The 2 unsafe rows are a bench artifact, not a carveout gap.**
   categories, Sonnet `slice-seam` runs 1 and 2 of E6a: the rows' verdict
@@ -807,13 +808,13 @@ build in 44, where the previous CLI had 42 of 42 round trips.
 The CLI E6c runs on. E5 on every case, both modes; then the parity
 replay a fourth time.
 
-| Bar                                                           | Result                                                              | Verdict  |
-| ------------------------------------------------------------- | ------------------------------------------------------------------- | -------- |
-| E5: round trip byte-identical in at least 90% of in-slice diffs | 49 of 52; 42 of 42 on the usable cases                              | **pass** |
-| E5: every round-tripped patch applies at B                    | 52 of 52                                                            | **pass** |
-| E5: in-slice and post-merge verdicts agree in at least 95%    | 39 of 52; 31 of 42 usable (74%)                                     | **fail** |
-| Unsafe direction at most 2% of rows with an in-slice verdict  | E5: 0 of 40 usable full applies; parity: 0 of 159 (upper bound 1.7%) | **pass** |
-| Verdict coverage at least 90%                                 | parity: 159 of 176 (90.3%)                                          | **pass** |
+| Bar                                                             | Result                                                               | Verdict  |
+| --------------------------------------------------------------- | -------------------------------------------------------------------- | -------- |
+| E5: round trip byte-identical in at least 90% of in-slice diffs | 49 of 52; 42 of 42 on the usable cases                               | **pass** |
+| E5: every round-tripped patch applies at B                      | 52 of 52                                                             | **pass** |
+| E5: in-slice and post-merge verdicts agree in at least 95%      | 39 of 52; 31 of 42 usable (74%)                                      | **fail** |
+| Unsafe direction at most 2% of rows with an in-slice verdict    | E5: 0 of 40 usable full applies; parity: 0 of 159 (upper bound 1.7%) | **pass** |
+| Verdict coverage at least 90%                                   | parity: 159 of 176 (90.3%)                                           | **pass** |
 
 - **Parity is row for row what the third round was**: 0 rows changed.
   The apply fix changes nothing for a change inside one package.
@@ -849,6 +850,100 @@ replay a fourth time.
 - **Templates.** limit-jobs, setup-stage and touched-repos have none, as
   before: the `never[]` from the implicit-any relax and the `NodeNext`
   web test.
+
+### E6c: the E6b corpus on the gated CLI
+
+Phase 7's third step: E6b's 20 cases × `full`, `slice-seam` and
+`slice-diff` × 3 runs on Haiku 5.5, on the CLI that passed both gates;
+Phase 5's bars plus the two mergeback bars, read with `bench/analyze.mjs`
+on `results/bench-e6c.jsonl`.
+
+- **Runs.** CLI `1009bdd dist:12be6e03d313`, the harness of `87cbcff`,
+  2026-11-04 15:30 to 19:50 SGT, $6.95 over the three arms (`full` $1.90,
+  `slice-seam` $2.63, `slice-diff` $2.43). The `full` templates are
+  E6b's (`BENCH_FULL_TEMPLATES`); the slice templates were cut fresh.
+
+| arm          | accepted | other verdicts            |
+| ------------ | -------: | ------------------------- |
+| `full`       |  52 / 60 | rejected 5, functional 3  |
+| `slice-seam` |  46 / 60 | rejected 11, functional 3 |
+| `slice-diff` |  49 / 60 | rejected 8, functional 3  |
+
+| Bar                                                          | `slice-seam`                                   | `slice-diff`                                   |
+| ------------------------------------------------------------ | ---------------------------------------------- | ---------------------------------------------- |
+| Non-inferiority, one-sided 95% lower bound above -10         | -10.0 points, bound -21.5: **fail**            | -5.0 points, bound -16.1: **fail**             |
+| Slice passed, repository failed, at most 5%                  | 3 of 60 (5.0%): pass at the bar; 4 unavailable | 3 of 60 (5.0%): pass at the bar; 4 unavailable |
+| Total input at least 30% lower (median of cases)             | 23.9% **higher**; lower in 3 of 20: **fail**   | 16.8% **higher**; lower in 6 of 20: **fail**   |
+| Cost per accepted run at least 30% lower                     | 24.0% **higher**; lower in 2 of 17: **fail**   | 14.2% **higher**; lower in 2 of 17: **fail**   |
+| Unsafe direction at most 2% of rows with an in-slice verdict | 3 of 56 (5.4%, upper bound 12.7%): **fail**    | 3 of 56 (5.4%, upper bound 12.7%): **fail**    |
+| Verdict coverage at least 90%                                | 56 of 60 (93.3%): pass                         | 56 of 60 (93.3%): pass                         |
+
+**Every exception, classified by hand:**
+
+- **The refusals are gone.** 0 of 60 `full` runs refused (E6b: 9); the
+  `AGENTS.md` strip holds. `full` is 52 of 60, seven above E6b, and that
+  alone turns E6b's non-inferiority pass, which rested on the artifact,
+  into the fail above.
+- **The unsafe rows are one case and one rule.** workspace-stubs: `full`
+  3 of 3, both slice arms 0 of 3, every slice run passing in the slice
+  and failing two hidden tests after the merge. The change is E6b's:
+  the agent wrote `declare module "zod*";` where the hidden
+  `sandbox.test.ts` expects the wildcard and the bare form both. E6b
+  blamed the barrel rule, and `0782d13` carried tests that reach the
+  slice through a barrel: `slice.test.ts` came along, `sandbox.test.ts`
+  did not. A second rule left it behind: the test has a computed import
+  (`await import(pathToFileURL(file).href)`, a file it writes itself),
+  and the walk read any non-external dependency as a path no slice can
+  carry, then reported the test as running on neither runner. The parity
+  gate cannot see this: a replayed commit satisfies the test it does not
+  carry, and only a wrong change finds it. Fixed after the run in
+  `18bdebd`: a computed import no longer leaves a test behind. On that
+  build the plan carries `sandbox.test.ts` (8 tests, 17 files); at the
+  slice's baseline 18 of its 25 tests pass, among them the one that
+  catches this change, so a slice agent sees it and the judge counts it.
+  Not re-run; E8c runs on the fixed CLI.
+- **jira-connections, 0 of 9**: the spec-suite defect from E6b (the key
+  fingerprint no spec gives), every arm alike.
+- **generate-id, 0 of 9, all `functional`**: the coverage guard the slice
+  holds since `0782d13` fails the same way in every arm; E6b's `full`
+  passed it twice. Agreement, no slice gap.
+- **jira-boards, 4 runs** (`full` 1, `slice-seam` 2, `slice-diff` 1): the
+  hidden store test does not compile against the agent's narrower type
+  (`object | undefined`, given `null` and `unknown`). The slice's build
+  fails the same way: agreement.
+- **oauth-membership, `slice-seam` 1 of 3.** Run 2 is a real failure, a
+  regression in the slice and a hidden test after the merge. Run 3 is a
+  limit: the agent wrote a test helper, `jira-doubles.ts`, that imports
+  the slice's `carveout/` harness; the patch left it out as slice-only
+  and said so, and the new test it serves does not compile in the
+  repository. No in-slice verdict (partial apply). `slice-diff` run 3: 48
+  hidden tests fail in the slice and 4 after the merge, agreement.
+- **Real failures**: second-atlassian `full` run 2 (3 boundary tests on
+  environment config), provenance-doc `slice-seam` run 1 (62 hidden tests,
+  in both places).
+- **4 rows without an in-slice verdict per arm**: jira-spec's hidden
+  `hash.test.ts` has a computed import that `apply` leaves outside (3 in
+  each arm, as in the gates), plus the two partial applies above.
+- **Safe direction, 16 (`slice-seam`) and 17 (`slice-diff`) rows**:
+  identicon, github-app, jira-contract, image-digest, aws-deploy and
+  oauth-membership fail a hidden test that exercises a module or service
+  the slice mocks and pass it after the merge, as before.
+
+**What E6c says.**
+
+- The third corpus run gives the same answer on tokens: the slice reads
+  more than the whole repository in 17 of 20 cases (`slice-seam`) and
+  14 of 20 (`slice-diff`), medians 24% and 17% more input. Phase 5's
+  efficiency bars have failed on every corpus and CLI tried.
+- **The mergeback bar fails on model runs where the gate passed.** The
+  gate replays commits, which pass every test, so a test the slice
+  leaves behind costs nothing there; a model's wrong change is what
+  finds it, 6 of 6 times in one case. The gate is necessary, not
+  sufficient: the 2% claim needs model-written changes, and this run is
+  the first measurement of it: 5.4% on 56 rows, one rule, now fixed.
+- With the refusals gone the slice arms sit below `full` (-10 and -5
+  points) and the bound fails. Without workspace-stubs: `full` 49 of 57,
+  `slice-seam` 46 of 57, `slice-diff` 49 of 57.
 
 ## Phase 8: where else a slice pays
 
@@ -915,36 +1010,36 @@ of the package. `full` is the repository's sources at B; the slice is the
 E6b `slice-seam` template's sources (CLI `ad8b99c8bd40`). Data in
 `results/e8-setup-time.jsonl`.
 
-| case             | `full` to first test | `slice` to first test | `full` node_modules | `slice` node_modules |
-| ---------------- | -------------------: | --------------------: | ------------------: | -------------------: |
-| handles          |                4.4 s |                 1.1 s |              347 MB |                33 MB |
-| identicon        |                3.8 s |                 1.2 s |              347 MB |                41 MB |
-| step-holds       |                5.3 s |                 1.4 s |              706 MB |                33 MB |
-| ticket-content   |                3.7 s |                 1.2 s |              437 MB |                33 MB |
-| analysis-params  |                3.6 s |                 1.2 s |              400 MB |                33 MB |
-| jira-spec        |                3.5 s |                14.9 s |              347 MB |                41 MB |
-| categories       |                4.1 s |                 1.1 s |              400 MB |                33 MB |
-| context-sources  |                4.9 s |                 1.4 s |              705 MB |                33 MB |
-| github-app       |                4.2 s |                 1.7 s |              400 MB |                41 MB |
-| jira-pages       |                4.4 s |                 1.5 s |              359 MB |                49 MB |
-| oauth-membership |                4.5 s |                 1.8 s |              347 MB |                84 MB |
-| second-atlassian |                4.8 s |                 2.4 s |              347 MB |                84 MB |
-| jira-contract    |                3.6 s |                 1.2 s |              347 MB |                41 MB |
-| provenance-doc   |                3.0 s |                 1.3 s |              267 MB |                41 MB |
-| image-digest     |                3.7 s |                 2.3 s |              267 MB |                85 MB |
-| aws-deploy       |                3.9 s |                 1.6 s |              267 MB |                84 MB |
-| workspace-stubs  |                5.6 s |                 1.2 s |              695 MB |                33 MB |
-| jira-boards †    |                5.7 s |                 2.1 s |              347 MB |                50 MB |
-| jira-connections † |              4.4 s |                 2.0 s |              347 MB |                50 MB |
-| generate-id †    |                4.5 s |                 2.0 s |              347 MB |                50 MB |
+| case               | `full` to first test | `slice` to first test | `full` node_modules | `slice` node_modules |
+| ------------------ | -------------------: | --------------------: | ------------------: | -------------------: |
+| handles            |                4.4 s |                 1.1 s |              347 MB |                33 MB |
+| identicon          |                3.8 s |                 1.2 s |              347 MB |                41 MB |
+| step-holds         |                5.3 s |                 1.4 s |              706 MB |                33 MB |
+| ticket-content     |                3.7 s |                 1.2 s |              437 MB |                33 MB |
+| analysis-params    |                3.6 s |                 1.2 s |              400 MB |                33 MB |
+| jira-spec          |                3.5 s |                14.9 s |              347 MB |                41 MB |
+| categories         |                4.1 s |                 1.1 s |              400 MB |                33 MB |
+| context-sources    |                4.9 s |                 1.4 s |              705 MB |                33 MB |
+| github-app         |                4.2 s |                 1.7 s |              400 MB |                41 MB |
+| jira-pages         |                4.4 s |                 1.5 s |              359 MB |                49 MB |
+| oauth-membership   |                4.5 s |                 1.8 s |              347 MB |                84 MB |
+| second-atlassian   |                4.8 s |                 2.4 s |              347 MB |                84 MB |
+| jira-contract      |                3.6 s |                 1.2 s |              347 MB |                41 MB |
+| provenance-doc     |                3.0 s |                 1.3 s |              267 MB |                41 MB |
+| image-digest       |                3.7 s |                 2.3 s |              267 MB |                85 MB |
+| aws-deploy         |                3.9 s |                 1.6 s |              267 MB |                84 MB |
+| workspace-stubs    |                5.6 s |                 1.2 s |              695 MB |                33 MB |
+| jira-boards †      |                5.7 s |                 2.1 s |              347 MB |                50 MB |
+| jira-connections † |                4.4 s |                 2.0 s |              347 MB |                50 MB |
+| generate-id †      |                4.5 s |                 2.0 s |              347 MB |                50 MB |
 
 † Measured on CLI `12be6e03d313` after the fix below, cut with
 `--live postgres`.
 
-| Bar                                                | Result                                                | Verdict  |
-| -------------------------------------------------- | ----------------------------------------------------- | -------- |
-| Time to the first test run at least 50% lower      | median 4.3 s against 1.5 s; median ratio 0.35; lower in 19 of 20 | **pass** |
-| `node_modules` at least 50% smaller                | median 347 MB against 41 MB; median ratio 0.12; smaller in 20 of 20 | **pass** |
+| Bar                                           | Result                                                              | Verdict  |
+| --------------------------------------------- | ------------------------------------------------------------------- | -------- |
+| Time to the first test run at least 50% lower | median 4.3 s against 1.5 s; median ratio 0.35; lower in 19 of 20    | **pass** |
+| `node_modules` at least 50% smaller           | median 347 MB against 41 MB; median ratio 0.12; smaller in 20 of 20 | **pass** |
 
 - **The absolute numbers are small.** sandbox-factory installs from a warm
   cache in 2 to 4 seconds and its workspace builds in about a second, so
@@ -997,23 +1092,23 @@ cut (the agent's view and the hidden suite, two runs of the slice's
 its workspace dependencies prebuilt), both timed. The 12 cases with a
 commit replay and a repository time:
 
-| case             | slice judge | repository judge | verdicts |
-| ---------------- | ----------: | ---------------: | -------- |
-| categories       |       1.9 s |            3.6 s | agree    |
-| handles          |       3.2 s |            3.9 s | agree    |
-| provenance-doc   |       3.8 s |            3.4 s | agree    |
-| jira-contract    |       4.0 s |            3.2 s | agree    |
-| analysis-params  |       4.5 s |            4.2 s | agree    |
-| generate-id      |       4.7 s |            5.0 s | agree    |
-| context-sources  |       7.0 s |            5.8 s | agree    |
-| second-atlassian |      13.7 s |            3.0 s | agree    |
-| identicon        |       5.1 s |            4.7 s | disagree (mocked schema) |
-| github-app       |       6.6 s |            4.8 s | disagree (mocked schema) |
-| oauth-membership |       6.7 s |            4.2 s | disagree (agent test)    |
+| case             | slice judge | repository judge | verdicts                  |
+| ---------------- | ----------: | ---------------: | ------------------------- |
+| categories       |       1.9 s |            3.6 s | agree                     |
+| handles          |       3.2 s |            3.9 s | agree                     |
+| provenance-doc   |       3.8 s |            3.4 s | agree                     |
+| jira-contract    |       4.0 s |            3.2 s | agree                     |
+| analysis-params  |       4.5 s |            4.2 s | agree                     |
+| generate-id      |       4.7 s |            5.0 s | agree                     |
+| context-sources  |       7.0 s |            5.8 s | agree                     |
+| second-atlassian |      13.7 s |            3.0 s | agree                     |
+| identicon        |       5.1 s |            4.7 s | disagree (mocked schema)  |
+| github-app       |       6.6 s |            4.8 s | disagree (mocked schema)  |
+| oauth-membership |       6.7 s |            4.2 s | disagree (agent test)     |
 | image-digest     |      12.1 s |            3.0 s | disagree (mocked service) |
 
-| Bar                                                          | Result                                        | Verdict  |
-| ------------------------------------------------------------ | --------------------------------------------- | -------- |
+| Bar                                                          | Result                                                            | Verdict  |
+| ------------------------------------------------------------ | ----------------------------------------------------------------- | -------- |
 | Median judge time at least 50% lower in the slice (agreeing) | 4.2 s against 3.8 s; median ratio 1.08 (third round: 4.3 s, 1.11) | **fail** |
 
 - The slice judge builds the slice with `tsc` twice and runs its tests
