@@ -240,6 +240,11 @@ export interface CarveoutRecord {
   readonly importRewrites: readonly ImportRewrite[];
   /** Files carveout wrote, by path, with their hashes; never the slice's. */
   readonly generated: readonly { path: string; sha256: string }[];
+  /**
+   * The slice's own files as written, imports rewritten, with their hashes:
+   * what an edit since the cut is measured against (the coverage gate).
+   */
+  readonly copied?: readonly { path: string; sha256: string }[];
   readonly lockfile: boolean;
   readonly blockers: readonly {
     readonly code: string;
@@ -914,7 +919,11 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
   ]
     .map((file) => ({ path: file.path, sha256: sha256(file.text) }))
     .sort((a, b) => compare(a.path, b.path));
-  const record: CarveoutRecord = { ...computed, generated, lockfile };
+  const copied = files
+    .filter((file) => file.class === "source")
+    .map((file) => ({ path: file.path, sha256: sha256(file.text) }))
+    .sort((a, b) => compare(a.path, b.path));
+  const record: CarveoutRecord = { ...computed, generated, copied, lockfile };
   await writeFile(
     join(out, RECORD_PATH),
     `${JSON.stringify(record, null, 2)}\n`,
