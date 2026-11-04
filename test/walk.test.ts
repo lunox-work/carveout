@@ -12,6 +12,8 @@ import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { buildGraph, walkGraph } from "../src/graph.js";
 import { undoRewrites } from "../src/carve.js";
+import { specifiersOf } from "../src/imports.js";
+import { serviceOf } from "../src/slice/externals.js";
 import { reach } from "../src/slice/reach.js";
 
 const roots: string[] = [];
@@ -174,6 +176,34 @@ test("the same graph in any order gives the same slice", () => {
   };
   const budget = { maxFiles: 40, maxDepth: 2 };
   assert.deepEqual(reach(shuffled, ["app.ts"], budget), reach(graph, ["app.ts"], budget));
+});
+
+test("a doc comment that says import does not swallow the import below it", () => {
+  const text = [
+    "/**",
+    " * Callers import this app, and the contract has to sit where both can reach it.",
+    " * `routes.ts` and its tests keep importing from",
+    " * `./store.js` as they always have.",
+    " */",
+    "",
+    'import { normalizeTitle } from "sandbox-factory";',
+    "import {",
+    "  NotFoundError,",
+    "  type TodoStore,",
+    '} from "@sandbox-factory/db";',
+    "",
+  ].join("\n");
+  assert.deepEqual([...specifiersOf(text)], ["sandbox-factory", "@sandbox-factory/db"]);
+  const rewrites = [{ file: "store.ts", from: "sandbox-factory", to: "../../../packages/core/src/index.js" }];
+  const rewritten = text.replace('"sandbox-factory"', '"../../../packages/core/src/index.js"');
+  assert.equal(undoRewrites(rewritten, rewrites), text);
+});
+
+test("an ORM over a mocked driver is installed, not mocked", () => {
+  assert.equal(serviceOf("drizzle-orm"), null);
+  assert.equal(serviceOf("drizzle-orm/pg-core"), null);
+  assert.equal(serviceOf("postgres"), "postgres");
+  assert.equal(serviceOf("@prisma/client"), "orm");
 });
 
 test("a module named to a test runner is rewritten and restored like an import", () => {

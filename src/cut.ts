@@ -492,8 +492,15 @@ export async function analyseSlice(input: {
           spec: lockedSpec(input.sourceDir, name) ?? version,
         });
     };
+    // A service package the folder will mock is left untyped here too, so
+    // the fixture is checked against the `any` the folder gives it: typed,
+    // a callback passed to it would pass the implicit-any probe below and
+    // fail the folder's build.
+    const services = new Set(
+      externals.packages.map((item) => packageNameOf(item.specifier)),
+    );
     for (const name of namesOf(files)) {
-      if (workspaces.has(name)) continue;
+      if (workspaces.has(name) || services.has(name)) continue;
       const from = importerOf(files, name);
       await request(name, from);
       await request(typesPackageOf(name), from);

@@ -341,8 +341,11 @@ export function runtimeKindOf(
  * or a resolver (`vi.mock`, `jest.requireActual`, `require.resolve`).
  * Rewrites and their undoing both match with it.
  */
+// The import clause may span lines, but never a line that opens a comment:
+// a doc comment that says "import" would otherwise run on to the first real
+// import below it and swallow it, so neither cut nor patch would rewrite it.
 export const IMPORT_LITERAL =
-  /((?:\bimport|\bexport)\s+(?:type\s+)?(?:[^'";\s][^'";]*?\sfrom\s+)?|\brequire\(\s*|\bimport\(\s*|\b(?:vi|jest)\.(?:mock|doMock|unmock|doUnmock|dontMock|importActual|importMock|requireActual|requireMock|createMockFromModule)\(\s*|\brequire\.resolve\(\s*|\bimport\.meta\.resolve\(\s*)(['"])([^'"\n]+)\2/g;
+  /((?:\bimport|\bexport)\s+(?:type\s+)?(?:[^'";\s](?:[^'";\n]|\n(?![ \t]*(?:\*|\/\/)))*?\sfrom\s+)?|\brequire\(\s*|\bimport\(\s*|\b(?:vi|jest)\.(?:mock|doMock|unmock|doUnmock|dontMock|importActual|importMock|requireActual|requireMock|createMockFromModule)\(\s*|\brequire\.resolve\(\s*|\bimport\.meta\.resolve\(\s*)(['"])([^'"\n]+)\2/g;
 const NAMED_IMPORT =
   /\bimport\s+(type\s+)?(?:[\w$]+\s*,\s*)?\{([^}]*)\}\s*from\s*['"]([^'"\n]+)['"]/g;
 

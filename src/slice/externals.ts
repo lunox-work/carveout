@@ -42,9 +42,12 @@ export const EXTERNAL_SERVICE_RULES: readonly ExternalServiceRule[] = [
   { service: "sqlite", specifiers: ["better-sqlite3", "sqlite3"] },
   { service: "mongodb", specifiers: ["mongodb", "mongoose", "pymongo"] },
   { service: "redis", specifiers: ["ioredis", "redis"] },
+  // Not drizzle-orm: its I/O goes through a driver mocked above (postgres,
+  // pg, mysql2, better-sqlite3), and its schema builders carry the types a
+  // schema module's own code needs, which a mock package cannot.
   {
     service: "orm",
-    specifiers: ["@prisma/client", "sqlalchemy", "drizzle-orm"],
+    specifiers: ["@prisma/client", "sqlalchemy"],
   },
   {
     service: "http",
