@@ -781,6 +781,60 @@ copied-file hashes and the stale-artifact rule.
 - **The gate holds.** No change that passed a slice on this CLI failed
   the repository, over 159 replays of 20 cases. The 2% bar is met at its
   only reachable value, zero, as Phase 7 said it would be.
+
+### Gate 2, first round: E5 on CLI `33dce74 dist:a9b3eedbe082`
+
+Every case of `e5-cases.json`, seam and diff, with `--live postgres` for
+`packages/db`. The round trip failed in 35 of 52 rows and the in-slice
+build in 44, where the previous CLI had 42 of 42 round trips.
+
+- **One defect, in Phase 7's fourth fix.** `apply` cuts again with the
+  modules a change adds past the cut's reach as entries, so a judge's
+  clean cut reaches them. It took them from any package: E5 applies the
+  whole commit, and a `packages/core` slice gained the commit's
+  `apps/web`, `apps/api` and `packages/db` additions, which built against
+  mocks they were never cut for (`organizations.ts`: implicit `any` on
+  every row) and came back with their imports rewritten across packages.
+  Every file that differed in the round trip was in another package; the
+  same-package additions the fix was for (ticket-content's `ticket.ts`)
+  came back byte-identical. Fixed: a module another package gains is
+  outside again, as before `0782d13`. The bench never saw this because
+  its changes stay inside one package.
+- Both gates run again on the fixed CLI, below.
+
+### Both gates on CLI `1009bdd dist:12be6e03d313`
+
+The CLI E6c runs on. E5 on every case, both modes; then the parity
+replay a fourth time.
+
+| Bar                                                           | Result                                                              | Verdict  |
+| ------------------------------------------------------------- | ------------------------------------------------------------------- | -------- |
+| E5: round trip byte-identical in at least 90% of in-slice diffs | 49 of 52; 42 of 42 on the usable cases                              | **pass** |
+| E5: every round-tripped patch applies at B                    | 52 of 52                                                            | **pass** |
+| E5: in-slice and post-merge verdicts agree in at least 95%    | 39 of 52; 31 of 42 usable (74%)                                     | **fail** |
+| Unsafe direction at most 2% of rows with an in-slice verdict  | E5: 0 of 40 usable full applies; parity: 0 of 159 (upper bound 1.7%) | **pass** |
+| Verdict coverage at least 90%                                 | parity: 159 of 176 (90.3%)                                          | **pass** |
+
+- **Parity is row for row what the third round was**: 0 rows changed.
+  The apply fix changes nothing for a change inside one package.
+- **E5's agreement bar still fails, in the safe direction only.** The 11
+  disagreements on usable cases: step-holds/seam (a partial apply, its
+  two outside files, as before: not an in-slice verdict); jira-boards,
+  jira-connections, jira-pages and generate-id in both modes, whose
+  tests fail at the slice's baseline; oauth-membership (`apps/api`,
+  through the mocked `db` package, as the rule foresaw); touched-repos
+  (the `never[]` build, a known limit). The 3 round-trip misses are the
+  unusable setup-stage and limit-jobs.
+- **`--live postgres` did not turn the db slices green, and the reason
+  is a new limit.** The driver is real and the tests reach the server
+  (they create their scratch databases), then fail on
+  `Can't find meta/_journal.json`: `packages/db`'s migrations live in
+  `packages/db/drizzle/`, named to drizzle's `migrate` by the bare
+  string default `"drizzle"`, which the walk cannot see. The slice has
+  no migrations folder, so 89 to 103 tests fail at baseline exactly as
+  they did on the mock. A folder a package reads by a configured name
+  needs an explicit `--copy <dir>` or the like; not in this round. The
+  db cases carry a red baseline into E6c, in the safe direction.
 - **The 13 rows without an in-slice verdict**: jira-spec's hidden
   `hash.test.ts` has a computed dynamic import, which `apply` leaves
   outside by rule (9 rows, 2 more with no saved patch); one build failure
@@ -880,11 +934,17 @@ E6b `slice-seam` template's sources (CLI `ad8b99c8bd40`). Data in
 | image-digest     |                3.7 s |                 2.3 s |              267 MB |                85 MB |
 | aws-deploy       |                3.9 s |                 1.6 s |              267 MB |                84 MB |
 | workspace-stubs  |                5.6 s |                 1.2 s |              695 MB |                33 MB |
+| jira-boards †    |                5.7 s |                 2.1 s |              347 MB |                50 MB |
+| jira-connections † |              4.4 s |                 2.0 s |              347 MB |                50 MB |
+| generate-id †    |                4.5 s |                 2.0 s |              347 MB |                50 MB |
+
+† Measured on CLI `12be6e03d313` after the fix below, cut with
+`--live postgres`.
 
 | Bar                                                | Result                                                | Verdict  |
 | -------------------------------------------------- | ----------------------------------------------------- | -------- |
-| Time to the first test run at least 50% lower      | median 4.1 s against 1.4 s; median ratio 0.33; lower in 16 of 17 | **pass** |
-| `node_modules` at least 50% smaller                | median 347 MB against 41 MB; median ratio 0.12; smaller in 17 of 17 | **pass** |
+| Time to the first test run at least 50% lower      | median 4.3 s against 1.5 s; median ratio 0.35; lower in 19 of 20 | **pass** |
+| `node_modules` at least 50% smaller                | median 347 MB against 41 MB; median ratio 0.12; smaller in 20 of 20 | **pass** |
 
 - **The absolute numbers are small.** sandbox-factory installs from a warm
   cache in 2 to 4 seconds and its workspace builds in about a second, so
@@ -901,7 +961,8 @@ E6b `slice-seam` template's sources (CLI `ad8b99c8bd40`). Data in
   installed `drizzle-orm` has a peer range `postgres >=3` that no 0.0.0
   satisfies. npm 11, which cut the templates, had let it through. Fixed
   in `87d8e78`: a mock carries the floor of its importer's pin (3.4.5
-  here). Their rows are to be re-measured on that CLI.
+  here). Re-measured on the gated CLI, the three install in 2 seconds at
+  50 MB, and the bars hold on all 20 cases.
 
 ### E8d: scope from the ticket
 

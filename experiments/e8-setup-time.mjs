@@ -21,6 +21,8 @@ const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) +
 const TAG = opt("--tag", "e6b");
 const CLI = opt("--cli", "ad8b99c8bd40");
 const only = args.filter((a) => !a.startsWith("--") && a !== TAG && a !== CLI);
+// --force: measure a case again (a later CLI); its earlier line stays.
+const force = args.includes("--force");
 const RESULTS = join(HERE, "results", `bench-${TAG}.jsonl`);
 const OUT = join(HERE, "results", "e8-setup-time.jsonl");
 const TEMPLATES = join(HERE, "work", "bench", `templates-${TAG}`);
@@ -45,7 +47,7 @@ const kb = (path) => (existsSync(path) ? Number(execFileSync("du", ["-sk", path]
 const files = (path) => (existsSync(path) ? Number(execFileSync("sh", ["-c", `find '${path}' -type f | wc -l`], { encoding: "utf8" }).trim()) : 0);
 
 for (const slug of slugs) {
-  if (done.has(slug)) continue;
+  if (done.has(slug) && !force) continue;
   const item = CASES.find((c) => c.slug === slug);
   const sliceTemplate = join(TEMPLATES, CLI, slug, "slice-seam");
   if (!item || !existsSync(sliceTemplate)) {
