@@ -897,8 +897,12 @@ on `results/bench-e6c.jsonl`.
   carry, then reported the test as running on neither runner. The parity
   gate cannot see this: a replayed commit satisfies the test it does not
   carry, and only a wrong change finds it. Fixed after the run in
-  `18bdebd`: a computed import no longer leaves a test behind. On that
-  build the plan carries `sandbox.test.ts` (8 tests, 17 files); at the
+  `18bdebd`: a computed import no longer leaves a test behind, narrowed
+  in `2c5864b` to a test whose every other reach the slice holds (the
+  first form carried `build-info-resolver.test.ts`, whose `typeof import`
+  names a root script no slice cuts, and three templates failed their
+  baseline check at B). On that build the plan carries `sandbox.test.ts`
+  (8 tests, 17 files); at the
   slice's baseline 18 of its 25 tests pass, among them the one that
   catches this change, so a slice agent sees it and the judge counts it.
   Not re-run; E8c runs on the fixed CLI.
