@@ -70,6 +70,16 @@ export interface Applied {
  * the folder. `stubs` also writes the stubs and mocks the change needs, and
  * records them as generated.
  */
+/** The nearest ancestor of `path` with a package.json, relative to the repository; "" at the root. */
+function packageDirOf(repo: string, path: string): string {
+  let dir = dirname(path);
+  while (dir !== "." && dir !== "") {
+    if (existsSync(join(repo, dir, "package.json"))) return dir;
+    dir = dirname(dir);
+  }
+  return "";
+}
+
 export async function applyPatch(
   dir: string,
   patchText: string,
@@ -125,10 +135,16 @@ export async function applyPatch(
     const beyond = [...touched.entries()].filter(
       ([path, status]) => status !== "D" && !first.has(path),
     );
+    // Only within the packages the slice holds: a module another package
+    // gains is outside, as before. Taken in, it builds against mocks it
+    // was never cut for and its imports come back rewritten (Phase 7's
+    // E5: every cross-package commit failed the round trip).
+    const packages = new Set([...first].map((path) => packageDirOf(repo, path)));
+    const within = (path: string) => packages.has(packageDirOf(repo, path));
     const modules = beyond
-      .filter(([path, status]) => status === "A" && !isTestPath(path) && /\.[cm]?[jt]sx?$/.test(path))
+      .filter(([path, status]) => status === "A" && !isTestPath(path) && /\.[cm]?[jt]sx?$/.test(path) && within(path))
       .map(([path]) => path);
-    if (modules.length > 0 || beyond.some(([path]) => isTestPath(path)))
+    if (modules.length > 0 || beyond.some(([path]) => isTestPath(path) && within(path)))
       cuts.push(
         await computeCut({
           ...request,
