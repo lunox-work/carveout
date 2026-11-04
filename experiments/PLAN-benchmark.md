@@ -364,6 +364,89 @@ the slice's. The choice is recorded per case in the result line's
    meet the 2% bar only at zero unsafe rows (upper bound 2.5%); that is
    reported as such, not rounded to a pass.
 
+## Phase 8: where else a slice pays (registered 2026-11-04, before any data)
+
+E6a, E6b and E7 measured one benefit, tokens, on a corpus built against
+it: the brief names the files, the repository is small, and most packages
+lean on a mocked service. Phase 8 measures the other benefits the README
+claims, each on its own bar, cheapest first. Nothing here replaces Phase 7:
+a token or time win on a change that does not merge is no win, so Phase 7's
+gates run before the model arms below (E8c, E8f, E8g).
+
+**E8a: exposure (no model).** The README's first use is "an agent or a
+contractor sees only part of the code". From the saved E6b transcripts
+(`work/bench/runs-e6b/<slug>/full-*/<n>/transcript.jsonl`, 20 cases × 3
+runs), every repository file the `full` agent read: the path of each
+`Read` call, and each existing repository path named in a `Bash` command.
+Against it, the file set of the case's `slice-seam` template (the slice's
+own copied sources and tests, not its stubs). Reported per case, median
+over runs: files read, files read that the slice does not hold, and the
+bytes of those files; and the count of reads of `.env*`, `infra/`,
+`.github/` or a credentials path. No bar: the number is the claim's size.
+A `full` agent that reads nothing outside the slice says the slice costs
+nothing in exposure and buys nothing either.
+
+**E8b: setup time and disk (no model).** "Work on one package without
+installing or building the others." For each usable E6b case, in a fresh
+copy of the `full` template's sources and of the `slice-seam` template:
+`npm ci` with a warm npm cache, the build the arm's agent needs
+(`buildDependencies` for `full`, `npm run build` in the slice), and one
+`npm test` of the package, timed and run one at a time, with the
+`node_modules` size after. Bars, median over cases: time to the first test
+run at least 50% lower in the slice, and `node_modules` at least 50%
+smaller. The same on one n8n slice against n8n's own install, if a clone
+and its install finish inside 30 minutes on this machine; reported with
+no bar, or reported as not finished.
+
+**E8c: a loose brief (model).** The E6b corpus × `full` and `slice-seam` ×
+3 runs on Haiku 5.5, briefed with the commit's own subject and message
+(`e5-cases.json`, the ticket) in place of the confirmed spec, with the
+allowed paths as before, and judged by the same calibrated hidden suite.
+Bars: Phase 5's two efficiency bars. Acceptance is reported in both arms
+with no bar: the pilot found loose briefs judged by the commit's tests
+gave 0 of 12, and a calibrated suite may not change that; the question
+is whether the slice's saving grows when the agent has to find the code.
+
+**E8d: scope from the ticket (no model).** E7's 60 planning sessions named
+entries from the spec alone. For each, the size of the planned cut
+(`setup.files`) against the commit's real package change (files and lines
+in `duediligence/evidence/in-repo-e6b/ledger.jsonl` and `git show`), and
+whether the planned entries cover every file the commit changed. Reported:
+Spearman's ρ between planned files and changed lines, the share of plans
+whose cut holds every changed file, and `outsideScope` writes per arm
+across E6b and E7. No bar; this says whether a plan is a usable scope and
+sizing feature.
+
+**E8e: a slice as the judge (no model).** Phase 7's parity replay judges
+each saved change twice: in a clean cut and in the repository. The time of
+each judgment is recorded beside the verdict. Bar: median judge time at
+least 50% lower in the slice, on rows where both verdicts exist and agree.
+Disagreements are Phase 7's business.
+
+**E8f: a weaker model in a slice (analysis, then model).** From existing
+rows, cross-CLI and said so: Sonnet 5.5 `full` (E6a's 8 cases, CLI
+`e407a46`) against Haiku 5.5 `slice-seam` on the same cases (E6b's rerun,
+CLI `ad8b99c8bd40`): acceptance and cost per accepted run. Then, after
+Phase 7's gates, Sonnet 5.5 `full` × 3 runs on those 8 cases on the fixed
+harness, so the pair shares a harness. Bar: Haiku-in-slice acceptance
+within 10 points of Sonnet-in-full (one-sided 95%) at a cost per accepted
+run at least 50% lower.
+
+**E8g: a large repository (model).** The efficiency claim's best case is a
+repository too large to read. cal.com and n8n are public, post-cutoff and
+already walked in E4. Candidates by Phase 6's rule on each (first-parent
+`feat`/`fix` commits since 2026-09-15, one package, tests importing the
+change), checked with duediligence's `in-repo.mjs check`, specs confirmed
+by the simulated developer. If the repository's install, build and test at
+B do not complete on this machine, that is the result, reported with the
+step that failed and its time. If it does: up to 8 usable cases × `full`
+and `slice-seam` × 3 runs on Haiku 5.5, Phase 5's four bars.
+
+**Order.** E8a, E8d, E8f's analysis, E8b; then Phase 7's gates (which
+yield E8e); then E6c; then E8c, E8f's runs, E8g. Each model arm resumes
+rather than restarts. `memory_pressure` is checked before each, one
+model run at a time under 40% free.
+
 ## Confounds, and how each is handled
 
 - **The seam names where to work.** The slice saves searching that the

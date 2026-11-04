@@ -37,6 +37,7 @@ import {
   target,
   verdictOf,
 } from "./judge.mjs";
+import { liveOf } from "./bench/cases.mjs";
 import { HERE, WORK, carveout, checkout, cloneOf, frozenCli, git } from "./lib.mjs";
 
 const CASES = JSON.parse(readFileSync(join(HERE, "e5-cases.json"), "utf8")).cases;
@@ -70,7 +71,10 @@ async function replay(cli, item) {
   line.entries = present;
   if (present.length === 0) return { ...line, verdict: "no_entries" };
   const slice = join(dir, "slice");
-  const cut = carveout(cli, ["cut", ...present, "--repo", source, "--depth", "1", "--max-files", "200", "--with-tests", "--out", slice]);
+  // Phase 7: a service driver the package's own tests need stays real.
+  const live = liveOf(source, base, item);
+  line.live = live;
+  const cut = carveout(cli, ["cut", ...present, "--repo", source, "--depth", "1", "--max-files", "200", "--with-tests", ...live.flatMap((name) => ["--live", name]), "--out", slice]);
   line.cut = { code: cut.code, ms: cut.ms };
   if (cut.code !== 0 && cut.code !== 2) return { ...line, verdict: "cut_failed", output: cut.stderr.slice(-3000) };
   const record = JSON.parse(readFileSync(join(slice, "carveout.json"), "utf8"));

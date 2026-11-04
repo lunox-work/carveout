@@ -79,8 +79,10 @@ export function liveOf(repo, base, item) {
 export function template(cli, item, arm) {
   // The plan arm starts every run in the repository, as the full arm does.
   if (arm === "slice-plan") return template(cli, item, "full");
-  // A slice is the CLI's output: one template per build of it.
-  const home = arm === "full" ? join(templates(), item.slug) : join(templates(), cli.id.split("dist:")[1] ?? "cli", item.slug);
+  // A slice is the CLI's output: one template per build of it. A full
+  // template is the repository at B: a run on the same corpus under another
+  // tag may share one (`BENCH_FULL_TEMPLATES=<dir>`) rather than install it.
+  const home = arm === "full" ? join(process.env.BENCH_FULL_TEMPLATES ?? templates(), item.slug) : join(templates(), cli.id.split("dist:")[1] ?? "cli", item.slug);
   const dir = join(home, arm);
   const ready = join(home, `${arm}.json`);
   if (existsSync(ready)) {

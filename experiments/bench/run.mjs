@@ -48,13 +48,18 @@ const option = (name, fallback) => {
   const at = args.indexOf(name);
   return at === -1 ? fallback : args[at + 1];
 };
-const valued = new Set(["--arms", "--runs", "--model", "--concurrency", "--backend"]);
+const valued = new Set(["--arms", "--runs", "--model", "--concurrency", "--backend", "--brief"]);
 const slugs = args.filter((arg, i) => !arg.startsWith("--") && !valued.has(args[i - 1]));
 const arms = option("--arms", "full,slice-seam").split(",");
 const runs = Number(option("--runs", "2"));
 const model = option("--model", "claude-haiku-5-5");
 const backend = option("--backend", "claude");
 const concurrency = Number(option("--concurrency", "2"));
+// What briefs the agent: the confirmed spec, or the commit's own message
+// (E8c: a loose brief, judged by the same hidden suite).
+const briefKind = option("--brief", "spec");
+if (!["spec", "ticket"].includes(briefKind)) throw new Error(`unknown brief ${briefKind}`);
+if (briefKind === "ticket" && (tag === "" || !process.env.BENCH_RESULTS)) throw new Error("A ticket brief requires BENCH_TAG and BENCH_RESULTS of its own");
 if (!["claude", "codex"].includes(backend)) throw new Error(`unknown backend ${backend}`);
 if (backend === "codex" && (tag === "" || !process.env.BENCH_RESULTS || !args.includes("--model"))) throw new Error("Codex runs require BENCH_TAG, BENCH_RESULTS and an explicit --model");
 if (backend === "codex" && concurrency !== 1) throw new Error("Codex sessions require --concurrency 1 until concurrent isolation is verified");
@@ -68,7 +73,13 @@ function brief(item, arm) {
     // What the folder says of itself since eec1139: npm test names the
     // tests that fail on the mocks and does not count them.
     .replaceAll("{{baseline}}", "")
-    .replaceAll("{{spec}}", readFileSync(join(specOf(item), "spec.md"), "utf8").trim());
+    .replaceAll("{{spec}}", briefKind === "ticket" ? ticketOf(item) : readFileSync(join(specOf(item), "spec.md"), "utf8").trim());
+}
+
+/** The commit's subject and body, as the ticket an agent would be handed. */
+function ticketOf(item) {
+  const repo = cloneOf("sandbox-factory", tag === "" ? "bench-base" : `${tag}-base`);
+  return git(repo, ["log", "-1", "--format=%B", item.commit]).trim();
 }
 
 function done() {
@@ -349,6 +360,7 @@ async function main() {
           model,
           run: n,
           cli: cli.id,
+          ...(briefKind === "spec" ? {} : { brief: briefKind }),
           setup: { setupMs: used.setupMs, ...(used.files === undefined ? {} : { files: used.files, cutMs: used.cutMs, entries: used.entries, baseline: used.baseline }) },
           agent: ran.agent ?? ran.plan?.agent ?? null,
           plan: ran.plan === undefined || ran.plan === null ? undefined : { entries: ran.plan.entries, named: ran.plan.named, peeks: ran.plan.peeks, agent: ran.plan.agent },
