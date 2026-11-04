@@ -22,7 +22,7 @@
 // results/parity.jsonl, keyed by the CLI build.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { HERE, WORK, carveout, cloneOf, frozenCli, git } from "../lib.mjs";
 import { counts, install, judge, log, shell, testResults } from "../judge.mjs";
@@ -102,7 +102,9 @@ function commitDiff(item, base) {
 
 /** The real commit's verdict in the repository, judged once. */
 function commitVerdict(item, base) {
-  const known = lines(REPO_VERDICTS).find((line) => line.slug === item.slug && line.commit === item.commit && line.scopeVersion === 2);
+  // E8e needs the repository judge's time beside the slice's; a verdict
+  // recorded without it is judged once more, with it.
+  const known = lines(REPO_VERDICTS).findLast((line) => line.slug === item.slug && line.commit === item.commit && line.scopeVersion === 2 && line.judgeMs !== undefined);
   if (known !== undefined) return known.accepted;
   const diff = commitDiff(item, base);
   const into = cleanAt(base);
@@ -112,9 +114,11 @@ function commitVerdict(item, base) {
     mkdirSync(dirname(join(into, hidden.path)), { recursive: true });
     writeFileSync(join(into, hidden.path), readFileSync(hidden.from));
   }
+  const started = Date.now();
   const judged = judge(into, item.package, { importers: true });
+  const judgeMs = Date.now() - started;
   delete judged.functional?.tests;
-  append(REPO_VERDICTS, { slug: item.slug, commit: item.commit, scopeVersion: 2, accepted: accepted(judged), judged, at: new Date().toISOString() });
+  append(REPO_VERDICTS, { slug: item.slug, commit: item.commit, scopeVersion: 2, accepted: accepted(judged), judged, judgeMs, at: new Date().toISOString() });
   return accepted(judged);
 }
 
@@ -138,7 +142,11 @@ function plan(cli) {
         for (const row of bench.filter((r) => r.slug === item.slug && r.arm === arm && ["accepted", "functional", "rejected"].includes(r.verdict))) {
           const patch = join(RUNS, item.slug, `${arm}-${row.model}`, String(row.run), "judged.patch");
           const clean = join(PATCHES, item.slug, `${arm}-${row.model}-${row.run}-v2.patch`);
-          out.push({ item, arm, base, change: `slice ${row.model} ${row.run}`, patch: () => existsSync(patch) ? cleanJudgedPatch(patch, clean) : null, repo: () => row.verdict === "accepted", repoVerdict: row.verdict });
+          // A saved change written well after its row is a later run's under
+          // the same key, not the change the row judged (Phase 7: E6a's
+          // categories Sonnet 1 and 2 were overwritten 55 minutes after).
+          const stale = existsSync(patch) && statSync(patch).mtimeMs > Date.parse(row.at) + 15 * 60_000;
+          out.push({ item, arm, base, change: `slice ${row.model} ${row.run}`, stale, patch: () => existsSync(patch) && !stale ? cleanJudgedPatch(patch, clean) : null, repo: () => row.verdict === "accepted", repoVerdict: row.verdict });
         }
       if (from.includes("full"))
         for (const row of bench.filter((r) => r.slug === item.slug && r.arm === "full" && ["accepted", "functional", "rejected"].includes(r.verdict))) {
@@ -179,22 +187,25 @@ function withoutHidden(item, patch) {
 /** A copy of the template with `patch` applied, built and tested; the copy is removed. */
 function tried(cli, prepared, patch) {
   const work = mkdtempSync(join(WORK_ROOT, "parity-"));
+  // E8e (PLAN-benchmark.md, Phase 8): how long the slice's judgment takes.
+  const started = Date.now();
+  const timed = (result) => ({ ...result, ms: Date.now() - started });
   try {
     execFileSync("cp", ["-c", "-R", `${prepared.dir}/.`, work]);
     if (readFileSync(patch, "utf8").trim() !== "") {
       const brought = carveout(cli, ["apply", work, patch, "--stubs", "--json"]);
-      if (brought.code !== 0) return { ok: false, step: "apply", output: `${brought.stdout}${brought.stderr}`.slice(-1500) };
+      if (brought.code !== 0) return timed({ ok: false, step: "apply", output: `${brought.stdout}${brought.stderr}`.slice(-1500) });
       // apply can succeed while leaving files outside the slice, including
       // hidden tests. A partial change cannot establish verdict parity.
       const applied = JSON.parse(brought.stdout);
-      if (applied.outside.length > 0) return { ok: false, step: "outside", outside: applied.outside };
+      if (applied.outside.length > 0) return timed({ ok: false, step: "outside", outside: applied.outside });
     }
     const install = shell(work, existsSync(join(work, "package-lock.json")) ? "npm ci --no-audit --no-fund --loglevel=error" : "npm install --no-audit --no-fund --loglevel=error");
-    if (!install.ok) return { ok: false, step: "install", output: install.output.slice(-1500) };
+    if (!install.ok) return timed({ ok: false, step: "install", output: install.output.slice(-1500) });
     const build = shell(work, "npm run build --silent");
-    if (!build.ok) return { ok: false, step: "build", output: build.output.slice(-1500) };
+    if (!build.ok) return timed({ ok: false, step: "build", output: build.output.slice(-1500) });
     const test = shell(work, "node carveout/test.js");
-    return { ok: test.ok, step: "test", ...counts(test.full), tests: testResults(test.full), ...(test.ok ? {} : { output: test.output.slice(-1500) }) };
+    return timed({ ok: test.ok, step: "test", ...counts(test.full), tests: testResults(test.full), ...(test.ok ? {} : { output: test.output.slice(-1500) }) });
   } finally {
     discard(work);
   }
@@ -255,7 +266,7 @@ async function main() {
         continue;
       }
       const patch = task.made;
-      const slice = patch === null ? { ok: false, step: "no patch" } : inSlice(cli, task.item, prepared, patch);
+      const slice = patch === null ? { ok: false, step: task.stale ? "stale artifact" : "no patch" } : inSlice(cli, task.item, prepared, patch);
       const repo = task.repo();
       append(PARITY, { ...line, repo, ...(task.repoVerdict === undefined ? {} : { repoVerdict: task.repoVerdict }), slice, at: new Date().toISOString() });
       log("parity", `${key} ${task.change}: slice ${slice.ok ? "pass" : `fail (${slice.step})`}, repository ${repo ? "pass" : "fail"}${slice.ok && !repo ? "  <-- slice passed, repository failed" : ""}`);
