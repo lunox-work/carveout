@@ -37,7 +37,8 @@ billing-slice/
   carveout/packages/stripe/  a mock package for a service SDK
   carveout/mock.js           the mock runtime: recordedCalls(), mockImplementation()
   carveout/tests/            an interface test: every export outside code imports
-  BOUNDARY.md                what the slice needs and what it offers, with types
+  BOUNDARY.md                an index: the modules the slice imports from outside
+                             and the exports outside code takes from it
   carveout.json              the cut: hashes, cuts, packages, rewrites, blockers
   package.json, tsconfig.json, package-lock.json, carveout.env
 ```
@@ -45,7 +46,9 @@ billing-slice/
 - **Stubs** are emitted by the TypeScript compiler from the cut modules'
   own declarations, and narrowed to the names the slice uses.
 - **Workspace packages** are stubbed from their source rather than
-  installed.
+  installed, unless the cut follows them (`--follow-workspaces`): then an
+  import of one is an import of its source file, copied or cut like any
+  module.
 - **Installed packages** are those the repository pins from the public
   registry. Each comes with its `@types` and its required peers, at the
   repository's versions.
@@ -87,6 +90,18 @@ slice starts from its locked versions. `--offline` skips both.
   `require.resolve`) are cut, not followed. Their specifiers are rewritten
   like imports.
 - **The file budget.** When it runs out, `plan` lists the files it left out.
+- **The whole package**, with `--whole-package`: every file of the entry
+  points' package the imports reach comes along at any depth, so the cut
+  falls at package and service boundaries, and a sibling module is copied
+  rather than stubbed. Imports into other packages still stop at the
+  depth.
+- **A test's helpers.** A test brought along by `--with-tests` brings what
+  it imports at runtime from its own package, or from a test folder
+  anywhere (`test/`, `__mocks__/`, `fixtures/`): a fake copied is a test
+  that passes, a fake stubbed is one that fails before any change.
+- **Private paths** (`--private <path>`, or `private` in the
+  configuration) are never copied: wherever the walk reaches one it is
+  cut and stubbed, with literal values widened.
 
 Only the files the walk needs are parsed. Files that may import the slice
 are found by name first, and the compiler confirms each one.
@@ -111,15 +126,31 @@ Options for `plan` and `cut`:
 - `--with-tests`, which also brings the tests outside the slice that import
   it (`*.test.*`, `*.spec.*`, `__tests__/`) and run on `node:test` or
   Vitest, directly or through a barrel outside the slice that re-exports
-  from it; such a barrel comes along, its other re-exports cut. `npm test`
-  in the folder runs them. Without a lockfile Vitest is mocked like any
-  package; cut with `--install vitest`.
+  from it; such a barrel comes along, its other re-exports cut, and so do
+  the test's own helpers. `npm test` in the folder runs them. Without a
+  lockfile Vitest is mocked like any package; cut with `--install vitest`.
+- `--whole-package`, `--follow-workspaces` and `--private <path>` (see
+  above; `--private` takes a path, a folder or a glob, more than once).
 - `--json`
+
+A `carveout.config.json` at the repository's root sets the same for every
+cut, so the owner decides once where a slice may follow and what it keeps
+out: `{"wholePackage": true, "followWorkspaces": true, "private":
+["packages/core/src/pricing/**"], "copy": ["packages/db/drizzle"],
+"widenLiterals": true}`. A flag overrides a boolean; the lists are joined.
+With any `private` path, `widenLiterals` is on unless the file says
+otherwise.
 
 Options for `cut` only:
 
 - `--mock <pkg>` and `--install <pkg>`, which take precedence over the
-  defaults;
+  defaults. A package whose class a carried test patches by prototype
+  (`S3Client.prototype.send = ...`) is installed without being asked: a
+  mock has no prototype to patch, and such a test never reaches the
+  service;
+- `--copy <dir>`, which copies a folder the code reads by a name the walk
+  cannot follow (a migrations folder) beside the slice. Its files are the
+  repository's: an edit to one is in the patch;
 - `--live <pkg>`, which keeps a service package real: installed and typed
   as the repository has it, with the environment its importers read left
   out of `carveout.env` for the shell to supply, so the code's own
@@ -212,8 +243,9 @@ What to tell them, accurately:
   too unless cut with `--live`: tests in the folder show the slice working
   against mocks, not against the repository.
 - By default the stubs keep literal values from the cut modules.
-  `--widen-literals` removes them. Neither option hides the slice's own
-  source, so do not hand the folder to someone who should not read it.
+  `--widen-literals` removes them, and a `private` path in the
+  configuration turns it on. Neither hides the slice's own source, so do
+  not hand the folder to someone who should not read it.
 - `carveout check` passing means the folder installs, builds and loads every
   export outside code uses. It tests the slice's behaviour only when the cut
   was made with `--with-tests`, and then only as far as those tests go.

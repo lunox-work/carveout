@@ -11,14 +11,14 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, posix, relative, resolve } from "node:path";
 import { command } from "./command.js";
+import ts from "typescript";
 import {
   BASELINE_PATH,
-  IMPORT_LITERAL,
   LAST_RUN_PATH,
   SLICE_BUDGET_DEFAULTS,
   coverageGateOf,
@@ -27,7 +27,9 @@ import {
   generateProject,
   isScript,
   isSecretPath,
+  isTestPath,
   packageNameOf,
+  pathMatcher,
   renderBoundaryMarkdown,
   resolveScope,
   runtimePath,
@@ -60,12 +62,113 @@ import {
   undoRewrites,
   type ImportContext,
 } from "./imports.js";
+import { moduleSpecifiers, parseSource } from "./specifiers.js";
 
 export const CARVEOUT_VERSION = "0.1.0";
 export const RECORD_PATH = "carveout.json";
 export const RECORD_SCHEMA_VERSION = 1;
 export const BOUNDARY_PATH = "BOUNDARY.md";
 export const CONTRACT_PATH = "carveout/contract.json";
+/** The repository owner's settings for every cut of it, at its root. */
+export const CONFIG_PATH = "carveout.config.json";
+
+/**
+ * What a repository's owner sets once for every slice cut from it, in
+ * `carveout.config.json` at the root: where the cut may follow and what it
+ * must keep out. A flag on the command line overrides a boolean here; the
+ * lists are joined. Nothing here is read from the slice folder.
+ */
+export interface RepoConfig {
+  /** See `SliceRequest.wholePackage`. */
+  readonly wholePackage?: boolean;
+  /** See `SliceRequest.followWorkspaces`. */
+  readonly followWorkspaces?: boolean;
+  /** Paths or globs never copied; see `SliceRequest.private`. */
+  readonly private?: readonly string[];
+  /** Folders copied in whole beside the slice; see `CutRequest.copy`. */
+  readonly copy?: readonly string[];
+  /** Widen literal types in every stub; see `CutRequest.widenLiterals`. */
+  readonly widenLiterals?: boolean;
+}
+
+/** The owner's settings at the repository's root; empty when there are none. */
+export function readRepoConfig(repo: string): RepoConfig {
+  const path = join(repo, CONFIG_PATH);
+  if (!existsSync(path)) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    throw new Error(
+      `${CONFIG_PATH} is not JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed))
+    throw new Error(`${CONFIG_PATH} must hold an object.`);
+  const record = parsed as Record<string, unknown>;
+  const flag = (key: string): boolean | undefined => {
+    const value = record[key];
+    if (value === undefined) return undefined;
+    if (typeof value !== "boolean")
+      throw new Error(`${CONFIG_PATH}: ${key} must be true or false.`);
+    return value;
+  };
+  const paths = (key: string): readonly string[] | undefined => {
+    const value = record[key];
+    if (value === undefined) return undefined;
+    if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || item === ""))
+      throw new Error(`${CONFIG_PATH}: ${key} must be a list of paths.`);
+    return value as string[];
+  };
+  const config: RepoConfig = {};
+  const set = <K extends keyof RepoConfig>(key: K, value: RepoConfig[K]) => {
+    if (value !== undefined) (config as Record<string, unknown>)[key] = value;
+  };
+  set("wholePackage", flag("wholePackage"));
+  set("followWorkspaces", flag("followWorkspaces"));
+  set("widenLiterals", flag("widenLiterals"));
+  set("private", paths("private"));
+  set("copy", paths("copy"));
+  return config;
+}
+
+/** Paths as the repository spells them, `/`-separated, unique and sorted. */
+function normalizePaths(paths: readonly string[]): string[] {
+  return [
+    ...new Set(
+      paths.map((path) =>
+        path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, ""),
+      ),
+    ),
+  ]
+    .filter((path) => path !== "")
+    .sort(compare);
+}
+
+/** The request with the owner's configuration applied where it says nothing. */
+function settle<T extends SliceRequest & { readonly copy?: readonly string[]; readonly widenLiterals?: boolean }>(
+  request: T,
+): T & {
+  readonly wholePackage: boolean;
+  readonly followWorkspaces: boolean;
+  readonly private: readonly string[];
+  readonly copy: readonly string[];
+  readonly widenLiterals: boolean;
+} {
+  const config = readRepoConfig(resolve(request.repo));
+  const privatePaths = normalizePaths([...(config.private ?? []), ...(request.private ?? [])]);
+  return {
+    ...request,
+    wholePackage: request.wholePackage ?? config.wholePackage ?? false,
+    followWorkspaces: request.followWorkspaces ?? config.followWorkspaces ?? false,
+    private: privatePaths,
+    copy: normalizePaths([...(config.copy ?? []), ...(request.copy ?? [])]),
+    // A private module's constants are not for the folder: widened unless
+    // the owner says otherwise.
+    widenLiterals:
+      request.widenLiterals ?? config.widenLiterals ?? privatePaths.length > 0,
+  };
+}
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const sha256 = (data: string | Buffer) =>
@@ -91,6 +194,24 @@ export interface SliceRequest {
   readonly budget?: SliceBudget;
   /** Also bring along the tests outside the slice that import it. */
   readonly tests?: boolean;
+  /**
+   * Include every file of the entry points' package the walk reaches, at
+   * any depth, so the cut falls at package and service boundaries only.
+   * Unset: as `carveout.config.json` says, else off.
+   */
+  readonly wholePackage?: boolean;
+  /**
+   * Follow an import of one of the repository's own packages into its
+   * source rather than stubbing the package at the seam. Unset: as the
+   * configuration says, else off.
+   */
+  readonly followWorkspaces?: boolean;
+  /**
+   * Paths or globs from the root that are never copied: cut and stubbed
+   * wherever reached, their literal values widened. Joined with the
+   * configuration's.
+   */
+  readonly private?: readonly string[];
 }
 
 function git(repo: string, args: readonly string[]): string | null {
@@ -151,16 +272,34 @@ export interface Plan {
   readonly cutModules: readonly string[];
   /** Of those, the ones the slice imports only types from. */
   readonly typeOnlyCuts: readonly string[];
+  /** How the walk was bounded, after the configuration. */
+  readonly wholePackage: boolean;
+  readonly followWorkspaces: boolean;
+  readonly private: readonly string[];
+}
+
+/** The walk's options for a settled request. */
+function walkOptions(request: {
+  readonly tests?: boolean;
+  readonly wholePackage: boolean;
+  readonly followWorkspaces: boolean;
+  readonly private: readonly string[];
+}) {
+  return {
+    tests: request.tests === true,
+    ...(request.wholePackage ? { wholePackage: true } : {}),
+    ...(request.followWorkspaces ? { followWorkspaces: true } : {}),
+    ...(request.private.length === 0 ? {} : { isPrivate: pathMatcher(request.private) }),
+  };
 }
 
 /** What a cut of the request would hold, from the import graph alone. */
 export function planSlice(request: SliceRequest): Plan {
+  const settled = settle(request);
   const repo = resolve(request.repo);
   const budget = request.budget ?? SLICE_BUDGET_DEFAULTS;
   const entryPoints = entriesOf(request);
-  const { built, walk } = walkGraph(repo, entryPoints, budget, {
-    tests: request.tests === true,
-  });
+  const { built, walk } = walkGraph(repo, entryPoints, budget, walkOptions(settled));
   const externals = detectExternals(
     walk.included.map((path) => ({
       path,
@@ -198,6 +337,9 @@ export function planSlice(request: SliceRequest): Plan {
         walk.cuts.outbound.every((edge) => edge.to !== to || edge.typeOnly),
       )
       .sort(compare),
+    wholePackage: settled.wholePackage,
+    followWorkspaces: settled.followWorkspaces,
+    private: settled.private,
   };
 }
 
@@ -221,6 +363,13 @@ export interface CutRequest extends SliceRequest {
    * service itself: a database driver against a local server.
    */
   readonly live?: readonly string[];
+  /**
+   * Folders (or files) copied in whole beside the slice, as paths from the
+   * root: what the code reads by a name the walk cannot follow, such as a
+   * migrations folder. Their files are neither slice nor generated: the
+   * patch carries an edit to one. Joined with the configuration's.
+   */
+  readonly copy?: readonly string[];
   readonly log?: (line: string) => void;
 }
 
@@ -263,7 +412,18 @@ export interface CarveoutRecord {
     readonly tests?: boolean;
     /** Service packages kept real; absent when none. */
     readonly live?: readonly string[];
+    /** The cut's bounds after the configuration; absent when off or none. */
+    readonly wholePackage?: boolean;
+    readonly followWorkspaces?: boolean;
+    readonly private?: readonly string[];
+    readonly copy?: readonly string[];
   };
+  /**
+   * Files copied in whole from the `copy` folders, with their hashes: not
+   * the slice's, not generated, and in the patch when edited. Absent in
+   * records made before folders could be copied.
+   */
+  readonly extras?: readonly { path: string; sha256: string }[];
   /**
    * The repository's files the cut resolved with, beyond the slice: compiler
    * and package configuration, workspace manifests and lockfiles.
@@ -461,6 +621,8 @@ export interface ComputedCut {
   readonly files: readonly GeneratedFile[];
   /** Included files copied as bytes. */
   readonly binaries: readonly string[];
+  /** The `copy` folders' files, copied as bytes; see `CarveoutRecord.extras`. */
+  readonly extras: readonly string[];
   readonly record: Omit<CarveoutRecord, "generated" | "lockfile">;
   readonly contract: BoundaryContract;
 }
@@ -479,6 +641,7 @@ function resolutionInputs(
     "pnpm-workspace.yaml",
     "yarn.lock",
     ".npmrc",
+    CONFIG_PATH,
   ])
     paths.add(name);
   for (const directory of workspacePackages(repo).values()) {
@@ -498,17 +661,17 @@ function resolutionInputs(
 export async function computeCut(
   request: Omit<CutRequest, "out">,
 ): Promise<ComputedCut> {
+  const settled = settle(request);
   const repo = resolve(request.repo);
   const log = request.log ?? (() => {});
   const budget = request.budget ?? SLICE_BUDGET_DEFAULTS;
   const entryPoints = entriesOf(request);
-  const { built } = walkGraph(repo, entryPoints, budget, {
-    tests: request.tests === true,
-  });
+  const { built } = walkGraph(repo, entryPoints, budget, walkOptions(settled));
   log(`Read the imports of ${built.files.length} files.`);
   const commitSha = git(repo, ["rev-parse", "HEAD"]);
   const signal = AbortSignal.timeout(15 * 60_000);
   const live = [...new Set(request.live ?? [])].sort(compare);
+  const workspaces = workspacePackages(repo);
   const analysis = await analyseSlice({
     sourceDir: repo,
     graph: built.graph,
@@ -517,6 +680,10 @@ export async function computeCut(
       budget,
       tests: request.tests === true,
       ...(live.length === 0 ? {} : { live }),
+      ...(settled.wholePackage ? { wholePackage: true } : {}),
+      ...(settled.followWorkspaces ? { followWorkspaces: true } : {}),
+      ...(settled.private.length === 0 ? {} : { private: settled.private }),
+      ...(settled.copy.length === 0 ? {} : { copy: settled.copy }),
     },
     source: {
       commitSha,
@@ -526,7 +693,7 @@ export async function computeCut(
     },
     signal,
     log,
-    widenLiterals: request.widenLiterals === true,
+    widenLiterals: settled.widenLiterals,
     ...(request.offline === true
       ? {}
       : {
@@ -537,10 +704,47 @@ export async function computeCut(
   });
   const { manifest, contract, contractJson } = analysis;
   // A live package is installed, whatever the default for its service.
-  const choices = {
+  const choices: Record<string, DependencyChoice> = {
     ...request.choices,
     ...Object.fromEntries(live.map((name) => [name, "approved-package" as const])),
   };
+  // So is a package whose class a carried test patches by its prototype
+  // (`S3Client.prototype.send = ...`): a mock has no prototype to patch, so
+  // the test fails on the mock before any change (E6c: 30 such tests).
+  // The test never reaches the service; it replaces the call that would.
+  // The packages of its scope the slice imports beside it come too: they
+  // work on the real client (`@aws-sdk/s3-request-presigner` signs with
+  // the client's own middleware), and a mock of one answers with a mock.
+  if (request.tests === true) {
+    const imported = new Set(
+      manifest.requiredBuildInputs.packages
+        .filter((item) => item.workspace !== true)
+        .map((item) => item.name),
+    );
+    for (const [name, cls] of prototypePatchedPackages(
+      manifest.included
+        .filter((file) => isTestPath(file.path) && isScript(file.path))
+        .map((file) => ({ path: file.path, text: readFileSync(join(repo, file.path), "utf8") })),
+      new Set(workspaces.keys()),
+    )) {
+      const scope = name.startsWith("@") ? `${name.split("/")[0] ?? ""}/` : null;
+      const together = [
+        name,
+        ...(scope === null
+          ? []
+          : [...imported].filter((other) => other !== name && other.startsWith(scope)).sort(compare)),
+      ];
+      for (const each of together)
+        if (choices[each] === undefined) {
+          choices[each] = "approved-package";
+          log(
+            each === name
+              ? `Installs ${name}: a test patches ${cls}.prototype, which a mock does not have.`
+              : `Installs ${each} with it: a package of the same scope, for the real ${cls}.`,
+          );
+        }
+    }
+  }
   const scope = resolveScope({
     manifest,
     contract,
@@ -587,8 +791,8 @@ export async function computeCut(
   );
   const includedPaths = manifest.included.map((file) => file.path);
   const nodeTypes = sources.some((source) =>
-    [...source.text.matchAll(IMPORT_LITERAL)].some((match) =>
-      isNodeBuiltin(match[3] ?? ""),
+    moduleSpecifiers(source.path, source.text).some((literal) =>
+      isNodeBuiltin(literal.specifier),
     ),
   ) ? repositoryVersion(repo, "@types/node", includedPaths) : null;
   const uses = packageUses(
@@ -782,12 +986,44 @@ export async function computeCut(
     },
   ];
   const files = [...projectFiles, ...extra];
+  // The `copy` folders, file by file, less what the slice already holds
+  // and any credentials file, which stays behind and blocks the cut.
+  const held = new Set([
+    ...files.map((file) => file.path),
+    ...binaries,
+  ]);
+  const extras: string[] = [];
+  const extraBlockers: { code: string; file: string | null; detail: string }[] = [];
+  for (const dir of settled.copy) {
+    const absolute = join(repo, dir);
+    if (!existsSync(absolute))
+      throw new Error(`copy ${dir}: the repository has no such file or folder.`);
+    const paths = statSync(absolute).isDirectory()
+      ? listTree(absolute).map((path) => `${dir}/${path}`)
+      : [dir];
+    for (const path of paths.sort(compare)) {
+      if (held.has(path)) continue;
+      if (isSecretPath(path)) {
+        extraBlockers.push({
+          code: "secret_file",
+          file: path,
+          detail: `${path} is a credentials file; it is not copied with ${dir}.`,
+        });
+        continue;
+      }
+      held.add(path);
+      extras.push(path);
+    }
+  }
+  if (extras.length > 0)
+    log(`Copies ${extras.length} file(s) from ${settled.copy.join(", ")} beside the slice.`);
   const blockers: CarveoutRecord["blockers"] = [
     ...manifest.blockers.map(({ code, file, detail }) => ({
       code,
       file,
       detail,
     })),
+    ...extraBlockers,
     ...scope.blockers
       .filter((blocker) => blocker.code === "dependency_unresolved")
       .map(({ code, detail }) => ({ code, file: null, detail })),
@@ -800,6 +1036,7 @@ export async function computeCut(
   return {
     files,
     binaries,
+    extras,
     contract,
     record: {
       schemaVersion: RECORD_SCHEMA_VERSION,
@@ -829,13 +1066,64 @@ export async function computeCut(
         budget,
         choices: request.choices ?? {},
         offline: request.offline === true,
-        widenLiterals: request.widenLiterals === true,
+        widenLiterals: settled.widenLiterals,
         tests: request.tests === true,
         ...(live.length === 0 ? {} : { live }),
+        ...(settled.wholePackage ? { wholePackage: true } : {}),
+        ...(settled.followWorkspaces ? { followWorkspaces: true } : {}),
+        ...(settled.private.length === 0 ? {} : { private: settled.private }),
+        ...(settled.copy.length === 0 ? {} : { copy: settled.copy }),
       },
       inputs: resolutionInputs(repo, manifest.requiredBuildInputs.configs),
     },
   };
+}
+
+/**
+ * The packages whose classes the tests patch by prototype, by package name
+ * with one such class: `import { S3Client } from "@aws-sdk/client-s3"` and
+ * `S3Client.prototype` in the same file. The repository's own packages are
+ * not among them; a type import is not either.
+ */
+function prototypePatchedPackages(
+  sources: readonly { path: string; text: string }[],
+  workspaces: ReadonlySet<string>,
+): Map<string, string> {
+  const found = new Map<string, string>();
+  for (const source of sources) {
+    if (!/\.prototype\b/.test(source.text)) continue;
+    const parsed = parseSource(source.path, source.text);
+    for (const statement of parsed.statements) {
+      if (
+        !ts.isImportDeclaration(statement) ||
+        !ts.isStringLiteral(statement.moduleSpecifier)
+      )
+        continue;
+      const specifier = statement.moduleSpecifier.text;
+      if (
+        specifier.startsWith(".") ||
+        specifier.startsWith("/") ||
+        isNodeBuiltin(specifier)
+      )
+        continue;
+      const clause = statement.importClause;
+      if (clause === undefined || clause.phaseModifier === ts.SyntaxKind.TypeKeyword)
+        continue;
+      const names: string[] = [];
+      if (clause.name !== undefined) names.push(clause.name.text);
+      if (clause.namedBindings !== undefined && ts.isNamedImports(clause.namedBindings))
+        for (const element of clause.namedBindings.elements)
+          if (!element.isTypeOnly) names.push(element.name.text);
+      const name = packageNameOf(specifier);
+      if (workspaces.has(name) || found.has(name)) continue;
+      for (const binding of names)
+        if (new RegExp(`\\b${binding.replace(/\$/g, "\\$")}\\.prototype\\b`).test(source.text)) {
+          found.set(name, binding);
+          break;
+        }
+    }
+  }
+  return found;
 }
 
 /** The contract as the folder holds it: its commit is in carveout.json. */
@@ -853,17 +1141,17 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
     throw new Error(`${out} is not empty; give an empty or new folder.`);
   if (out === repo)
     throw new Error("The output folder cannot be the repository itself.");
-  const { files, binaries, record: computed, contract } = await computeCut(request);
+  const { files, binaries, extras, record: computed, contract } = await computeCut(request);
   for (const file of files) {
     const path = join(out, file.path);
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, file.text, "utf8");
   }
-  for (const path of binaries) {
+  for (const path of [...binaries, ...extras]) {
     await mkdir(dirname(join(out, path)), { recursive: true });
     await copyFile(join(repo, path), join(out, path));
   }
-  log(`Wrote ${files.length + binaries.length} files to ${out}.`);
+  log(`Wrote ${files.length + binaries.length + extras.length} files to ${out}.`);
   let lockfile = false;
   if (request.offline !== true) {
     // The entry points' workspace first, then the others the slice holds.
@@ -923,7 +1211,19 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
     .filter((file) => file.class === "source")
     .map((file) => ({ path: file.path, sha256: sha256(file.text) }))
     .sort((a, b) => compare(a.path, b.path));
-  const record: CarveoutRecord = { ...computed, generated, copied, lockfile };
+  const record: CarveoutRecord = {
+    ...computed,
+    generated,
+    copied,
+    ...(extras.length === 0
+      ? {}
+      : {
+          extras: extras
+            .map((path) => ({ path, sha256: sha256(readFileSync(join(out, path))) }))
+            .sort((a, b) => compare(a.path, b.path)),
+        }),
+    lockfile,
+  };
   await writeFile(
     join(out, RECORD_PATH),
     `${JSON.stringify(record, null, 2)}\n`,
@@ -1183,6 +1483,9 @@ export async function patchProject(dir: string): Promise<Patch> {
   const included = new Map(
     record.manifest.included.map((file) => [file.path, file.sha256]),
   );
+  // A copied folder's files are the repository's too: edited, they are
+  // in the patch against the repository's copy.
+  for (const extra of record.extras ?? []) included.set(extra.path, extra.sha256);
   const ignored = new Set(
     readFileSync(join(root, ".gitignore"), "utf8").split("\n").filter(Boolean),
   );
@@ -1236,7 +1539,7 @@ export async function patchProject(dir: string): Promise<Patch> {
     );
   /** Imports a restored text still makes of the folder's harness. */
   const harnessImport = (path: string, text: string) =>
-    [...specifiersOf(text)].some(
+    [...specifiersOf(text, path)].some(
       (specifier) =>
         specifier.startsWith(".") &&
         posix
@@ -1333,13 +1636,14 @@ export async function patchProject(dir: string): Promise<Patch> {
             ambiguous(rewrites)
               ? (readBase(path, original).bytes?.toString("utf8") ?? null)
               : null,
+            path,
           ),
         ) === original
       )
         continue;
       const base = baseOf(path, original);
       let restored: Buffer = bytes;
-      if (!isBinaryPath(path)) {
+      if (!isBinaryPath(path) && isScript(path)) {
         const result = restoreImports(
           path,
           text,

@@ -226,13 +226,10 @@ test("status is current until the repository changes what a cut writes", async (
   const taxBefore = readFileSync(tax, "utf8");
   writeFileSync(tax, `${taxBefore}// moved\n`);
   const source = await statusProject(fresh.out);
+  // BOUNDARY.md is an index of the boundary, which the edit left alone.
   assert.deepEqual(
     source.stale.map((item) => [item.cause, item.path]),
-    // BOUNDARY.md gives the slice's size, which the edit changed too.
-    [
-      ["surface_changed", "BOUNDARY.md"],
-      ["source_changed", "apps/shop/src/tax.ts"],
-    ],
+    [["source_changed", "apps/shop/src/tax.ts"]],
   );
   writeFileSync(tax, taxBefore);
   assert.equal((await statusProject(fresh.out)).current, true);

@@ -442,7 +442,10 @@ test("npm test does not count the tests that failed when the folder was checked"
   writeFileSync(join(out, "carveout/baseline.json"), JSON.stringify({ failing: ["a total is formatted"] }));
   const counted = run();
   assert.equal(counted.status, 0, counted.stdout);
-  assert.match(counted.stdout, /1 test\(s\) failed as they did when the folder was checked/);
+  // In short: the counts and the baseline's number, not its failures.
+  assert.match(counted.stdout, /^2 of 3 tests pass\.\n/);
+  assert.match(counted.stdout, /1 test\(s\) fail on the mocks as they did when the folder was checked/);
+  assert.doesNotMatch(counted.stdout, /not ok/);
   writeFileSync(
     join(out, "apps/shop/src/late.test.ts"),
     'import assert from "node:assert/strict";\nimport { test } from "node:test";\ntest("a new failure", () => assert.equal(1, 2));\n',
@@ -450,7 +453,10 @@ test("npm test does not count the tests that failed when the folder was checked"
   execFileSync(process.execPath, [TSC, "-p", "tsconfig.json"], { cwd: out, stdio: "pipe" });
   const fresh = run();
   assert.equal(fresh.status, 1);
-  assert.match(fresh.stdout, /Failing now and not when the folder was checked:\n {2}a new failure/);
+  // A fresh failure in full, with its diagnostic; the baseline's still not.
+  assert.match(fresh.stdout, /Failing now and not when the folder was checked:\n\nnot ok \d+ - a new failure\n {2}---\n/);
+  assert.match(fresh.stdout, /Expected values to be strictly equal/);
+  assert.doesNotMatch(fresh.stdout, /not ok \d+ - a total is formatted/);
   // The baseline is the folder's own: the patch leaves it out.
   assert.doesNotMatch((await patchProject(out)).diff, /baseline\.json/);
 });

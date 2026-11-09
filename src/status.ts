@@ -128,6 +128,10 @@ export async function statusProject(
       widenLiterals: request.widenLiterals,
       tests: request.tests === true,
       ...(request.live === undefined ? {} : { live: request.live }),
+      wholePackage: request.wholePackage === true,
+      followWorkspaces: request.followWorkspaces === true,
+      private: request.private ?? [],
+      copy: request.copy ?? [],
     });
   } catch (error) {
     return {

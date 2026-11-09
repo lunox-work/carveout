@@ -417,37 +417,37 @@ export function boundarySummary(
   };
 }
 
-function fence(text: string, language: string) {
-  // A scan rather than /\n+$/, which backtracks quadratically on a long run
-  // of newlines that does not end the declaration.
-  let end = text.length;
-  while (end > 0 && text[end - 1] === "\n") end -= 1;
-  return `\`\`\`${language}\n${text.slice(0, end)}\n\`\`\``;
-}
-
+/**
+ * One line per module: its path, its stub, and the names taken from it.
+ * The declarations themselves are in the stub, where the compiler reads
+ * them; repeating them here cost a session an eighth of everything it read
+ * (E6c: BOUNDARY.md opened in 60 of 60 slice runs).
+ */
 function renderModules(modules: readonly BoundaryModule[], empty: string) {
   if (modules.length === 0) return [empty];
-  const lines: string[] = [];
-  for (const module of modules) {
-    lines.push(`### \`${module.module}\``, "");
-    if (module.importedBy.length > 0)
-      lines.push(
-        `Imported by: ${module.importedBy.map((file) => `\`${file}\``).join(", ")}`,
-        "",
-      );
-    if (module.stubPath !== null)
-      lines.push(`Stub: \`${module.stubPath}\``, "");
-    for (const symbol of module.symbols) {
-      lines.push(`- **${symbol.name}** (${symbol.kind})`);
-      if (symbol.declaration !== null)
-        lines.push("", fence(symbol.declaration, "ts"), "");
-    }
-    lines.push("");
-  }
-  return lines;
+  return modules.map((module) => {
+    const names = module.symbols.map((symbol) => symbol.name);
+    const shown = names.slice(0, 12).map((name) => `\`${name}\``).join(", ");
+    const more = names.length > 12 ? `, +${names.length - 12} more` : "";
+    // The folder writes each stub beside the module's path, not where the
+    // contract files it.
+    const stub =
+      module.stubPath === null
+        ? ""
+        : ` → \`${module.module.replace(/\.d\.[cm]?ts$|\.([cm]?)[jt]sx?$/, (whole, m: string | undefined) => (whole.startsWith(".d.") ? whole : `.d.${m ?? ""}ts`))}\``;
+    const importers =
+      module.importedBy.length === 0
+        ? ""
+        : ` (${module.importedBy.length} importer${module.importedBy.length === 1 ? "" : "s"})`;
+    return `- \`${module.module}\`${stub}: ${shown}${more}${importers}`;
+  });
 }
 
-/** `boundary.md`: the whole boundary, readable, rendered from the contract. */
+/**
+ * `BOUNDARY.md`: an index of the boundary, rendered from the contract. What
+ * the slice holds is in the README and `carveout.json`; what each stub
+ * declares is in the stub.
+ */
 export function renderBoundaryMarkdown(
   contract: BoundaryContract,
   manifest: Pick<
@@ -459,9 +459,7 @@ export function renderBoundaryMarkdown(
   const lines: string[] = [
     "# Slice boundary",
     "",
-    `Entry points: ${manifest.entryPoints.map((entry) => `\`${entry}\``).join(", ")}. Budget: ${manifest.budget.maxFiles} files, depth ${manifest.budget.maxDepth}.`,
-    "",
-    `Declaration coverage: **${contract.stubCoverage}**. ${readiness.ready ? "No blockers." : "It has blockers: the project may not build or run until they are fixed."}`,
+    `Entry points: ${manifest.entryPoints.map((entry) => `\`${entry}\``).join(", ")}. Budget: ${manifest.budget.maxFiles} files, depth ${manifest.budget.maxDepth}. ${manifest.included.length} files in the slice. Declaration coverage: **${contract.stubCoverage}**. ${readiness.ready ? "No blockers." : "It has blockers: the project may not build or run until they are fixed."}`,
     "",
   ];
   if (!readiness.ready) {
@@ -469,26 +467,22 @@ export function renderBoundaryMarkdown(
     for (const reason of readiness.reasons) lines.push(`- ${reason}`);
     lines.push("");
   }
-  lines.push("## Included files", "");
-  for (const file of manifest.included)
-    lines.push(
-      `- \`${file.path}\` (${file.sizeBytes} bytes, blob ${file.blobId})`,
-    );
   lines.push(
-    "",
     "## Stubbed modules",
     "",
-    "What the slice imports from outside, as declarations without bodies.",
+    "What the slice imports from outside, with the names it takes. Each stub's `.d.ts` declares them; the `.js` beside it is a recording mock.",
     "",
     ...renderModules(
       contract.outbound,
       "The slice imports nothing outside itself.",
     ),
+    "",
     "## Public surface",
     "",
-    "What outside code imports from the slice; a change must keep these to fit back.",
+    "What outside code imports from the slice; a change must keep these exports to fit back.",
     "",
     ...renderModules(contract.inbound, "Nothing outside the slice imports it."),
+    "",
     "## Externals to mock",
     "",
   );

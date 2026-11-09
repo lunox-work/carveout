@@ -25,12 +25,15 @@ import { statusProject } from "./status.js";
 const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript repository.
 
   carveout plan  <entry>... [--repo <dir>] [--max-files N] [--depth N]
-                 [--with-tests] [--json]
+                 [--with-tests] [--whole-package] [--follow-workspaces]
+                 [--private <path>]... [--json]
       What a cut would hold, from the import graph alone. Writes nothing.
 
   carveout cut   <entry>... --out <dir> [--repo <dir>] [--max-files N] [--depth N]
-                 [--with-tests] [--mock <package>]... [--install <package>]...
-                 [--live <package>]... [--offline] [--widen-literals] [--json]
+                 [--with-tests] [--whole-package] [--follow-workspaces]
+                 [--private <path>]... [--copy <dir>]... [--mock <package>]...
+                 [--install <package>]... [--live <package>]... [--offline]
+                 [--widen-literals] [--json]
       Copies the slice to <dir> at its repository paths, with a .d.ts stub and a
       recording mock for every module it imports from outside, mock packages for
       what it does not install, package.json, tsconfig.json and a lockfile.
@@ -58,6 +61,14 @@ const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript r
 An entry point is a file or a directory, relative to --repo (default: the
 current directory, which should be the repository's root). Defaults:
 --max-files ${SLICE_BUDGET_DEFAULTS.maxFiles}, --depth ${SLICE_BUDGET_DEFAULTS.maxDepth}.
+
+--whole-package copies every file of the entry points' package the walk
+reaches, at any depth, so the cut falls at package and service boundaries.
+--follow-workspaces follows an import of the repository's own packages into
+their source instead of stubbing the package. --private <path> keeps a file
+or folder (or glob) out of every slice: stubbed wherever reached, literals
+widened. --copy <dir> copies a folder the code reads by name (migrations).
+A carveout.config.json at the repository's root sets the same for every cut.
 `;
 
 function fail(message: string): never {
@@ -106,6 +117,10 @@ async function main(argv: readonly string[]) {
       offline: { type: "boolean" },
       "widen-literals": { type: "boolean" },
       "with-tests": { type: "boolean" },
+      "whole-package": { type: "boolean" },
+      "follow-workspaces": { type: "boolean" },
+      private: { type: "string", multiple: true },
+      copy: { type: "string", multiple: true },
       "in-place": { type: "boolean" },
       stubs: { type: "boolean" },
       into: { type: "string" },
@@ -124,6 +139,12 @@ async function main(argv: readonly string[]) {
   const repo = resolve(values.repo ?? ".");
   const print = (value: unknown) =>
     process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+  // Only a flag given overrides the repository's configuration.
+  const bounds = {
+    ...(values["whole-package"] === true ? { wholePackage: true } : {}),
+    ...(values["follow-workspaces"] === true ? { followWorkspaces: true } : {}),
+    ...(values.private === undefined ? {} : { private: values.private }),
+  };
 
   switch (commandName) {
     case "where":
@@ -137,6 +158,7 @@ async function main(argv: readonly string[]) {
         entryPoints: positionals,
         budget,
         tests: values["with-tests"] === true,
+        ...bounds,
       });
       if (values.json === true) {
         print({
@@ -144,10 +166,15 @@ async function main(argv: readonly string[]) {
           entryPoints: plan.entryPoints,
           unknownEntryPoints: plan.walk.unknownEntryPoints,
           budget: plan.budget,
+          wholePackage: plan.wholePackage,
+          followWorkspaces: plan.followWorkspaces,
+          private: plan.private,
           included: plan.walk.included,
           depthOf: plan.walk.depthOf,
           dropped: plan.walk.dropped,
+          privateFiles: plan.walk.privateFiles,
           tests: plan.walk.tests,
+          helpers: plan.walk.helpers,
           untestable: plan.walk.untestable,
           cutModules: plan.cutModules,
           typeOnlyCuts: plan.typeOnlyCuts,
@@ -174,7 +201,7 @@ async function main(argv: readonly string[]) {
       );
       process.stdout.write(
         [
-          `${plan.walk.included.length} files from ${plan.entryPoints.join(", ")} (budget ${plan.budget.maxFiles} files, depth ${plan.budget.maxDepth}; ${plan.graphFiles} script files read)${atLimit ? ", at the file limit: raise --max-files or narrow the entry points" : ""}.`,
+          `${plan.walk.included.length} files from ${plan.entryPoints.join(", ")} (budget ${plan.budget.maxFiles} files, depth ${plan.budget.maxDepth}${plan.wholePackage ? ", the whole package" : ""}${plan.followWorkspaces ? ", workspace packages followed" : ""}; ${plan.graphFiles} script files read)${atLimit ? ", at the file limit: raise --max-files or narrow the entry points" : ""}.`,
           "",
           "Included:",
           list(
@@ -195,6 +222,9 @@ async function main(argv: readonly string[]) {
             : [
                 "Tests brought along:",
                 list(plan.walk.tests),
+                ...(plan.walk.helpers.length === 0
+                  ? []
+                  : ["", "Their helpers, copied with them:", list(plan.walk.helpers)]),
                 ...(plan.walk.untestable.length === 0
                   ? []
                   : [
@@ -211,6 +241,9 @@ async function main(argv: readonly string[]) {
             ),
           ),
           "",
+          ...(plan.walk.privateFiles.length === 0
+            ? []
+            : ["Of those, kept private (never copied):", list(plan.walk.privateFiles), ""]),
           "Imported by code outside the slice:",
           list(importers),
           "",
@@ -285,6 +318,8 @@ async function main(argv: readonly string[]) {
         ...(values["with-tests"] === true ? { tests: true } : {}),
         ...(values.offline === true ? { offline: true } : {}),
         ...(values["widen-literals"] === true ? { widenLiterals: true } : {}),
+        ...bounds,
+        ...(values.copy === undefined ? {} : { copy: values.copy }),
         log: (line) => {
           if (values.json !== true) process.stderr.write(`${line}\n`);
         },

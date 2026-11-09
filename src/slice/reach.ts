@@ -16,6 +16,16 @@
  * its module is cut and stubbed, never copied. A module named to a test
  * runner (`vi.mock`) is never followed either; a file read by path is.
  *
+ * Two options move the cut from the hop count to the package: with
+ * `wholePackage`, every file of the entry points' package the walk reaches
+ * comes along at any depth, so a sibling module is copied, never stubbed;
+ * and a test brought along by `tests` brings its own helpers (the fakes and
+ * builders it imports from its package, or from a test folder anywhere),
+ * since a stub in a fake's place fails the test before any change is made
+ * (E6c: 44% of the tests failing on a fresh cut reached such a stub). A
+ * file the owner marks `private` is never entered, wherever it is reached:
+ * it is cut and stubbed like a module past the budget.
+ *
  * Pure and deterministic: states are visited in path order within a level,
  * so the same graph, entry points and budget give the same slice however
  * the graph ordered its arrays. The budget bounds the proposal; it does not
@@ -87,6 +97,14 @@ export interface ReachResult {
   /** Of the included files, the tests brought along, sorted. */
   readonly tests: readonly string[];
   /**
+   * Of the included files, the helpers the tests brought along: what a
+   * test imports at runtime from its own package, or from a test folder,
+   * that the slice did not already hold. Sorted.
+   */
+  readonly helpers: readonly string[];
+  /** Files the walk reached and kept out as private, sorted; each is a cut. */
+  readonly privateFiles: readonly string[];
+  /**
    * Tests of the slice left behind, sorted: they run on neither `node:test`
    * nor Vitest, or make an import no slice can carry (a computed dynamic
    * import, one that resolves to nothing, a path read of no file).
@@ -102,6 +120,21 @@ export interface ReachOptions {
    * and barrels count against the file budget.
    */
   readonly tests?: boolean;
+  /**
+   * The package folder a file belongs to (`""` for the root), for
+   * `wholePackage` and for a test's helpers. Every file is in one package
+   * without it.
+   */
+  readonly packageOf?: (file: string) => string;
+  /**
+   * Follow the entry points' package past the depth: every file of it the
+   * included files import at runtime (or read by path) comes along, tests
+   * apart, while the file budget lasts. Imports into other packages still
+   * stop at the depth.
+   */
+  readonly wholePackage?: boolean;
+  /** Files never entered: cut and stubbed wherever the walk reaches them. */
+  readonly isPrivate?: (file: string) => boolean;
 }
 
 /** `x.test.ts`, `x.spec.tsx`, or anything under `__tests__/`. */
@@ -109,6 +142,14 @@ export const TEST_PATH_PATTERN = /\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)__tests__\/
 
 export function isTestPath(path: string): boolean {
   return TEST_PATH_PATTERN.test(path);
+}
+
+/** A file in a folder of test support: fakes, fixtures, builders. */
+export const TEST_SUPPORT_PATH_PATTERN =
+  /(^|\/)(test|tests|__tests__|__mocks__|testing|fixtures|test-utils|test_utils|testutils)\//;
+
+export function isTestSupportPath(path: string): boolean {
+  return TEST_SUPPORT_PATH_PATTERN.test(path);
 }
 
 /** The test runner a test file imports, when carveout can run it. */
@@ -281,6 +322,15 @@ export function reach(
   }
   const maxFiles = Math.max(0, Math.floor(budget.maxFiles));
   const maxDepth = Math.max(0, Math.floor(budget.maxDepth));
+  const packageOf = options.packageOf ?? (() => "");
+  const isPrivate = options.isPrivate ?? (() => false);
+  const privateFiles = new Set<string>();
+  /** Whether the file is kept out as private, noting that it was reached. */
+  const keptOut = (file: string) => {
+    if (!isPrivate(file)) return false;
+    privateFiles.add(file);
+    return true;
+  };
   // A Map, not an object: paths are repository data, and a file named
   // `constructor` or `__proto__` would read as already reached through the
   // prototype under `in`.
@@ -297,6 +347,7 @@ export function reach(
     /** Whether the file is in the slice, adding it while the budget lasts. */
     const enter = (file: string): boolean => {
       if (depthOf.has(file)) return true;
+      if (keptOut(file)) return false;
       if (depthOf.size >= maxFiles) {
         dropped.add(file);
         return false;
@@ -369,42 +420,105 @@ export function reach(
     level = next;
     depth++;
   }
+  // The entry points' package in whole: from every included file, each
+  // import or path read into that package is followed, at any depth, until
+  // the package is exhausted or the budget is. A test comes only with
+  // `tests`; another package's file only within the depth. Run again once
+  // the tests are in, for the barrel a test imports through and the files
+  // the tests reach.
+  const packages = new Set([...entries].map(packageOf));
+  const closePackage = () => {
+    if (options.wholePackage !== true || dropped.size > 0) return;
+    let frontier = [...depthOf.keys()].sort(compare);
+    while (frontier.length > 0) {
+      const next: string[] = [];
+      for (const file of frontier) {
+        const depth = depthOf.get(file) ?? 0;
+        for (const { link, edge } of outgoing.get(file) ?? []) {
+          if (link.relation === "references") continue;
+          if (depthOf.has(edge.to) || isTestPath(edge.to) || keptOut(edge.to)) continue;
+          if (!packages.has(packageOf(edge.to))) continue;
+          if (depthOf.size >= maxFiles) {
+            dropped.add(edge.to);
+            continue;
+          }
+          depthOf.set(edge.to, depth + 1);
+          next.push(edge.to);
+        }
+      }
+      frontier = next.sort(compare);
+    }
+  };
+  closePackage();
   const tests: string[] = [];
+  const helpers: string[] = [];
   const untestable = new Set<string>();
+  /**
+   * Whether a test's runtime import of a file the slice does not hold is
+   * one the test brings along: a file of its own package, or of a test
+   * folder anywhere, that is not itself a test and not private.
+   */
+  const helperOf = (test: string, file: string) =>
+    !isTestPath(file) &&
+    !keptOut(file) &&
+    (packageOf(file) === packageOf(test) || isTestSupportPath(file));
   if (options.tests === true && dropped.size === 0) {
     // A barrel outside the slice that re-exports from inside it, with the
     // names it forwards from there and the depth of the nearest. A test
     // that takes one of those names through the barrel exercises the
     // slice, so it comes along, and the barrel with it: at the depth of
     // what it forwards, as a re-export is, its other re-exports cut.
-    const barrels = new Map<string, { depth: number; names: Set<string> }>();
+    const barrels = new Map<
+      string,
+      { depth: number; names: Set<string>; packages: Set<string> }
+    >();
     for (const [file, outs] of outgoing) {
-      if (depthOf.has(file) || isTestPath(file)) continue;
+      if (depthOf.has(file) || isTestPath(file) || isPrivate(file)) continue;
       for (const { link, edge } of outs) {
         if (link.forwards === null || link.typeOnly) continue;
         const depth = depthOf.get(edge.to);
         if (depth === undefined) continue;
-        const entry = barrels.get(file) ?? { depth, names: new Set<string>() };
+        const entry = barrels.get(file) ?? {
+          depth,
+          names: new Set<string>(),
+          packages: new Set<string>(),
+        };
         entry.depth = Math.min(entry.depth, depth);
+        entry.packages.add(packageOf(edge.to));
         if (link.forwards === EVERYTHING)
           for (const name of exported(edge.to).names) entry.names.add(name);
         else for (const [, as] of link.forwards) entry.names.add(as);
         barrels.set(file, entry);
       }
     }
-    /** Each test outside the slice that imports it, with the barrels it goes through. */
+    /**
+     * Each test outside the slice that imports it, with the barrels it goes
+     * through. A test of the slice is one of its own package: another
+     * package's test that imports the slice (through a followed workspace
+     * package, say) tests that package, and would bring that package's
+     * files along as its helpers.
+     */
     const candidates = new Map<string, Set<string>>();
     /** Tests that also reach a file the slice holds neither way. */
     const strays = new Set<string>();
     for (const file of files) {
-      if (depthOf.has(file) || !isTestPath(file)) continue;
+      if (depthOf.has(file) || !isTestPath(file) || isPrivate(file)) continue;
+      const own = packageOf(file);
       for (const { link, edge } of outgoing.get(file) ?? []) {
-        if (!depthOf.has(edge.to) && !barrels.has(edge.to)) strays.add(file);
+        if (
+          !depthOf.has(edge.to) &&
+          !barrels.has(edge.to) &&
+          (link.typeOnly || !helperOf(file, edge.to))
+        )
+          strays.add(file);
         if (link.relation !== "imports" || link.typeOnly) continue;
         const through = barrels.get(edge.to);
-        if (depthOf.has(edge.to)) candidates.set(file, candidates.get(file) ?? new Set());
-        else if (
+        if (depthOf.has(edge.to)) {
+          if (packageOf(edge.to) === own)
+            candidates.set(file, candidates.get(file) ?? new Set());
+        } else if (
           through !== undefined &&
+          through.packages.has(own) &&
           (link.names === null || link.names.some((name) => through.names.has(name)))
         ) {
           const set = candidates.get(file) ?? new Set<string>();
@@ -448,7 +562,30 @@ export function reach(
       );
       depthOf.set(file, nearest + 1);
       tests.push(file);
+      // The test's own helpers, and theirs, while the budget lasts: a fake
+      // the test imports is copied, not stubbed, or the test fails on the
+      // stub before any change is made.
+      let frontier = [file];
+      let depth = nearest + 1;
+      while (frontier.length > 0) {
+        depth += 1;
+        const next: string[] = [];
+        for (const from of frontier)
+          for (const { link, edge } of outgoing.get(from) ?? []) {
+            if (link.relation === "references" || link.typeOnly) continue;
+            if (depthOf.has(edge.to) || !helperOf(file, edge.to)) continue;
+            if (depthOf.size >= maxFiles) {
+              dropped.add(edge.to);
+              continue;
+            }
+            depthOf.set(edge.to, depth);
+            helpers.push(edge.to);
+            next.push(edge.to);
+          }
+        frontier = next.sort(compare);
+      }
     }
+    closePackage();
   }
   const included = [...depthOf.keys()].sort(compare);
   const inside = new Set(included);
@@ -484,6 +621,8 @@ export function reach(
       compare(dependencyKey(a), dependencyKey(b)),
     ),
     tests: tests.sort(compare),
+    helpers: helpers.sort(compare),
+    privateFiles: [...privateFiles].sort(compare),
     untestable: [...untestable].sort(compare),
   };
 }

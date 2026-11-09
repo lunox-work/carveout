@@ -9,19 +9,22 @@
 
 import { existsSync } from "node:fs";
 import { join, posix } from "node:path";
-import { IMPORT_LITERAL, relativeSpecifier, type ImportRewrite } from "./core.js";
+import { relativeSpecifier, type ImportRewrite } from "./core.js";
+import { moduleSpecifiers, rewriteSpecifiers } from "./specifiers.js";
 
 /**
  * `text` with the folder's import rewrites put back as the source wrote
  * them. Two specifiers the cut rewrote to one (`@/lib/format` and
  * `../../lib/format` both to `../../lib/format.js`) are told apart by
  * `original`, the file as the cut read it: they come back in the order it
- * wrote them. Without it, the last recorded wins.
+ * wrote them. Without it, the last recorded wins. `path` tells the parser
+ * what kind of file the text is (`.tsx` reads JSX); a `.ts` without it.
  */
 export function undoRewrites(
   text: string,
   rewrites: readonly ImportRewrite[],
   original: string | null = null,
+  path = "file.ts",
 ): string {
   if (rewrites.length === 0) return text;
   const froms = new Map<string, string[]>();
@@ -33,28 +36,20 @@ export function undoRewrites(
   // Each ambiguous target's originals, in the order the source has them.
   const queues = new Map<string, string[]>();
   if (original !== null)
-    for (const match of original.matchAll(IMPORT_LITERAL)) {
-      const specifier = match[3] ?? "";
+    for (const { specifier } of moduleSpecifiers(path, original))
       for (const [to, list] of froms)
         if (list.length > 1 && list.includes(specifier))
           queues.set(to, [...(queues.get(to) ?? []), specifier]);
-    }
-  return text.replace(
-    IMPORT_LITERAL,
-    (whole, prefix: string, quote: string, specifier: string) => {
-      const list = froms.get(specifier);
-      if (list === undefined) return whole;
-      const from = queues.get(specifier)?.shift() ?? list.at(-1) ?? specifier;
-      return `${prefix}${quote}${from}${quote}`;
-    },
-  );
+  return rewriteSpecifiers(path, text, ({ specifier }) => {
+    const list = froms.get(specifier);
+    if (list === undefined) return null;
+    return queues.get(specifier)?.shift() ?? list.at(-1) ?? specifier;
+  });
 }
 
-/** Every specifier a source writes, as `IMPORT_LITERAL` finds them. */
-export function specifiersOf(text: string): Set<string> {
-  return new Set(
-    [...text.matchAll(IMPORT_LITERAL)].map((match) => match[3] ?? ""),
-  );
+/** Every specifier a source writes, in source order. */
+export function specifiersOf(text: string, path = "file.ts"): Set<string> {
+  return new Set(moduleSpecifiers(path, text).map((item) => item.specifier));
 }
 
 const isRelative = (specifier: string) =>
@@ -111,21 +106,17 @@ export function restoreImports(
   rewrites: readonly ImportRewrite[],
   context: ImportContext,
 ): RestoredImports {
-  const undone = undoRewrites(text, rewrites, original);
-  const kept = original === null ? new Set<string>() : specifiersOf(original);
+  const undone = undoRewrites(text, rewrites, original, file);
+  const kept = original === null ? new Set<string>() : specifiersOf(original, file);
   const crossPackage: string[] = [];
-  const restored = undone.replace(
-    IMPORT_LITERAL,
-    (whole, prefix: string, quote: string, specifier: string) => {
-      if (!isRelative(specifier) || kept.has(specifier)) return whole;
-      const target = importTarget(file, specifier, context);
-      if (target === null) return whole;
-      const spelling = spellingOf(file, target, context);
-      if (spelling === null) crossPackage.push(specifier);
-      const to = spelling ?? relativeIn(file, target, context);
-      return to === specifier ? whole : `${prefix}${quote}${to}${quote}`;
-    },
-  );
+  const restored = rewriteSpecifiers(file, undone, ({ specifier }) => {
+    if (!isRelative(specifier) || kept.has(specifier)) return null;
+    const target = importTarget(file, specifier, context);
+    if (target === null) return null;
+    const spelling = spellingOf(file, target, context);
+    if (spelling === null) crossPackage.push(specifier);
+    return spelling ?? relativeIn(file, target, context);
+  });
   return { text: restored, crossPackage };
 }
 

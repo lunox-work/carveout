@@ -10,7 +10,10 @@
  * `dependency:` node, which the walk reports rather than follows. Modules resolve with
  * the nearest `tsconfig.json` (Node's resolution when there is none), and
  * never through `node_modules`, so a workspace package is a bare specifier
- * here, as it is in a snapshot without its installs.
+ * here, as it is in a snapshot without its installs. With
+ * `followWorkspaces`, an import of one of the repository's own packages is
+ * resolved to its source through the package's manifest and becomes a link
+ * to that file, so the walk copies or cuts it as it does any module.
  *
  * Nothing here runs repository code. The same files give the same graph.
  */
@@ -27,9 +30,11 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import ts from "typescript";
 import {
   loadConfig,
+  workspaceModuleResolver,
   workspacePackages,
   type LoadedConfig,
 } from "./extract/compiler-config.js";
+import { packageFolder } from "./imports.js";
 import {
   ALL,
   isDataPath,
@@ -164,11 +169,24 @@ export interface BuiltGraph {
   readonly timings: { readonly listMs: number; readonly parseMs: number; readonly resolveMs: number };
 }
 
+/** How the graph reads imports of the repository's own packages. */
+export interface GraphOptions {
+  /** Resolve a workspace package's import to its source file. */
+  readonly followWorkspaces?: boolean;
+}
+
+/** What `walkGraph` takes: the walk's options and the graph's. */
+export type WalkOptions = ReachOptions & GraphOptions;
+
 /** The graph of every script file of the checkout. */
-export function buildGraph(root: string, listed?: readonly string[]): BuiltGraph {
+export function buildGraph(
+  root: string,
+  listed?: readonly string[],
+  options: GraphOptions = {},
+): BuiltGraph {
   const started = performance.now();
   const files = listed ?? listFiles(root);
-  const builder = graphBuilder(root, files, performance.now() - started);
+  const builder = graphBuilder(root, files, performance.now() - started, options);
   builder.add(files);
   return builder.built();
 }
@@ -192,12 +210,18 @@ export function walkGraph(
   root: string,
   entryPoints: readonly string[],
   budget: SliceBudget,
-  options: ReachOptions = {},
+  options: WalkOptions = {},
 ): { built: BuiltGraph; walk: ReachResult } {
   const started = performance.now();
   const files = listFiles(root);
-  const builder = graphBuilder(root, files, performance.now() - started);
+  const { followWorkspaces, ...rest } = options;
+  const graphOptions = followWorkspaces === undefined ? {} : { followWorkspaces };
+  const builder = graphBuilder(root, files, performance.now() - started, graphOptions);
   const absoluteRoot = resolve(root);
+  const reachOptions: ReachOptions = {
+    ...rest,
+    packageOf: rest.packageOf ?? packageFolder(absoluteRoot),
+  };
   const scripts = files.filter((file) => SCRIPT.test(file));
   const prefixes = entryPoints.map((entry) =>
     entry.replaceAll("\\", "/").replace(/^\.\//, "").replace(/^\/+|\/+$/g, ""),
@@ -208,12 +232,24 @@ export function walkGraph(
     ),
   );
   const aliases = exactAliases(absoluteRoot, files);
+  // A followed workspace package is imported by its name, which spells
+  // neither the file's name nor its folder's: the name is a needle too.
+  if (followWorkspaces === true) {
+    const workspaces = workspacePackages(absoluteRoot);
+    const resolver = workspaceModuleResolver(absoluteRoot, () => workspaces);
+    for (const name of [...workspaces.keys()].sort(compare)) {
+      const module = resolver(name);
+      if (module === null) continue;
+      const key = moduleKey(module);
+      aliases.set(key, [...(aliases.get(key) ?? []), name]);
+    }
+  }
   const searched = new Set<string>();
   const read = new Set<string>();
   for (;;) {
     const built = builder.built();
     for (const file of built.files) read.add(file);
-    const walk = reach(built.graph, entryPoints, budget, options);
+    const walk = reach(built.graph, entryPoints, budget, reachOptions);
     // What the reached files name, and what that forwards to in turn.
     const outOf = new Map<string, SliceGraphLink[]>();
     for (const link of built.graph.links)
@@ -338,6 +374,7 @@ function graphBuilder(
   root: string,
   files: readonly string[],
   listMs: number,
+  graphOptions: GraphOptions = {},
 ): { add: (paths: Iterable<string>) => void; built: () => BuiltGraph } {
   const started = performance.now() - listMs;
   let resolveMs = 0;
@@ -401,6 +438,8 @@ function graphBuilder(
     packages: () => (workspaces ??= workspacePackages(absoluteRoot)),
     loaded: new Map<string, LoadedConfig>(),
   };
+  // The source a workspace package's name resolves to, when followed.
+  const workspaceModule = workspaceModuleResolver(absoluteRoot, shared.packages);
   const caches = new Map<ts.CompilerOptions, ts.ModuleResolutionCache>();
   const cacheOf = (options: ts.CompilerOptions) => {
     let cache = caches.get(options);
@@ -470,7 +509,11 @@ function graphBuilder(
         result === undefined && specifier.startsWith(".")
           ? resolve(directory, specifier.split(/[?#]/)[0] ?? "")
           : null;
-      const target =
+      const bare =
+        !specifier.startsWith(".") &&
+        !specifier.startsWith("/") &&
+        !/^[A-Za-z]:[\\/]/.test(specifier);
+      let target =
         result !== undefined && inside(result.resolvedFileName)
           ? posix(relative(absoluteRoot, result.resolvedFileName))
           : asset !== null &&
@@ -480,11 +523,12 @@ function graphBuilder(
               statSync(asset).isFile()
             ? posix(relative(absoluteRoot, asset))
             : null;
+      // One of the repository's own packages, followed into its source.
+      if (target === null && bare && graphOptions.followWorkspaces === true) {
+        const module = workspaceModule(specifier);
+        if (module !== null && listedFiles.has(module)) target = module;
+      }
       resolveMs += performance.now() - resolving;
-      const bare =
-        !specifier.startsWith(".") &&
-        !specifier.startsWith("/") &&
-        !/^[A-Za-z]:[\\/]/.test(specifier);
       links.push({
         source: from,
         target:

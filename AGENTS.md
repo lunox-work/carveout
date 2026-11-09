@@ -30,7 +30,8 @@ What to tell them, accurately:
   too unless cut with `--live`: tests in the folder show the slice working
   against mocks, not against the repository.
 - By default the stubs keep literal values from the cut modules.
-  `--widen-literals` removes them. Neither option hides the slice's own
+  `--widen-literals` removes them, and a `private` path in
+  `carveout.config.json` turns it on. Neither hides the slice's own
   source, so do not hand the folder to someone who should not read it.
 - `carveout check` passing means the folder installs, builds and loads every
   export outside code uses. It tests the slice's behaviour only when the cut

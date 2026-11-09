@@ -26,6 +26,56 @@ export interface SliceParams {
    * left to the shell. Absent when none.
    */
   readonly live?: readonly string[];
+  /**
+   * Include every file of the entry points' package the walk reaches, at
+   * any depth: the cut falls at package and service boundaries only, so a
+   * sibling module is copied rather than stubbed. Absent when off.
+   */
+  readonly wholePackage?: boolean;
+  /**
+   * Follow an import of one of the repository's own packages into its
+   * source, as an import of a file is followed, rather than stubbing the
+   * package at the seam. Absent when off.
+   */
+  readonly followWorkspaces?: boolean;
+  /**
+   * Files never copied, as paths or globs from the repository's root:
+   * wherever the walk reaches one it is cut and stubbed, with its literal
+   * values widened. Absent when none.
+   */
+  readonly private?: readonly string[];
+  /**
+   * Folders (or files) copied in whole beside the slice, as paths from the
+   * repository's root: what the code reads by a name the walk cannot
+   * follow, such as a migrations folder. A path read into one is no
+   * blocker. Absent when none.
+   */
+  readonly copy?: readonly string[];
+}
+
+/**
+ * Whether a repository path matches one of `patterns`: the path itself,
+ * anything under it as a folder, or a glob (`*` within one segment, `**`
+ * across segments). Pure, so a slice's record can say what was kept out.
+ */
+export function pathMatcher(
+  patterns: readonly string[],
+): (path: string) => boolean {
+  const expressions = patterns.map((pattern) => {
+    const clean = pattern.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "");
+    const source = clean
+      .split(/(\*\*\/?|\*)/)
+      .map((part) =>
+        part === "**/" || part === "**"
+          ? "(?:.*/)?"
+          : part === "*"
+            ? "[^/]*"
+            : part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"),
+      )
+      .join("");
+    return new RegExp(`^${source}(?:/.*)?$`);
+  });
+  return (path) => expressions.some((expression) => expression.test(path));
 }
 
 export function canonicalJson(value: unknown): string {

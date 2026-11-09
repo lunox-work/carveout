@@ -41,6 +41,7 @@ import {
   testRunnerOf,
 } from "../slice/reach.js";
 import { scanSecrets, secretBlockers } from "./secrets.js";
+import { moduleSpecifiers, rewriteSpecifiers } from "../specifiers.js";
 
 export const HARNESS_DIR = "carveout";
 export const MOCKS_DIR = `${HARNESS_DIR}/packages`;
@@ -366,28 +367,11 @@ export function runtimeKindOf(
   if (/^export\s+(default\s+|\{)/.test(declaration)) return "value";
   return "unknown";
 }
-/**
- * A module specifier as a source writes it: in an import or re-export, a
- * `require` or `import()`, or a call that names a module to a test runner
- * or a resolver (`vi.mock`, `jest.requireActual`, `require.resolve`).
- * Rewrites and their undoing both match with it.
- */
-// The import clause may span lines, but never a line that opens a comment:
-// a doc comment that says "import" would otherwise run on to the first real
-// import below it and swallow it, so neither cut nor patch would rewrite it.
-export const IMPORT_LITERAL =
-  /((?:\bimport|\bexport)\s+(?:type\s+)?(?:[^'";\s](?:[^'";\n]|\n(?![ \t]*(?:\*|\/\/)))*?\sfrom\s+)?|\brequire\(\s*|\bimport\(\s*|\b(?:vi|jest)\.(?:mock|doMock|unmock|doUnmock|dontMock|importActual|importMock|requireActual|requireMock|createMockFromModule)\(\s*|\brequire\.resolve\(\s*|\bimport\.meta\.resolve\(\s*)(['"])([^'"\n]+)\2/g;
+// Module specifiers are read from the syntax tree (`../specifiers.ts`);
+// this pattern finds only the named bindings of an import, for the mock
+// packages' exports.
 const NAMED_IMPORT =
   /\bimport\s+(type\s+)?(?:[\w$]+\s*,\s*)?\{([^}]*)\}\s*from\s*['"]([^'"\n]+)['"]/g;
-
-/**
- * Whether the text before `offset` on its line opens a comment: a
- * commented-out import, or one quoted in a doc comment, is not an import.
- */
-function onCommentLine(text: string, offset: number): boolean {
-  const start = text.lastIndexOf("\n", offset - 1) + 1;
-  return /^\s*(\/\/|\/\*|\*)/.test(text.slice(start, offset));
-}
 
 export function dirnameOf(path: string): string {
   const index = path.lastIndexOf("/");
@@ -1052,32 +1036,50 @@ function testRunnerScript(coverage: CoverageGate | undefined): string {
     "  if (result.status !== 0) failed = true;",
     "};",
     "if (node.length > 0) {",
-    "  // A TAP copy of the run beside the usual output, for the baseline.",
+    `  const baseline = existsSync(${JSON.stringify(BASELINE_PATH)}) ? new Set(JSON.parse(readFileSync(${JSON.stringify(BASELINE_PATH)}, "utf8")).failing) : null;`,
+    "  // With a baseline (the tests that failed on the mocks before any edit),",
+    "  // the run is read from its TAP alone and reported in short: the counts,",
+    "  // then each failure that is not the baseline's, in full. Printing every",
+    "  // failure printed mostly the baseline's (E6c: 7% of what a session read).",
+    "  // Without one, the usual report, with a TAP copy for the baseline.",
     "  const result = spawnSync(process.execPath, [",
     `    "--env-file=${ENV_FILE}", "--import=./${ASSETS_LOADER_PATH}", "--test",`,
-    '    "--test-reporter=spec", "--test-reporter-destination=stdout",',
+    '    ...(baseline === null ? ["--test-reporter=spec", "--test-reporter-destination=stdout"] : []),',
     `    "--test-reporter=tap", "--test-reporter-destination=${LAST_RUN_PATH}",`,
     "    ...gate, ...node,",
     '  ], { stdio: "inherit" });',
-    "  if (result.status !== 0) {",
-    `    const tap = existsSync(${JSON.stringify(LAST_RUN_PATH)}) ? readFileSync(${JSON.stringify(LAST_RUN_PATH)}, "utf8") : "";`,
-    "    const failing = [...new Set([...tap.matchAll(/^\\s*not ok \\d+ - (.+?)(?: # .*)?$/gm)].map((m) => m[1]))];",
-    "    const gateFailed = /coverage does not meet threshold/.test(tap);",
-    `    const baseline = existsSync(${JSON.stringify(BASELINE_PATH)}) ? new Set(JSON.parse(readFileSync(${JSON.stringify(BASELINE_PATH)}, "utf8")).failing) : null;`,
-    "    const fresh = failing.filter((name) => baseline === null || !baseline.has(name));",
-    "    if (baseline !== null && failing.length > 0 && fresh.length === 0 && !gateFailed)",
+    `  const tap = existsSync(${JSON.stringify(LAST_RUN_PATH)}) ? readFileSync(${JSON.stringify(LAST_RUN_PATH)}, "utf8") : "";`,
+    "  const failing = [...new Set([...tap.matchAll(/^\\s*not ok \\d+ - (.+?)(?: # .*)?$/gm)].map((m) => m[1]))];",
+    "  const gateFailed = /coverage does not meet threshold/.test(tap);",
+    "  const fresh = failing.filter((name) => baseline === null || !baseline.has(name));",
+    "  if (baseline !== null) {",
+    '    const count = (key) => Number(new RegExp("^# " + key + " (\\\\d+)$", "m").exec(tap)?.[1] ?? 0);',
+    "    const lines = tap.split(\"\\n\");",
+    "    /** A failure's TAP lines: its `not ok` and the diagnostic under it. */",
+    "    const block = (name) => {",
+    "      const at = lines.findIndex((line) => /^\\s*not ok \\d+ - /.test(line) && line.replace(/^\\s*not ok \\d+ - /, \"\").replace(/ # .*$/, \"\") === name);",
+    "      if (at === -1) return `not ok - ${name}`;",
+    "      const indent = /^\\s*/.exec(lines[at])[0].length;",
+    "      const out = [lines[at].trim()];",
+    "      for (let i = at + 1; i < lines.length && out.length < 40; i++) {",
+    "        const own = /^\\s*/.exec(lines[i])[0].length;",
+    "        if (own <= indent && /^\\s*((not )?ok \\d+|# |\\d+\\.\\.\\d+)/.test(lines[i])) break;",
+    "        out.push(lines[i].slice(indent));",
+    "      }",
+    "      return out.join(\"\\n\");",
+    "    };",
+    "    process.stdout.write(`${count(\"pass\")} of ${count(\"tests\")} tests pass.\\n`);",
+    "    if (fresh.length > 0)",
+    "      process.stdout.write(`\\nFailing now and not when the folder was checked:\\n\\n${fresh.map(block).join(\"\\n\\n\")}\\n`);",
+    "    if (failing.length > fresh.length)",
+    `      process.stdout.write(\`\\n\${failing.length - fresh.length} test(s) fail on the mocks as they did when the folder was checked, not on your change; not counted (${BASELINE_PATH} names them).\\n\`);`,
+    "  }",
+    "  if (result.status !== 0 && !(baseline !== null && failing.length > 0 && fresh.length === 0 && !gateFailed)) {",
+    "    failed = true;",
+    "    if (gateFailed)",
     "      process.stdout.write(",
-    `        \`\\n\${failing.length} test(s) failed as they did when the folder was checked: they fail on the mocks, not on your change (${BASELINE_PATH}). Not counted:\\n\${failing.map((name) => \`  \${name}\`).join("\\n")}\\n\`,`,
+    `        "\\nnpm test fails on coverage: the files you added are below the repository's coverage threshold (the report is above, or in ${LAST_RUN_PATH}). The repository measures its whole package, so its result may differ.\\n",`,
     "      );",
-    "    else {",
-    "      failed = true;",
-    "      if (baseline !== null && fresh.length > 0 && fresh.length < failing.length)",
-    "        process.stdout.write(`\\nFailing now and not when the folder was checked:\\n${fresh.map((name) => `  ${name}`).join(\"\\n\")}\\n`);",
-    "      if (gateFailed)",
-    "        process.stdout.write(",
-    `          "\\nnpm test fails on coverage: the files you added are below the repository's coverage threshold (the report above). The repository measures its whole package, so its result may differ.\\n",`,
-    "        );",
-    "    }",
     "  }",
     "}",
     "if (typeof guard !== \"undefined\" && guard !== null && node.length > 0 && !failed) {",
@@ -1259,7 +1261,9 @@ function readme(input: {
     "",
     ...list(input.tests, "None."),
     "",
-    "`BOUNDARY.md` lists what the slice imports from outside and what outside code imports from it; `carveout.json` records the cut.",
+    `\`${SANDBOX_COMMANDS.test}\` builds the folder, then runs every \`*.test.ts\` in it on the runner it imports (\`node:test\` on the compiled \`.js\`, Vitest on the source), the tests above and any you add. Tests that failed on the mocks before any edit are listed in \`${BASELINE_PATH}\` once the folder has been checked; the run reports the counts, prints in full only the failures that are not among them, and does not count them. There is nothing to read in \`${TEST_RUNNER_PATH}\` beyond this.`,
+    "",
+    "`BOUNDARY.md` is an index of the modules the slice imports from outside and of the exports outside code takes from it; the types are in the `.d.ts` stubs beside the mocks. `carveout.json` records the cut.",
   ].join("\n")}\n`;
 }
 
@@ -1303,49 +1307,41 @@ export function generateProject(input: ProjectInput): GeneratedProject {
   for (const source of input.sources) {
     let text = source.text;
     if (isScript(source.path))
-      text = source.text.replace(
-        IMPORT_LITERAL,
-        (
-          whole,
-          prefix: string,
-          quote: string,
-          specifier: string,
-          offset: number,
-          all: string,
-        ) => {
-          if (onCommentLine(all, offset)) return whole;
-          const relative =
-            specifier.startsWith(".") || specifier.startsWith("/");
-          if (
-            specifier.startsWith("node:") ||
-            (!relative && known.has(packageNameOf(specifier)))
-          )
-            return whole;
-          const target = targetOf.get(`${source.originalPath}\n${specifier}`);
-          const projectTarget = target === undefined ? null : pathOf(target);
-          if (projectTarget === null) {
-            // A relative import the graph did not record is left as written
-            // for the compiler to judge; a cut module without a stub is
-            // already a `mock_unsupported` blocker.
-            if (!relative)
-              blockers.push({
-                code: "import_unrewritable",
-                file: source.originalPath,
-                detail: `${specifier} is neither a package nor a module the slice resolved.`,
-              });
-            return whole;
-          }
-          const to = relativeSpecifier(source.path, projectTarget);
-          // A relative import is kept as written unless Node's resolution
-          // needs it spelled out: an extensionless or directory import a
-          // bundler resolved, or an asset whose path it names already.
-          if (relative && projectTarget === target && isAssetPath(target))
-            return whole;
-          if (to === specifier) return whole;
-          rewrites.push({ file: source.path, from: specifier, to });
-          return `${prefix}${quote}${to}${quote}`;
-        },
-      );
+      // Each specifier the syntax tree holds, and nothing a comment or a
+      // string quotes: a misread here was a false blocker or an import
+      // left for Node to fail on.
+      text = rewriteSpecifiers(source.path, source.text, ({ specifier }) => {
+        const relative =
+          specifier.startsWith(".") || specifier.startsWith("/");
+        if (
+          specifier.startsWith("node:") ||
+          (!relative && known.has(packageNameOf(specifier)))
+        )
+          return null;
+        const target = targetOf.get(`${source.originalPath}\n${specifier}`);
+        const projectTarget = target === undefined ? null : pathOf(target);
+        if (projectTarget === null) {
+          // A relative import the graph did not record is left as written
+          // for the compiler to judge; a cut module without a stub is
+          // already a `mock_unsupported` blocker.
+          if (!relative)
+            blockers.push({
+              code: "import_unrewritable",
+              file: source.originalPath,
+              detail: `${specifier} is neither a package nor a module the slice resolved.`,
+            });
+          return null;
+        }
+        const to = relativeSpecifier(source.path, projectTarget);
+        // A relative import is kept as written unless Node's resolution
+        // needs it spelled out: an extensionless or directory import a
+        // bundler resolved, or an asset whose path it names already.
+        if (relative && projectTarget === target && isAssetPath(target))
+          return null;
+        if (to === specifier) return null;
+        rewrites.push({ file: source.path, from: specifier, to });
+        return to;
+      });
     else if (/\.[cm]?jsx?$/.test(source.originalPath))
       blockers.push({
         code: "language_unsupported",
@@ -1547,7 +1543,7 @@ export function generateProject(input: ProjectInput): GeneratedProject {
     for (const source of input.sources) {
       if (!isScript(source.path) || !isTestPath(source.originalPath)) continue;
       const runner = testRunnerOf(
-        [...source.text.matchAll(IMPORT_LITERAL)].map((match) => match[3] ?? ""),
+        moduleSpecifiers(source.path, source.text).map((item) => item.specifier),
       );
       if (runner === "vitest") vitestTests.push(source.path);
       else if (runner === null) continue;

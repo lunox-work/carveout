@@ -28,6 +28,7 @@ their source. Entry points are files or directories relative to the root.
 
 ```sh
 carveout plan <entry>... [--depth N] [--max-files N] [--with-tests]
+              [--whole-package] [--follow-workspaces] [--private <path>]...
 ```
 
 It reads the import graph and runs nothing. It prints:
@@ -62,15 +63,38 @@ data.
 (`*.test.*`, `*.spec.*`, `__tests__/`), when they run on `node:test` or
 Vitest. A test that reaches a slice module through a barrel outside the
 slice counts; the barrel comes along at the depth of what it forwards, its
-other re-exports cut. The plan lists as left behind the tests on other
+other re-exports cut. Each test brings its own helpers too: what it imports
+at runtime from its package, or from a test folder anywhere, so a fake is
+copied rather than stubbed (a stubbed fake fails the test before any
+change). The plan lists them, and lists as left behind the tests on other
 runners, and those that make an import no slice can carry: a computed
 dynamic import, or one that resolves to no file.
+
+Three options move the cut from the hop count to the package. Prefer them
+when the plan shows sibling modules or workspace packages cut, or the check
+leaves tests failing on the mocks:
+
+- `--whole-package`: every file of the entry points' package the imports
+  reach comes along at any depth; the cut falls at the package's edge and
+  at service packages. Imports into other packages still stop at `--depth`.
+- `--follow-workspaces`: an import of one of the repository's own packages
+  is followed into its source, copied or cut like a file, instead of the
+  package being stubbed whole at the seam. It copies the lower layers of
+  the repository, so pair it with `--private`.
+- `--private <path>`: a file, folder or glob never copied; stubbed wherever
+  reached, its literal values widened. The plan names what it kept out.
+
+The repository's owner can set all three, with `copy` and `widenLiterals`,
+once in `carveout.config.json` at the root; a flag overrides a boolean,
+lists are joined. Read it before proposing flags: it says what the owner
+allows a slice to hold.
 
 ## 2. Cut
 
 ```sh
 carveout cut <entry>... --out <empty folder> [--depth N] [--max-files N] [--with-tests]
-             [--mock <pkg>]... [--install <pkg>]... [--live <pkg>]...
+             [--whole-package] [--follow-workspaces] [--private <path>]...
+             [--copy <dir>]... [--mock <pkg>]... [--install <pkg>]... [--live <pkg>]...
 ```
 
 What the folder holds:
@@ -80,7 +104,12 @@ What the folder holds:
   the compiler, beside a `.js` recording mock.
 - `package.json` and `tsconfig.json`.
 - `carveout/`: the mock runtime, the asset loader and an interface test.
-- `BOUNDARY.md`, `carveout.json` and `carveout.env`.
+- `BOUNDARY.md`, an index of the stubbed modules and the public surface
+  (the declarations are in the stubs), `carveout.json` and `carveout.env`.
+- With `--copy <dir>`, the folder's files beside the slice: what the code
+  reads by a name the walk cannot follow, such as `packages/db/drizzle`.
+  They are the repository's files, so an edit to one is in the patch, and a
+  `path_read` of the folder is no blocker.
 
 How packages are handled:
 
@@ -93,7 +122,10 @@ How packages are handled:
 - `--mock <pkg>` and `--install <pkg>` override the default.
   `--install <pkg>` also adds a package the slice does not import, at the
   version the repository's lockfile has. The cut prints the optional peers
-  this applies to.
+  this applies to. A service package whose class a carried test patches by
+  prototype (`S3Client.prototype.send = ...`) is installed without being
+  asked, and the cut says so: a mock has no prototype to patch, and such a
+  test never reaches the service.
 - `--live <pkg>` keeps a service package real: installed and typed as the
   repository has it, and the environment the files that import it read is
   left out of `carveout.env`, so the shell's values or the code's own
@@ -141,6 +173,10 @@ with `--install vitest`. When a
 package is missing at runtime, the check says which `--install` to cut again
 with. Report the result to the person as it is. A failed step is not "mostly
 working".
+
+`npm test` in a checked folder reports in short: the counts, then in full
+only the failures that are not the baseline's, with the baseline's number.
+Read it as it is; there is nothing more in `carveout/test.js`.
 
 The first check of an unedited folder records the tests that fail with
 nothing changed: they fail on the mocks, because they need the real

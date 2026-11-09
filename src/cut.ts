@@ -22,6 +22,7 @@ import {
   detectExternals,
   isRegistryVersion,
   isSecretPath,
+  pathMatcher,
   reach,
   sliceReadiness,
 } from "./core.js";
@@ -44,6 +45,7 @@ import {
   workspacePackages,
 } from "./extract/compiler-config.js";
 import { packageRegistries } from "./extract/package-registry.js";
+import { packageFolder } from "./imports.js";
 import {
   DIAGNOSTICS_MAX,
   SHIM_PATH,
@@ -309,9 +311,18 @@ export async function analyseSlice(input: {
 }): Promise<SliceAnalysis> {
   const { params, graph } = input;
   input.signal.throwIfAborted();
+  const isPrivate =
+    params.private === undefined || params.private.length === 0
+      ? null
+      : pathMatcher(params.private);
   const walk = reach(graph, params.entryPoints, params.budget, {
     tests: params.tests,
+    packageOf: packageFolder(input.sourceDir),
+    ...(params.wholePackage === true ? { wholePackage: true } : {}),
+    ...(isPrivate === null ? {} : { isPrivate }),
   });
+  // A folder copied in whole beside the slice (`copy`) is there to be read.
+  const copied = pathMatcher(params.copy ?? []);
   input.log(
     `Slice reached ${walk.included.length} files with ${walk.cuts.outbound.length} outbound and ${walk.cuts.inbound.length} inbound cuts.`,
   );
@@ -370,7 +381,12 @@ export async function analyseSlice(input: {
     input.sourceDir,
     () => workspaces,
   );
+  // A test brought along may hold a computed import: what it names is the
+  // baseline's business, not a blocker (see `reach`).
+  const carriedTests = new Set(walk.tests);
   for (const dependency of walk.dependencies) {
+    if (dependency.status === "path" && copied(dependency.specifier ?? "")) continue;
+    if (dependency.status === "dynamic" && carriedTests.has(dependency.file)) continue;
     if (dependency.status !== "dynamic" && isBare(dependency.specifier)) {
       if (isNodeBuiltin(dependency.specifier)) continue;
       if (scripted && workspaceModule(dependency.specifier) !== null) continue;
@@ -397,7 +413,7 @@ export async function analyseSlice(input: {
   }
   // A file read by path must be there itself; a stub at its path is not it.
   for (const edge of walk.cuts.outbound)
-    if (edge.relation === "reads")
+    if (edge.relation === "reads" && !copied(edge.to))
       blockers.push({
         code: "path_read",
         file: edge.from,

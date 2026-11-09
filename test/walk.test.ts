@@ -136,18 +136,92 @@ test("tests that import the slice come along on request", () => {
     "app.plain.test.ts": 'import { one } from "./app.js";\nvoid one;\n',
     // A computed import comes along: what it names is the baseline's business.
     "app.url.test.ts": 'import { test } from "node:test";\nimport { one } from "./app.js";\nconst m = await import(new URL("../x.mjs", import.meta.url).href);\ntest("one", () => void [one, m]);\n',
-    // Beside an import of a file the slice does not hold, it does not.
+    // Beside an import of a file of its own package the slice does not
+    // hold, it comes along too, and that file with it as a helper.
     "app.url.stray.test.ts": 'import { test } from "node:test";\nimport { one } from "./app.js";\nimport { two } from "./other.js";\nconst m = await import(new URL("../x.mjs", import.meta.url).href);\ntest("one", () => void [one, two, m]);\n',
     "other.ts": 'import { one } from "./app.js";\nexport const two = one + 1;\n',
+    // Beside an import of a file of another package, it does not.
+    "app.url.far.test.ts": 'import { test } from "node:test";\nimport { one } from "./app.js";\nimport { three } from "../far/lib.js";\nconst m = await import(new URL("../x.mjs", import.meta.url).href);\ntest("one", () => void [one, three, m]);\n',
   };
   const without = walk(files, ["app.ts"]);
   assert.deepEqual(without.included, ["app.ts"]);
   assert.deepEqual(without.tests, []);
-  const withTests = walk(files, ["app.ts"], undefined, { tests: true });
-  assert.deepEqual(withTests.tests, ["app.test.ts", "app.url.test.ts", "app.vi.test.ts"]);
-  assert.deepEqual(withTests.untestable, ["app.plain.test.ts", "app.url.stray.test.ts"]);
-  assert.deepEqual(withTests.included, ["app.test.ts", "app.ts", "app.url.test.ts", "app.vi.test.ts"]);
+  const far = (file: string) => (file.startsWith("far/") ? "far" : "");
+  const withTests = walk(files, ["app.ts"], undefined, { tests: true, packageOf: far });
+  assert.deepEqual(withTests.tests, ["app.test.ts", "app.url.stray.test.ts", "app.url.test.ts", "app.vi.test.ts"]);
+  assert.deepEqual(withTests.helpers, ["other.ts"]);
+  assert.deepEqual(withTests.untestable, ["app.plain.test.ts", "app.url.far.test.ts"]);
+  assert.deepEqual(withTests.included, ["app.test.ts", "app.ts", "app.url.stray.test.ts", "app.url.test.ts", "app.vi.test.ts", "other.ts"]);
   assert.equal(withTests.depthOf["app.test.ts"], 1);
+  assert.equal(withTests.depthOf["other.ts"], 2);
+});
+
+test("a test brings its own helpers, from its package or a test folder, never a stub in a fake's place", () => {
+  const files = {
+    "packages/db/src/store.ts": 'import type { Db } from "./db.js";\nexport const count = (db: Db) => db.rows.length;\n',
+    "packages/db/src/db.ts": 'export interface Db { rows: unknown[] }\nexport const connect = () => ({ rows: [] });\n',
+    "packages/db/test/fake-db.ts": 'import type { Db } from "../src/db.js";\nimport { rows } from "./rows.js";\nexport const fakeDb = (): Db => ({ rows });\n',
+    "packages/db/test/rows.ts": "export const rows = [1, 2];\n",
+    "packages/db/test/store.test.ts": 'import { test } from "node:test";\nimport { count } from "../src/store.js";\nimport { fakeDb } from "./fake-db.js";\nimport { build } from "../../shared/testing/build.js";\nimport { other } from "../../other/src/index.js";\ntest("count", () => void [count(fakeDb()), build, other]);\n',
+    "packages/shared/testing/build.ts": "export const build = () => 1;\n",
+    "packages/other/src/index.ts": "export const other = 1;\n",
+  };
+  const packageOf = (file: string) => file.split("/").slice(0, 2).join("/");
+  const result = walk(files, ["packages/db/src/store.ts"], { maxFiles: 40, maxDepth: 0 }, { tests: true, packageOf });
+  assert.deepEqual(result.tests, ["packages/db/test/store.test.ts"]);
+  // The fake and what it imports, and a helper from a test folder of another
+  // package; the other package's module is a cut, as the type-only db.ts is.
+  assert.deepEqual(result.helpers, ["packages/db/test/fake-db.ts", "packages/db/test/rows.ts", "packages/shared/testing/build.ts"]);
+  assert.deepEqual([...new Set(result.cuts.outbound.map((edge) => edge.to))].sort(), ["packages/db/src/db.ts", "packages/other/src/index.ts"]);
+  assert.equal(result.depthOf["packages/db/test/fake-db.ts"], 2);
+  assert.equal(result.depthOf["packages/db/test/rows.ts"], 3);
+  // Without the request, nothing of the kind.
+  assert.deepEqual(walk(files, ["packages/db/src/store.ts"], { maxFiles: 40, maxDepth: 0 }).included, ["packages/db/src/store.ts"]);
+});
+
+test("the whole package comes along on request, and the cut falls at its edge", () => {
+  const files = {
+    "packages/api/src/handler.ts": 'import { parse } from "./parse.js";\nimport { price } from "../../core/src/index.js";\nexport const handle = () => price(parse());\n',
+    "packages/api/src/parse.ts": 'import { norm } from "./norm.js";\nexport const parse = () => norm();\n',
+    "packages/api/src/norm.ts": 'import type { Shape } from "./types.js";\nexport const norm = (): Shape => ({});\n',
+    "packages/api/src/types.ts": "export interface Shape {}\n",
+    "packages/api/src/unrelated.ts": "export const unrelated = 1;\n",
+    "packages/api/test/parse.test.ts": 'import { test } from "node:test";\nimport { parse } from "../src/parse.js";\ntest("parse", () => void parse());\n',
+    "packages/core/src/index.ts": "export const price = (x: unknown) => x;\n",
+  };
+  const packageOf = (file: string) => file.split("/").slice(0, 2).join("/");
+  const depth = walk(files, ["packages/api/src/handler.ts"], { maxFiles: 40, maxDepth: 0 }, { packageOf });
+  assert.deepEqual(depth.included, ["packages/api/src/handler.ts"]);
+  const whole = walk(files, ["packages/api/src/handler.ts"], { maxFiles: 40, maxDepth: 0 }, { packageOf, wholePackage: true });
+  // Every file of the package the imports reach, types included, at any
+  // depth; not a file nothing reaches, not another package's past the
+  // depth, and not a test without the request.
+  assert.deepEqual(whole.included, ["packages/api/src/handler.ts", "packages/api/src/norm.ts", "packages/api/src/parse.ts", "packages/api/src/types.ts"]);
+  assert.equal(whole.depthOf["packages/api/src/types.ts"], 3);
+  assert.deepEqual([...new Set(whole.cuts.outbound.map((edge) => edge.to))], ["packages/core/src/index.ts"]);
+  const tested = walk(files, ["packages/api/src/handler.ts"], { maxFiles: 40, maxDepth: 0 }, { packageOf, wholePackage: true, tests: true });
+  assert.deepEqual(tested.tests, ["packages/api/test/parse.test.ts"]);
+  // The budget still bounds it, and names what it left out.
+  const bounded = walk(files, ["packages/api/src/handler.ts"], { maxFiles: 3, maxDepth: 0 }, { packageOf, wholePackage: true });
+  assert.equal(bounded.included.length, 3);
+  assert.deepEqual(bounded.dropped, ["packages/api/src/types.ts"]);
+});
+
+test("a private file is never entered: cut and stubbed wherever it is reached", () => {
+  const files = {
+    "src/app.ts": 'import { rate } from "./pricing/rules.js";\nimport { fmt } from "./fmt.js";\nexport const app = () => fmt(rate());\n',
+    "src/pricing/rules.ts": 'import { base } from "./base.js";\nexport const rate = () => base * 2;\n',
+    "src/pricing/base.ts": "export const base = 21;\n",
+    "src/fmt.ts": "export const fmt = (n: number) => String(n);\n",
+    "src/app.test.ts": 'import { test } from "node:test";\nimport { app } from "./app.js";\nimport { base } from "./pricing/base.js";\ntest("app", () => void [app(), base]);\n',
+  };
+  const isPrivate = (file: string) => file.startsWith("src/pricing/");
+  const result = walk(files, ["src/app.ts"], { maxFiles: 40, maxDepth: 3 }, { isPrivate, tests: true, wholePackage: true });
+  assert.deepEqual(result.included, ["src/app.test.ts", "src/app.ts", "src/fmt.ts"]);
+  assert.deepEqual(result.privateFiles, ["src/pricing/base.ts", "src/pricing/rules.ts"]);
+  assert.deepEqual([...new Set(result.cuts.outbound.map((edge) => edge.to))].sort(), ["src/pricing/base.ts", "src/pricing/rules.ts"]);
+  // Not at the file limit: a private file is kept out, not dropped.
+  assert.deepEqual(result.dropped, []);
 });
 
 test("a test that reaches the slice through a barrel comes along, and the barrel with it", () => {
