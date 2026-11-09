@@ -14,9 +14,9 @@ export const CASES = JSON.parse(readFileSync(join(HERE, "e5-cases.json"), "utf8"
 // tag, so neither checks out the other's clone or writes its templates.
 const tag = () => process.env.BENCH_TAG ?? "";
 const templates = () => join(WORK, "bench", tag() === "" ? "templates" : `templates-${tag()}`);
-// slice-plan (E7): the agent reads the repository and names the entries
-// itself; its template is the full arm's, and its slice is cut per run.
-export const ARMS = ["full", "slice-seam", "slice-diff", "slice-plan"];
+// slice-plan (E7, the agent naming the entries from the whole repository)
+// was retired 2026-11-06; its rows remain in results/.
+export const ARMS = ["full", "slice-seam", "slice-diff"];
 
 export const source = () => cloneOf("sandbox-factory", tag() === "" ? "bench-base" : `${tag()}-base`);
 export const baseOf = (item) => git(source(), ["rev-parse", `${item.commit}^`]).trim();
@@ -45,7 +45,11 @@ export function cutSlice(cli, item, entries, dir) {
   checkout(repo, base);
   rmSync(dir, { recursive: true, force: true });
   const live = liveOf(repo, base, item);
-  const cut = carveout(cli, ["cut", ...entries, "--repo", repo, "--depth", "1", "--max-files", "200", "--with-tests", ...live.flatMap((name) => ["--live", name]), "--out", dir]);
+  // Since 2026-11-06 the cut falls at the package's edge and follows the
+  // repository's own packages (E6c: 91% of the tests red on a fresh cut
+  // reached a stub of pure repository code). Rows are keyed by CLI id, so
+  // earlier cuts are not pooled with these.
+  const cut = carveout(cli, ["cut", ...entries, "--repo", repo, "--depth", "1", "--max-files", "200", "--with-tests", "--whole-package", "--follow-workspaces", ...live.flatMap((name) => ["--live", name]), "--out", dir]);
   if (cut.code !== 0 && cut.code !== 2) throw new Error(`${item.slug}: cut failed:\n${cut.stderr}`);
   const cutMs = Date.now() - started;
   // As a person would next: the check, which records the tests that fail
@@ -77,8 +81,6 @@ export function liveOf(repo, base, item) {
 
 /** The workdir every run of a case and arm starts from, made once. */
 export function template(cli, item, arm) {
-  // The plan arm starts every run in the repository, as the full arm does.
-  if (arm === "slice-plan") return template(cli, item, "full");
   // A slice is the CLI's output: one template per build of it. A full
   // template is the repository at B: a run on the same corpus under another
   // tag may share one (`BENCH_FULL_TEMPLATES=<dir>`) rather than install it.

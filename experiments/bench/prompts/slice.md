@@ -1,8 +1,9 @@
 You are working in a slice of a TypeScript monorepo, at the current
 directory: the files this change needs, copied at their repository paths.
 Every module they import from the rest of the repository is a `.d.ts` stub
-with a recording mock behind it; `BOUNDARY.md` lists them. Its dependencies
-are installed.
+beside a recording mock, declaring what the slice uses of it. Its
+dependencies are installed. The README names the files to edit and what
+`npm test` does; nothing under `carveout/` needs reading.
 
 Implement the spec below, in the package `{{package}}`.
 Change only files under {{allowed}}, and the package's tests under

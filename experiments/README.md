@@ -171,18 +171,11 @@ the plan leaves open:
 - **Runs** use `BENCH_TAG=e6b` and `BENCH_RESULTS=results/bench-e6b.jsonl`,
   so E6a's rows (keyed by case, arm, model and run, not by CLI) do not
   stand in for E6b's. `bench/analyze.mjs --cases <the corpus>` reads them,
-  and `--arm slice-plan` reads E7.
-- **The plan arm's slice** is cut per run from the entries the planning
-  session wrote, with the slice arms' flags, in the shared clone one at a
-  time. The cut folder is removed after judging; its entries, file count
-  and baseline stay in the result line under `setup`, and the planning
-  session under `plan`.
-
-## Phase 7: the mergeback claim
-
-The rules are in [PLAN-benchmark.md](PLAN-benchmark.md), Phase 7. What
-the judge does differently from 2026-11-04:
-
+  and `--arm slice-plan` reads E7's rows.
+- **The plan arm** (E7) was retired on 2026-11-06: its session read the
+  whole private repository, which the slice exists to keep closed, for 17%
+  more input and no more accepted changes. `run.mjs` no longer runs it; its
+  rows stay in `results/` and `analyze.mjs --arm slice-plan` still reads them.
 - **Live services.** `cutSlice` in `bench/cases.mjs` adds `--live <driver>`
   for a case whose package imports the driver directly (`liveOf`); the
   choice is in the result line's `setup`. The host must run the service the
