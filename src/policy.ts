@@ -352,6 +352,20 @@ function assertionsOf(
       }
       return;
     }
+    // An assertion in a `try` whose `catch` does not throw again fails
+    // into the catch and passes: `try { assert(...) } catch {}`.
+    if (ts.isTryStatement(node) && node.catchClause !== undefined) {
+      let rethrows = false;
+      const find = (child: ts.Node): void => {
+        if (ts.isThrowStatement(child)) rethrows = true;
+        else if (!ts.isFunctionLike(child)) ts.forEachChild(child, find);
+      };
+      find(node.catchClause.block);
+      if (rethrows) visit(node.tryBlock);
+      visit(node.catchClause.block);
+      if (node.finallyBlock !== undefined) visit(node.finallyBlock);
+      return;
+    }
     if (ts.isIfStatement(node)) {
       const known = constantOf(node.expression);
       visit(node.expression);

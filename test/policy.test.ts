@@ -50,4 +50,10 @@ test("an assertion that can no longer run counts as removed", () => {
   assert.equal(gutted("  assert.equal(price(1), 4);", "  if (process.env.X) assert.equal(price(1), 4);"), "");
   assert.equal(gutted("  assert.equal(price(1), 4);", "  if (true) assert.equal(price(1), 4);"), "");
   assert.equal(gutted("    8,\n  );\n", "    8,\n  );\n  return;\n"), "");
+  // A failure swallowed by a catch that does not throw again.
+  assert.match(gutted("  assert.equal(price(1), 4);", "  try { assert.equal(price(1), 4); } catch {}"), /removes or rewrites 1 assertion/);
+  assert.equal(
+    gutted("  assert.equal(price(1), 4);", "  try { assert.equal(price(1), 4); } catch (error) { log(error); throw error; }"),
+    "",
+  );
 });
