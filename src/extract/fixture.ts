@@ -451,6 +451,12 @@ export function compileFixture(input: FixtureInput): CompilationResult {
     composite: false,
     incremental: false,
     tsBuildInfoFile: undefined,
+    // Where emitted files go, which a check that emits nothing has no use
+    // for: a slice holds files from several packages, and the entry's
+    // package's rootDir would reject the others (TS6059).
+    rootDir: undefined,
+    rootDirs: undefined,
+    outDir: undefined,
     skipLibCheck: true,
     types: [],
     typeRoots: [],
