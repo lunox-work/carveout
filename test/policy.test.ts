@@ -37,3 +37,17 @@ test("a test bent to pass is held for the maintainer; one only added to passes",
   const vitest = 'describe("p", () => { it("x", () => { expect(price(1)).toBe(4); }); });\n';
   assert.match(weakenedTest(path, vitest, vitest.replace("toBe(4)", "toBe(3)")) ?? "", /rewrites 1 assertion/);
 });
+
+test("an assertion that can no longer run counts as removed", () => {
+  const path = "src/price.test.ts";
+  const gutted = (from: string, to: string) => weakenedTest(path, TEST, TEST.replace(from, to)) ?? "";
+  // Every assertion's text is still there, but none of it runs.
+  assert.match(gutted('test("prices", () => {\n', 'test("prices", () => {\n  return;\n'), /removes or rewrites 2 assertions/);
+  assert.match(gutted("  assert.equal(price(1), 4);\n", '  throw new Error("skip");\n  assert.equal(price(1), 4);\n'), /removes or rewrites 2 assertions/);
+  assert.match(gutted("  assert.equal(price(1), 4);", "  if (false) assert.equal(price(1), 4);"), /removes or rewrites 1 assertion/);
+  assert.match(gutted("  assert.equal(price(1), 4);", "  false && assert.equal(price(1), 4);"), /removes or rewrites 1 assertion/);
+  // A branch that may run, and an early return after the assertions, pass.
+  assert.equal(gutted("  assert.equal(price(1), 4);", "  if (process.env.X) assert.equal(price(1), 4);"), "");
+  assert.equal(gutted("  assert.equal(price(1), 4);", "  if (true) assert.equal(price(1), 4);"), "");
+  assert.equal(gutted("    8,\n  );\n", "    8,\n  );\n  return;\n"), "");
+});

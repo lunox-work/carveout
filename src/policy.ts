@@ -240,6 +240,25 @@ export function handoffPolicy(options: {
   };
 }
 
+/**
+ * Whether an expression is a constant the code can read without running
+ * it: `true`, `false`, `0`, `1`, `""`, `null`, `undefined`, `!x` of one, or
+ * one in parentheses. Null for anything else.
+ */
+function constantOf(node: ts.Expression): boolean | null {
+  if (ts.isParenthesizedExpression(node)) return constantOf(node.expression);
+  if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) {
+    const inner = constantOf(node.operand);
+    return inner === null ? null : !inner;
+  }
+  if (node.kind === ts.SyntaxKind.TrueKeyword) return true;
+  if (node.kind === ts.SyntaxKind.FalseKeyword || node.kind === ts.SyntaxKind.NullKeyword) return false;
+  if (ts.isIdentifier(node) && node.text === "undefined") return false;
+  if (ts.isNumericLiteral(node)) return Number(node.text) !== 0;
+  if (ts.isStringLiteralLike(node)) return node.text !== "";
+  return null;
+}
+
 /** Modules whose calls are assertions, by import specifier. */
 const ASSERTION_MODULES = /^(node:)?assert(\/strict)?$|^(vitest|chai|expect|@jest\/globals)$/;
 
@@ -315,6 +334,48 @@ function assertionsOf(
         assertions.push(node.getText(source).replace(/\s+/g, "").replace(/,(?=[)\]}])/g, ""));
         return;
       }
+    }
+    // Code that never runs holds no assertion: what follows a `return`,
+    // `throw`, `break` or `continue` in its block, and the branch of an
+    // `if` (or the body of a loop) on a constant that never takes it. A
+    // test emptied by `return;` at its top keeps every assertion's text.
+    if (ts.isBlock(node) || ts.isSourceFile(node) || ts.isCaseClause(node) || ts.isDefaultClause(node) || ts.isModuleBlock(node)) {
+      for (const statement of node.statements) {
+        visit(statement);
+        if (
+          ts.isReturnStatement(statement) ||
+          ts.isThrowStatement(statement) ||
+          ts.isBreakStatement(statement) ||
+          ts.isContinueStatement(statement)
+        )
+          return;
+      }
+      return;
+    }
+    if (ts.isIfStatement(node)) {
+      const known = constantOf(node.expression);
+      visit(node.expression);
+      if (known !== false) visit(node.thenStatement);
+      if (known !== true && node.elseStatement !== undefined) visit(node.elseStatement);
+      return;
+    }
+    const loopCondition = ts.isWhileStatement(node)
+      ? node.expression
+      : ts.isForStatement(node)
+        ? node.condition
+        : undefined;
+    if (loopCondition !== undefined && constantOf(loopCondition) === false) return;
+    if (ts.isBinaryExpression(node) && constantOf(node.left) !== null) {
+      const known = constantOf(node.left);
+      visit(node.left);
+      const operator = node.operatorToken.kind;
+      if (
+        (operator === ts.SyntaxKind.AmpersandAmpersandToken && known === true) ||
+        (operator === ts.SyntaxKind.BarBarToken && known === false) ||
+        (operator !== ts.SyntaxKind.AmpersandAmpersandToken && operator !== ts.SyntaxKind.BarBarToken)
+      )
+        visit(node.right);
+      return;
     }
     ts.forEachChild(node, visit);
   };
