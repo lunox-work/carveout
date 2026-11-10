@@ -1394,8 +1394,16 @@ export function extractTypeScriptBoundary(
     if (source === undefined) continue;
     for (const fact of importsOf(source)) {
       const target = classify(fact.specifier, by);
-      if ("module" in target && included.has(target.module))
-        merge(surface, target.module, fact.names, by);
+      // An import by a workspace package's name resolves, through the
+      // package's link, to what its build emitted; the names it takes are
+      // asked of the source module the name stands for.
+      const module =
+        "module" in target && included.has(target.module)
+          ? target.module
+          : isRelativeSpecifier(fact.specifier)
+            ? null
+            : workspaceModule(fact.specifier);
+      if (module !== null && included.has(module)) merge(surface, module, fact.names, by);
     }
   }
   for (const edge of input.inbound)
@@ -1612,9 +1620,24 @@ export function extractTypeScriptBoundary(
         location: null,
         detail: `${name} is imported from outside but not exported.`,
       });
+    // A barrel declares nothing of its own: the names outside code takes
+    // from it pass through its `export *`, and are listed as such (the
+    // surface check types them; the interface test, not knowing whether
+    // each is a value, leaves them out).
+    const declared = new Set(filtered.symbols.map((symbol) => symbol.name));
+    const passed = filtered.forwarded.flatMap(({ specifier, names }) =>
+      names === ALL
+        ? []
+        : [...names]
+            .filter((name) => !declared.has(name))
+            .map((name) => ({ name, kind: "reexport", declaration: `export * from ${JSON.stringify(specifier)};` })),
+    ).filter((symbol, index, all) => all.findIndex((other) => other.name === symbol.name) === index);
     inbound.push({
       module,
-      symbols: filtered.symbols.map((symbol) => ({ ...symbol })),
+      symbols: [
+        ...filtered.symbols.map((symbol) => ({ ...symbol })),
+        ...passed.sort((a, b) => compare(a.name, b.name)),
+      ],
       importedBy: [...request.importedBy].sort(compare),
       stubPath: null,
     });
