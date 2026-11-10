@@ -186,8 +186,13 @@ test("apply brings a repository change into the slice, and patch gives it back",
   );
   execFileSync(process.execPath, [TSC, "-p", "tsconfig.json"], { cwd: out, stdio: "pipe" });
 
-  // Back out: the slice's part of the change, byte for byte.
-  const patch = await patchProject(out);
+  // A test whose assertion was rewritten waits for the maintainer to read
+  // it: it may be the change, or a test bent to pass.
+  const held = await patchProject(out);
+  assert.deepEqual(held.refused.map((refusal) => refusal.path), ["apps/shop/src/cart.test.ts"]);
+  assert.match(held.refused[0]?.reason ?? "", /rewrites 1 assertion/);
+  // Back out, the test allowed: the slice's part of the change, byte for byte.
+  const patch = await patchProject(out, { allow: ["apps/shop/src/cart.test.ts"] });
   assert.deepEqual(patch.boundary, []);
   assert.deepEqual(patch.changed, ["apps/shop/src/cart.test.ts", CART]);
   assert.deepEqual(patch.added, ["apps/shop/src/discount.ts"]);

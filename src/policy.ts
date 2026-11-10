@@ -8,13 +8,15 @@
  * cut's commit), and the patch carries only what a change to the slice can
  * honestly need. New files outside the slice's packages, files that run on
  * someone's machine or in CI without a review of code (workflows, hooks,
- * manifests, lockfiles, environment), and deleted tests are left out and
- * named, unless the maintainer allows them by path or glob.
+ * manifests, lockfiles, environment), deleted tests and tests whose
+ * assertions were removed, rewritten or skipped are left out and named,
+ * unless the maintainer allows them by path or glob.
  */
 
 import { execFileSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { posix, resolve } from "node:path";
+import ts from "typescript";
 import { isTestPath, pathMatcher } from "./core.js";
 
 /**
@@ -161,10 +163,14 @@ export function handoffPolicy(options: {
   readonly packages: ReadonlySet<string>;
   readonly packageOf: (path: string) => string;
   readonly allow?: readonly string[];
-}): (path: string, change: "added" | "changed" | "deleted") => string | null {
+}): (
+  path: string,
+  change: "added" | "changed" | "deleted",
+  texts?: { readonly before: string | null; readonly after: string },
+) => string | null {
   const allowed = pathMatcher(options.allow ?? []);
   const protectedPath = pathMatcher(PROTECTED_PATHS);
-  return (path, change) => {
+  return (path, change, texts) => {
     if (allowed(path)) return null;
     if (protectedPath(path))
       return "a protected path (CI, hooks, manifests, lockfiles, environment): review it and pass --allow to carry it";
@@ -172,6 +178,109 @@ export function handoffPolicy(options: {
       return "a new file outside the slice's packages";
     if (change === "deleted" && isTestPath(path))
       return "deletes a test the slice was handed";
+    if (change === "changed" && isTestPath(path) && texts !== undefined && texts.before !== null) {
+      const weakened = weakenedTest(path, texts.before, texts.after);
+      if (weakened !== null) return `${weakened}: review it and pass --allow to carry it`;
+    }
     return null;
   };
+}
+
+/** Modules whose calls are assertions, by import specifier. */
+const ASSERTION_MODULES = /^(node:)?assert(\/strict)?$|^(vitest|chai|expect|@jest\/globals)$/;
+
+/**
+ * The assertions of a test file, each as its whitespace-free text, and the
+ * tests it skips. An assertion is a call rooted at `assert` or `expect`,
+ * or at a name imported from an assertion module (`strictEqual` from
+ * `node:assert`); a skip is `test.skip`, `it.todo`, `describe.skip`,
+ * `xit`, `xdescribe`, or a `{ skip }` or `{ todo }` option.
+ */
+function assertionsOf(path: string, text: string): { assertions: string[]; skips: number } {
+  const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
+  const roots = new Set(["assert", "expect"]);
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    if (!ASSERTION_MODULES.test(statement.moduleSpecifier.text)) continue;
+    const clause = statement.importClause;
+    if (clause?.name !== undefined) roots.add(clause.name.text);
+    const bindings = clause?.namedBindings;
+    if (bindings !== undefined && ts.isNamespaceImport(bindings)) roots.add(bindings.name.text);
+    else if (bindings !== undefined) for (const element of bindings.elements) roots.add(element.name.text);
+  }
+  const rootOf = (node: ts.Expression): string | null => {
+    let current: ts.Expression = node;
+    for (;;) {
+      if (ts.isIdentifier(current)) return current.text;
+      if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current))
+        current = current.expression;
+      else if (ts.isCallExpression(current)) current = current.expression;
+      else if (ts.isNonNullExpression(current) || ts.isParenthesizedExpression(current))
+        current = current.expression;
+      else return null;
+    }
+  };
+  const assertions: string[] = [];
+  let skips = 0;
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      const name = ts.isPropertyAccessExpression(callee) ? callee.name.text : null;
+      const base = rootOf(callee);
+      if (
+        (name === "skip" || name === "todo") &&
+        base !== null &&
+        ["test", "it", "describe", "suite"].includes(base)
+      )
+        skips += 1;
+      if (ts.isIdentifier(callee) && (callee.text === "xit" || callee.text === "xdescribe" || callee.text === "xtest"))
+        skips += 1;
+      if (base !== null && ["test", "it", "describe", "suite"].includes(base))
+        for (const argument of node.arguments)
+          if (ts.isObjectLiteralExpression(argument))
+            for (const property of argument.properties)
+              if (
+                ts.isPropertyAssignment(property) &&
+                ts.isIdentifier(property.name) &&
+                (property.name.text === "skip" || property.name.text === "todo") &&
+                property.initializer.kind !== ts.SyntaxKind.FalseKeyword
+              )
+                skips += 1;
+      if (base !== null && roots.has(base)) {
+        // The outermost call of a chain is the assertion: `expect(x).toBe(y)`.
+        // Formatting is not a change: whitespace and trailing commas go.
+        assertions.push(node.getText(source).replace(/\s+/g, "").replace(/,(?=[)\]}])/g, ""));
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return { assertions, skips };
+}
+
+/**
+ * Why a change to a test the slice was handed weakens it, or null: an
+ * assertion removed or rewritten (an expected value changed), or a test
+ * skipped. Assertions only added pass. A rewritten assertion may be the
+ * change itself (a behaviour the contributor was asked to change), so it
+ * is refused for a maintainer to read, not judged wrong.
+ */
+export function weakenedTest(path: string, before: string, after: string): string | null {
+  const old = assertionsOf(path, before);
+  const now = assertionsOf(path, after);
+  const left = new Map<string, number>();
+  for (const assertion of now.assertions) left.set(assertion, (left.get(assertion) ?? 0) + 1);
+  let removed = 0;
+  for (const assertion of old.assertions) {
+    const count = left.get(assertion) ?? 0;
+    if (count > 0) left.set(assertion, count - 1);
+    else removed += 1;
+  }
+  const reasons: string[] = [];
+  if (removed > 0)
+    reasons.push(`removes or rewrites ${removed} assertion${removed === 1 ? "" : "s"} of a test the slice was handed`);
+  if (now.skips > old.skips)
+    reasons.push(`skips ${now.skips - old.skips} more test${now.skips - old.skips === 1 ? "" : "s"}`);
+  return reasons.length === 0 ? null : reasons.join(", and ");
 }

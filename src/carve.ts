@@ -1851,8 +1851,12 @@ export async function patchProject(
   });
   const refused: Refusal[] = [];
   /** Whether the policy lets `path` into the patch; a refusal is named. */
-  const admits = (path: string, change: "added" | "changed" | "deleted") => {
-    const reason = judge(path, change);
+  const admits = (
+    path: string,
+    change: "added" | "changed" | "deleted",
+    texts?: { readonly before: string | null; readonly after: string },
+  ) => {
+    const reason = judge(path, change, texts);
     if (reason !== null) refused.push({ path, reason });
     return reason === null;
   };
@@ -2002,7 +2006,16 @@ export async function patchProject(
           crossPackage.push({ file: path, specifier });
         restored = Buffer.from(result.text);
       }
-      if (!admits(path, "changed")) continue;
+      if (
+        !admits(
+          path,
+          "changed",
+          isBinaryPath(path)
+            ? undefined
+            : { before: base === null ? null : base.toString("utf8"), after: restored.toString("utf8") },
+        )
+      )
+        continue;
       changed.push(path);
       await mkdir(dirname(join(scratch, "a", path)), { recursive: true });
       await mkdir(dirname(join(scratch, "b", path)), { recursive: true });
