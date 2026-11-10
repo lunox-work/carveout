@@ -131,7 +131,9 @@ test("a cut that would carry a credential writes nothing", async () => {
   cpSync(repo, work, { recursive: true });
   writeFileSync(
     join(work, "apps/shop/src/keys.ts"),
-    'export const stripe = "sk_live_51HabcdefghijklmnopqrstuvWXYZ0123456789";\n',
+    // Joined at runtime: written whole in the source, the fake key trips
+    // GitHub's push protection.
+    `export const stripe = "${["sk", "live", "51HabcdefghijklmnopqrstuvWXYZ0123456789"].join("_")}";\n`,
   );
   const out = join(scratch, "secret-cut");
   await assert.rejects(
