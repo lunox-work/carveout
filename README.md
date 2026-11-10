@@ -227,6 +227,7 @@ carveout check ../quote-slice                 # read what it holds before sendin
 # contributor: npm ci, edit, npm test, send the folder back
 # maintainer, on the folder that came back
 carveout patch ../returned --output quote.patch   # runs none of its code
+less quote.patch                              # read all of it before anything runs it
 git switch -c contrib/quote && git apply --3way quote.patch   # then a PR: CI decides
 ```
 
@@ -244,9 +245,10 @@ What carveout holds to:
   off, or mark that code private, where it must stay closed.
 - **The folder that comes back.** Nothing in it is trusted. `patch` and
   `apply` refuse a `carveout.json` that names a path outside the folder or
-  a `.git` path, and work against the checkout given with `--repo` (or the
-  current directory), which must hold the cut's commit. `patch` runs none
-  of the folder's code.
+  a `.git` path, or lists as the slice's a file the repository does not
+  hold at those bytes, and work against the checkout given with `--repo`
+  (or the current directory), which must hold the cut's commit. `patch`
+  runs none of the folder's code.
 - **The hand-off policy.** The patch carries edits to the slice's files and
   new files in the slice's packages. It leaves out, names, and exits 6 on:
   new files in other packages (a cut module's folder among them);
@@ -257,12 +259,19 @@ What carveout holds to:
   value changed may be the change itself, or a test bent to pass: the
   maintainer reads it).
   `--allow <path|glob>` lets a reviewed one through. `merge` applies
-  nothing while any is refused.
-- **Running what came back.** The contributor's tests are code. Run them
-  where a pull request's would run, in CI. `check --isolated` gives the
-  folder a scratch HOME and npm cache and no install scripts, and `merge
---verify` a scratch HOME and only the variables named with
-  `--verify-env`: neither is a sandbox.
+  nothing while any is refused. The policy judges paths and assertions,
+  not code: a new test, a new runner configuration (`vitest.config.ts`)
+  or any other new file in the slice's packages passes it.
+- **Running what came back.** The contributor's tests, and every new file
+  the patch carries, are code that runs beside the whole repository, the
+  part the slice kept closed included. A branch pushed to the repository
+  runs CI with the repository's secrets and network, which a fork's pull
+  request does not: code there can read the source and send it out. Read
+  the whole patch before anything runs it, or run its first CI with no
+  secrets and no outbound network. `check --isolated` gives the folder a
+  scratch HOME and npm cache and no install scripts, and `merge --verify`
+  a scratch HOME and only the variables named with `--verify-env`:
+  neither is a sandbox, and `merge --verify` runs in the full checkout.
 
 What it does not promise:
 
@@ -280,8 +289,10 @@ What it does not promise:
   of cases, nearly all disagreements in the safe direction (the slice
   failed, the repository passed). `--copy-pure` turns most such baselines
   green, and the surface check catches a changed export the importers in
-  other packages rely on; neither runs those importers. The repository's
-  CI decides.
+  other packages rely on; neither runs those importers. Those figures come
+  from earlier CLIs: the model-run benchmarks have not been run again since
+  `--copy-pure`, the surface check and the barrel-chain rule. The
+  repository's CI decides, once the patch has been read.
 - **The slice's own source is the contributor's to read.** Choose the
   entry points and `--private` paths with that in mind; `plan` lists every
   file before anything is written.
@@ -396,8 +407,10 @@ What to tell them, accurately:
 - For someone outside the repository, cut with `--public`, take the folder
   back with `carveout patch` (it runs none of the folder's code and keeps
   out CI, hook, manifest and lockfile files, new files in other packages
-  and deleted tests), and let the repository's CI judge the change: a pass
-  in the slice is a pass against mocks.
+  and deleted tests), read the whole patch before anything runs it (its
+  tests and new files are code beside the closed repository, and a branch
+  pushed there gets CI's secrets and network), then let the repository's
+  CI judge the change: a pass in the slice is a pass against mocks.
 - `carveout check` passing means the folder installs, builds, loads every
   export outside code uses and keeps their types. It tests the slice's
   behaviour only when the cut was made with `--with-tests`, and then only

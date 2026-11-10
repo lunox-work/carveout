@@ -41,8 +41,10 @@ What to tell them, accurately:
 - For someone outside the repository, cut with `--public`, take the folder
   back with `carveout patch` (it runs none of the folder's code and keeps
   out CI, hook, manifest and lockfile files, new files in other packages
-  and deleted tests), and let the repository's CI judge the change: a pass
-  in the slice is a pass against mocks.
+  and deleted tests), read the whole patch before anything runs it (its
+  tests and new files are code beside the closed repository, and a branch
+  pushed there gets CI's secrets and network), then let the repository's
+  CI judge the change: a pass in the slice is a pass against mocks.
 - `carveout check` passing means the folder installs, builds, loads every
   export outside code uses and keeps their types. It tests the slice's
   behaviour only when the cut was made with `--with-tests`, and then only

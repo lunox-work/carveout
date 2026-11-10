@@ -204,7 +204,9 @@ package is missing at runtime, the check says which `--install` to cut again
 with. Report the result to the person as it is. A failed step is not "mostly
 working". `--isolated`, for a folder that came back from someone else,
 gives it a scratch HOME and npm cache and no install scripts; it is not a
-sandbox, so run an untrusted folder's tests in CI or a container instead.
+sandbox, so run an untrusted folder's tests in a container with no
+secrets and no network instead. A branch pushed to the repository is not
+that: its CI has the repository's secrets and network.
 
 `npm test` in a checked folder reports in short: the counts, then in full
 only the failures that are not the baseline's, with the baseline's number.
@@ -333,10 +335,13 @@ agree the entries and `--private` paths with the maintainer, `cut
 tests exercise real code rather than mocks; drop `--copy-pure`, or mark
 that code `--private`, where it must stay closed), `check`, hand the
 folder over. When it comes back,
-`patch` from the repository's root, show the refusals, and apply the
-patch on a branch for a pull request. Tell the maintainer plainly: the
-slice's tests ran against mocks, a test that needed `carveout/` did not
-come back, and the repository's CI is what decides.
+`patch` from the repository's root, show the refusals, and have the
+maintainer read the whole patch before anything runs it: its tests and new
+files (a runner config among them) are code that runs beside the closed
+repository, and the policy does not judge code. Then apply it on a branch
+for a pull request. Tell the maintainer plainly: the slice's tests ran
+against mocks, a test that needed `carveout/` did not come back, and the
+repository's CI is what decides, once the patch has been read.
 
 `apply` goes the other way: a patch for the repository at the cut's commit
 comes into the folder, with its imports rewritten as a cut writes them. It
