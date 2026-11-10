@@ -1,21 +1,22 @@
 ---
 name: carveout
 description:
-  Check what a change to a TypeScript repository reaches and hold what it
-  should not slip in, or carve a slice of the repository for someone who
-  should see only part of it. `impact` lists the files a change reaches,
-  the exports whose type changed and who takes them, and the tests that run
-  the changed code with the commands to run just those; `gate` holds
-  weakened or deleted tests, CI and config edits, and new suppressions. A
+  Hand one part of a closed TypeScript repository to an outside
+  contractor, and take the work back, without showing them the rest. A
   slice is the files a change needs, copied at their repository paths, with
   every module it imports from the rest replaced by a .d.ts stub and a
   recording mock, so the folder installs, builds and tests on its own; its
-  edits come back as a patch. Use when someone or an agent changed a
-  TypeScript repository and wants to know what it breaks or which tests to
-  run, wants a change checked for weakened tests before it is done, wants
-  to hand one part of a closed repository to a contractor, contributor or
-  untrusted agent, wants to know what a file depends on and what depends on
-  it, or wants a minimal reproduction of one module.
+  edits come back as a patch that runs none of their code and holds CI,
+  manifest and lockfile edits and weakened tests. Also, for a change made
+  in the repository itself: `impact` lists the files it reaches, the
+  exports whose type changed and who takes them, and the tests to run;
+  `gate` holds weakened or deleted tests, CI and config edits, and new
+  suppressions. Use when someone wants to hand one part of a closed
+  repository to a contractor, contributor or untrusted agent, cannot build
+  the whole monorepo to change one part, wants to know what a file depends
+  on and what depends on it, or wants a minimal reproduction of one module;
+  or when someone or an agent changed a TypeScript repository and wants to
+  know what it breaks, which tests to run, or whether it weakened a test.
 ---
 
 # carveout

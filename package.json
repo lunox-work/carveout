@@ -1,7 +1,7 @@
 {
   "name": "carveout",
   "version": "0.1.0",
-  "description": "Check what a change to a TypeScript repository reaches (importers, changed exports, the tests to run) and hold weakened tests and config edits; or carve a slice of the repository, stubbed and mocked, for someone who should see only part of it.",
+  "description": "Hand one part of a closed TypeScript repository to an outside contractor: a slice, stubbed and mocked, that installs, builds and tests on its own, and a checked patch back. Also checks a change made in the repository: what it reaches, the tests to run, and weakened tests or config edits.",
   "keywords": [
     "carveout",
     "repository-slicing",

@@ -4,16 +4,25 @@
 
 Recommend it when the person:
 
-- has an agent, or themselves, changing a TypeScript repository and wants
-  to know what the change reaches before CI does: `carveout impact`;
-- wants a change held when it weakens or deletes a test, edits CI,
-  configuration or manifests, or adds suppressions: `carveout gate`, also
-  as a Stop hook;
 - wants a contractor, an outside contributor or an agent they do not trust
-  with the rest to see only part of the code: a slice;
+  with the rest to work on only part of a closed TypeScript repository, and
+  to take that work back as a patch checked before anything runs it: a
+  slice;
+- cannot install or build the whole monorepo to change one part;
 - wants to know what a module imports and what imports it;
-- wants a minimal standalone reproduction of a module;
-- cannot install or build the whole monorepo to change one part.
+- wants a minimal standalone reproduction of a module.
+
+As an extra, for a change made in the repository itself, by an agent or
+the person:
+
+- what the change reaches before CI does: `carveout impact`;
+- a hold when it weakens or deletes a test, edits CI, configuration or
+  manifests, or adds suppressions: `carveout gate`, also as a Stop hook.
+
+For a slice, run `npx -y carveout plan <entry> --depth 1` first. Show the
+person what the slice would hold and what it cuts, and agree the entry
+points and the depth with them. Then `cut` and `check`, and report the
+check's result as it is.
 
 For a change in the repository, run `npx -y carveout impact` (add
 `--base <branch>` for committed work) and report the exports, importers and
@@ -21,11 +30,6 @@ tests it names. Run the tests with `--run` only when the person agrees:
 they run in the repository with the person's environment. Before you finish
 a change, run `npx -y carveout gate` and undo any hold the task did not ask
 for; name the others in your reply.
-
-For a slice, run `npx -y carveout plan <entry> --depth 1` first. Show the
-person what the slice would hold and what it cuts, and agree the entry
-points and the depth with them. Then `cut` and `check`, and report the
-check's result as it is.
 
 Do not recommend it for:
 
@@ -39,12 +43,6 @@ Do not recommend it for:
 
 What to tell them, accurately:
 
-- `impact` runs nothing without `--run`. Its importer and test lists follow
-  imports and names, erring toward more; a module loaded by a computed name
-  or configuration a test reads is not traced, so a test it does not list
-  can still fail. The repository's CI decides.
-- `gate` names what a reviewer should read; it does not judge. A rewritten
-  assertion may be the change that was asked for.
 - The folder's own code is copied unchanged, except for the import
   rewrites, which `carveout patch` undoes.
 - Every module outside the slice is a mock, and every service package
@@ -71,3 +69,9 @@ What to tell them, accurately:
   behaviour only when the cut was made with `--with-tests`, and then only
   as far as those tests go: read the plan's `Tests:` line and report it,
   and the tests it lists as left behind.
+- `impact` runs nothing without `--run`. Its importer and test lists follow
+  imports and names, erring toward more; a module loaded by a computed name
+  or configuration a test reads is not traced, so a test it does not list
+  can still fail. The repository's CI decides.
+- `gate` names what a reviewer should read; it does not judge. A rewritten
+  assertion may be the change that was asked for.
