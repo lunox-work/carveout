@@ -1,7 +1,7 @@
 {
   "name": "carveout",
   "version": "0.1.0",
-  "description": "Carve a slice out of a TypeScript repository: the files a change needs, copied at their paths, with every module it imports from the rest of the repository stubbed and mocked, so the folder installs, builds and tests on its own.",
+  "description": "Check what a change to a TypeScript repository reaches (importers, changed exports, the tests to run) and hold weakened tests and config edits; or carve a slice of the repository, stubbed and mocked, for someone who should see only part of it.",
   "keywords": [
     "carveout",
     "repository-slicing",
@@ -15,7 +15,11 @@
     "claude-code",
     "codex",
     "cursor",
-    "typescript"
+    "typescript",
+    "impact-analysis",
+    "test-impact-analysis",
+    "test-selection",
+    "guardrails"
   ],
   "homepage": "https://github.com/lunox-work/carveout#readme",
   "bugs": {

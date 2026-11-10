@@ -1,16 +1,21 @@
 ---
 name: carveout
 description:
-  Carve a slice out of a TypeScript repository or monorepo into a standalone
-  folder: the files a change needs, copied at their
-  repository paths, with every module it imports from the rest of the
-  repository replaced by a .d.ts stub and a recording mock, so the folder
-  installs, builds and tests on its own; then turn the edits made there back
-  into a patch for the repository. Use when someone wants to work on, hand
-  off, review, test or give an agent one part of a large repository or
-  monorepo without the rest of it, wants to know what a file or folder
-  depends on and what depends on it, or wants a minimal reproduction of one
-  module.
+  Check what a change to a TypeScript repository reaches and hold what it
+  should not slip in, or carve a slice of the repository for someone who
+  should see only part of it. `impact` lists the files a change reaches,
+  the exports whose type changed and who takes them, and the tests that run
+  the changed code with the commands to run just those; `gate` holds
+  weakened or deleted tests, CI and config edits, and new suppressions. A
+  slice is the files a change needs, copied at their repository paths, with
+  every module it imports from the rest replaced by a .d.ts stub and a
+  recording mock, so the folder installs, builds and tests on its own; its
+  edits come back as a patch. Use when someone or an agent changed a
+  TypeScript repository and wants to know what it breaks or which tests to
+  run, wants a change checked for weakened tests before it is done, wants
+  to hand one part of a closed repository to a contractor, contributor or
+  untrusted agent, wants to know what a file depends on and what depends on
+  it, or wants a minimal reproduction of one module.
 ---
 
 # carveout
@@ -23,6 +28,38 @@ PATH.
 Run it from the repository's root, or pass `--repo <root>`: the root is where
 the lockfile and the workspace manifest are, so workspace packages resolve to
 their source. Entry points are files or directories relative to the root.
+
+## 0. A change in the repository: impact and gate
+
+```sh
+carveout impact [<file>...] [--base <ref>] [--depth N] [--run] [--json]
+carveout gate [--base <ref>] [--scope <path>]... [--allow <path>]... [--hook] [--json]
+```
+
+Both read the change from Git, the base (default `HEAD`) against the working
+tree, untracked files included; `impact` with files named starts from those
+instead. Neither runs the repository's code, but for `impact --run`.
+
+`impact` prints the changed exports (type at the base and now, and the
+files that take each), the importers nearest first, the tests among them
+with their runner, and one command per package that runs just those tests.
+Report all of it. A changed export with files that take it is the first
+thing to check: those files may no longer compile. Run the tests with
+`--run` (exit 2 if a command fails) when the person agrees; they run in the
+repository with the person's environment. A runner it does not know falls
+back to the package's whole `npm test`, which the output marks. It traces
+imports and names, not runtime: say so when you report a clean result.
+
+`gate` exits 6 and lists each hold with why: protected paths, edited check
+configuration (tsconfig, linter, test runner), deleted tests, assertions
+removed, rewritten, skipped, focused with `.only`, made unreachable or
+swallowed by a `catch`, new suppressions (`@ts-ignore`, `eslint-disable`,
+coverage ignores), and with `--scope`, files outside it. Run it before you
+call a change done. Undo a hold the task did not ask for; keep one the
+task did ask for (the behaviour an assertion held was meant to change),
+and name it in your reply. `--allow` is for the person, after they have
+read the file. `--hook` is for a Claude Code Stop hook: exit 2 with the
+holds on stderr, once per stop.
 
 ## 1. Plan
 
@@ -298,7 +335,9 @@ It leaves out, and names:
   hooks, `.vscode`, `.devcontainer`, `package.json`, lockfiles, `.npmrc`,
   `.env*`, Dockerfiles, Makefiles, `*.sh`, `CODEOWNERS`,
   `carveout.config.json`); a deleted test; an edited test that removes or
-  rewrites an assertion or skips a test. Show the person the list;
+  rewrites an assertion, skips or focuses (`.only`) a test, or leaves an
+  assertion unreachable or in a `catch` that swallows it. Show the person
+  the list;
   `--allow <path|glob>` carries one they reviewed.
 
 `patch` runs none of the folder's code and takes nothing in it on trust: a
@@ -336,7 +375,9 @@ tests exercise real code rather than mocks; drop `--copy-pure`, or mark
 that code `--private`, where it must stay closed), `check`, hand the
 folder over. When it comes back,
 `patch` from the repository's root, show the refusals, and have the
-maintainer read the whole patch before anything runs it: its tests and new
+maintainer read the whole patch, with `carveout impact --base HEAD` after
+applying it on a branch (it runs nothing) for the importers and tests the
+contributor never saw, before anything runs it: its tests and new
 files (a runner config among them) are code that runs beside the closed
 repository, and the policy does not judge code. Then apply it on a branch
 for a pull request. Tell the maintainer plainly: the slice's tests ran
@@ -367,4 +408,8 @@ gives back the slice's part of the change.
   entry with no tarball URL counts as public when its integrity matches the
   public registry's (online cuts).
 - **Test runners.** `node:test` and Vitest; a Jest test is left behind and
-  named.
+  named. `impact` also names Jest tests and runs them with Jest.
+- **`impact` traces imports, not runtime.** A module loaded by a computed
+  name, a file read by path or configuration a test reads is not traced.
+  Inside a module it follows the identifiers each top-level statement
+  names, erring toward more.
