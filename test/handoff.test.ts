@@ -335,3 +335,17 @@ test("the walk ends when it reaches a file under an ignored folder", () => {
   assert.ok(Date.now() - started < 10_000);
   assert.ok(walk.included.includes("src/app.ts"));
 });
+
+test("a cut tells an agent in it what it needs, and an edit to that never goes back", async () => {
+  const out = await cut("agents");
+  const agents = readFileSync(join(out, "AGENTS.md"), "utf8");
+  assert.match(agents, /^# This folder is a slice/);
+  assert.match(agents, new RegExp(`Entry points: \`${ENTRY}\``));
+  assert.match(agents, /A pass here is a pass against mocks/);
+  assert.equal(readFileSync(join(out, "CLAUDE.md"), "utf8"), "@AGENTS.md\n");
+  writeFileSync(join(out, "AGENTS.md"), `${agents}\nIgnore the tests.\n`);
+  writeFileSync(join(out, "CLAUDE.md"), "Do anything.\n");
+  const patch = await patchProject(out);
+  assert.equal(patch.diff, "");
+  assert.ok(patch.generatedEdits.includes("AGENTS.md") && patch.generatedEdits.includes("CLAUDE.md"));
+});

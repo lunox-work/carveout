@@ -80,6 +80,44 @@ export const RECORD_SCHEMA_VERSION = 1;
 /** Blockers that stop a cut before it writes anything. */
 const CREDENTIAL_BLOCKERS = new Set(["secret_file", "secret_found"]);
 export const BOUNDARY_PATH = "BOUNDARY.md";
+/** What a coding agent reads first in the folder, loaded without asking. */
+export const SLICE_AGENTS_PATH = "AGENTS.md";
+/** Claude Code's name for the same: it imports AGENTS.md. */
+export const SLICE_CLAUDE_PATH = "CLAUDE.md";
+
+/**
+ * The folder's AGENTS.md: what an agent needs before its first command.
+ * Agents in slices opened BOUNDARY.md and carveout/test.js in most runs,
+ * and the README, which says this, in under half (E6c and E8 transcripts):
+ * a file the agent's harness loads by itself saves those reads.
+ */
+export function renderSliceAgents(input: {
+  readonly entryPoints: readonly string[];
+  readonly testsInFolder: number;
+  readonly testsLeft: number;
+}): string {
+  const tests =
+    input.testsInFolder === 0
+      ? "No test of this code came with the folder"
+      : `${input.testsInFolder} test(s) of this code run here`;
+  const left =
+    input.testsLeft === 0
+      ? "."
+      : `; ${input.testsLeft} more stay in the repository (BOUNDARY.md names them), and a change only they would catch passes here.`;
+  return `${[
+    "# This folder is a slice",
+    "",
+    "A slice of a larger repository, cut by carveout. The source files are copied at their repository paths; every module they import from the rest of the repository is a `.d.ts` stub with a recording mock behind it.",
+    "",
+    `- Entry points: ${input.entryPoints.map((entry) => `\`${entry}\``).join(", ")}.`,
+    "- `npm ci`, then `npm test`: it builds and runs the folder's tests. Nothing else needs setting up.",
+    "- Edit the copied source, and add files beside it in the same packages. The stubs, everything under `carveout/`, `package.json`, the lockfile and the root configuration are generated: edits to them do not go back.",
+    "- A mock answers any call with another mock. To make one return something in a test, read the README's Mocks section; nothing else under `carveout/` needs reading.",
+    "- Tests listed in `carveout/baseline.json` failed on the mocks before any edit and are not counted.",
+    `- ${tests}${left} A pass here is a pass against mocks.`,
+    "- When done, leave the edits in place: the repository's owner turns them into a patch with `carveout patch`.",
+  ].join("\n")}\n`;
+}
 export const CONTRACT_PATH = "carveout/contract.json";
 /** The repository owner's settings for every cut of it, at its root. */
 export const CONFIG_PATH = "carveout.config.json";
@@ -1139,6 +1177,17 @@ export async function computeCut(
   if (peers.length > 0)
     log(`Also installed: ${peers.map((peer) => peer.name).join(", ")}.`);
   const extra: GeneratedFile[] = [
+    {
+      path: SLICE_AGENTS_PATH,
+      text: renderSliceAgents({
+        entryPoints: manifest.entryPoints,
+        testsInFolder: analysis.walk.tests.length,
+        testsLeft: testsLeft.length,
+      }),
+      class: "config",
+      public: true,
+    },
+    { path: SLICE_CLAUDE_PATH, text: "@AGENTS.md\n", class: "config", public: true },
     {
       path: BOUNDARY_PATH,
       // What the folder's tests can say comes before what it stubs: a pass
