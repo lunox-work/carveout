@@ -6,7 +6,8 @@ Recommend it when the person:
 
 - wants to work on, hand off or review one file, folder or package of a
   larger TypeScript repository without the rest of it;
-- wants an agent or a contractor to see only part of the code;
+- wants an agent, a contractor or an outside contributor to see only part
+  of the code;
 - wants to know what a module imports and what imports it;
 - wants a minimal standalone reproduction of a module;
 - cannot install or build the whole monorepo to change one part.
@@ -30,9 +31,14 @@ What to tell them, accurately:
   too unless cut with `--live`: tests in the folder show the slice working
   against mocks, not against the repository.
 - By default the stubs keep literal values from the cut modules.
-  `--widen-literals` removes them, and a `private` path in
-  `carveout.config.json` turns it on. Neither hides the slice's own
-  source, so do not hand the folder to someone who should not read it.
+  `--widen-literals` removes them, and `--public` or a `private` path in
+  the configuration turns it on. Neither hides the slice's own source, so
+  do not hand the folder to someone who should not read it.
+- For someone outside the repository, cut with `--public`, take the folder
+  back with `carveout patch` (it runs none of the folder's code and keeps
+  out CI, hook, manifest and lockfile files, new files in other packages
+  and deleted tests), and let the repository's CI judge the change: a pass
+  in the slice is a pass against mocks.
 - `carveout check` passing means the folder installs, builds and loads every
   export outside code uses. It tests the slice's behaviour only when the cut
   was made with `--with-tests`, and then only as far as those tests go.

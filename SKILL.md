@@ -95,6 +95,7 @@ allows a slice to hold.
 carveout cut <entry>... --out <empty folder> [--depth N] [--max-files N] [--with-tests]
              [--whole-package] [--follow-workspaces] [--private <path>]...
              [--copy <dir>]... [--mock <pkg>]... [--install <pkg>]... [--live <pkg>]...
+             [--widen-literals] [--public] [--offline]
 ```
 
 What the folder holds:
@@ -145,8 +146,10 @@ The rest of the cut's behaviour:
   `new URL("./x", import.meta.url)` or `join(__dirname, "x")` is copied.
   A folder read that way, or such a file outside the budget, is a
   `path_read` blocker.
-- **Credentials.** The cut refuses a credentials file, and blocks on any
-  credential it finds in what it writes. Neither is ever copied.
+- **Credentials.** A credentials file, or a credential in anything the
+  cut would write (a `--copy` folder and the resolved lockfile included),
+  stops the cut with exit 1 and nothing written. Tell the person which
+  file and line it names; never work around it.
 - **Network.** The cut reads package types from the public registry and
   resolves a lockfile. `--offline` skips both, and the folder then has no
   lockfile.
@@ -154,13 +157,18 @@ The rest of the cut's behaviour:
   `--widen-literals` writes `string` in place of `"live"`. Use it when the
   folder goes to someone who should not see the constants of the modules it
   cuts. It does not hide the slice's own source.
+- **Someone outside.** `--public` (or `"public": true` in the
+  configuration) is for a folder handed to someone outside the
+  repository: literals widened, and neither the checkout's path nor the
+  files outside the slice that import it written. Commands that need the
+  repository then take `--repo` (default: the current directory).
 - **Exit codes.** 0 means ready. 2 means the folder was written with
   blockers, which the cut prints and which `carveout.json` lists.
 
 ## 3. Check
 
 ```sh
-carveout check <folder>
+carveout check <folder> [--isolated]
 ```
 
 It runs `npm ci`, `npm run build` and `npm test` in a scratch copy of the
@@ -172,7 +180,9 @@ was mocked (no lockfile), the cut reports `test_runner_mocked`; cut again
 with `--install vitest`. When a
 package is missing at runtime, the check says which `--install` to cut again
 with. Report the result to the person as it is. A failed step is not "mostly
-working".
+working". `--isolated`, for a folder that came back from someone else,
+gives it a scratch HOME and npm cache and no install scripts; it is not a
+sandbox, so run an untrusted folder's tests in CI or a container instead.
 
 `npm test` in a checked folder reports in short: the counts, then in full
 only the failures that are not the baseline's, with the baseline's number.
@@ -233,7 +243,7 @@ moved before deciding to cut again, not to save the time of a cut.
 ## 6. Patch
 
 ```sh
-carveout patch <folder> --output change.patch
+carveout patch <folder> [--repo <checkout>] [--allow <path|glob>]... --output change.patch
 git apply change.patch           # at the repository's root
 git apply --3way change.patch    # when patch says files moved since the cut
 ```
@@ -259,6 +269,17 @@ It leaves out, and names:
 - **Slice-only files**: a new or edited file that imports `carveout/`,
   such as a test against the mocks. The repository has no `carveout/`.
 - Edits to other generated files.
+- **What the hand-off policy refuses** (exit code 6): a new file outside
+  the packages the slice holds files of; a protected path (CI workflows,
+  hooks, `.vscode`, `.devcontainer`, `package.json`, lockfiles, `.npmrc`,
+  `.env*`, Dockerfiles, Makefiles, `*.sh`, `CODEOWNERS`,
+  `carveout.config.json`); a deleted test. Show the person the list;
+  `--allow <path|glob>` carries one they reviewed.
+
+`patch` runs none of the folder's code and takes nothing in it on trust: a
+`carveout.json` that names a path outside the folder is refused, and the
+repository is the one given with `--repo` (else the record's), which must
+hold the cut's commit.
 
 Its `index` lines carry the full blob ids of the cut commit's files. When a
 file moved since the cut, `patch` says so: apply with `git apply --3way`,
@@ -270,14 +291,27 @@ was nothing to patch. `--json` prints the lists with the diff.
 ## 7. Merge and apply
 
 ```sh
-carveout merge <folder> --into <checkout> --verify "npm test"
-carveout apply <folder> upstream.patch [--stubs]
+carveout merge <folder> --into <checkout> --verify "npm test" [--verify-env <name>]... [--allow <path>]...
+carveout apply <folder> upstream.patch [--stubs] [--repo <checkout>]
 ```
 
 `merge` runs `patch`, then `git apply --3way` in the checkout you name,
 then the verify command at its root. It reports each step, and exits 2 when
-one fails. It never picks a checkout itself. Name a clean clone, or the
-person's own checkout only when they ask.
+one fails, 6 (applying nothing) when the hand-off policy refuses a path.
+The verify command gets a scratch HOME and only the variables named with
+`--verify-env`. It never picks a checkout itself. Name a clean clone, or
+the person's own checkout only when they ask.
+
+## 8. Someone outside the repository
+
+To let a contributor work on one part of a closed repository: `plan`,
+agree the entries and `--private` paths with the maintainer, `cut
+--public` (with `--with-tests --whole-package` so the folder's tests
+exercise real code), `check`, hand the folder over. When it comes back,
+`patch` from the repository's root, show the refusals, and apply the
+patch on a branch for a pull request. Tell the maintainer plainly: the
+slice's tests ran against mocks, a test that needed `carveout/` did not
+come back, and the repository's CI is what decides.
 
 `apply` goes the other way: a patch for the repository at the cut's commit
 comes into the folder, with its imports rewritten as a cut writes them. It
