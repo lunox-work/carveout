@@ -267,6 +267,43 @@ test("a record that names a path outside the folder, or another repository, is r
   }
 });
 
+test("a record that lists a cut module or another file as the slice's is refused", async () => {
+  const out = await cut("forged");
+  const path = join(out, "carveout.json");
+  const record = JSON.parse(readFileSync(path, "utf8"));
+  const forge = (file: string) =>
+    writeFileSync(
+      path,
+      JSON.stringify({
+        ...record,
+        manifest: {
+          ...record.manifest,
+          included: [
+            ...record.manifest.included,
+            { path: file, blobId: "", sha256: "0".repeat(64), mode: "100644", sizeBytes: 1, depth: 0, operations: ["edit"] },
+          ],
+        },
+      }),
+    );
+  // An edit of a cut module, and a new file in its package, through a forged entry.
+  forge("packages/money/src/index.ts");
+  write(join(out, "packages/money/src/index.ts"), "export const format = () => 'x';\n");
+  write(join(out, "packages/money/src/backdoor.ts"), "export const x = 1;\n");
+  await assert.rejects(patchProject(out), /lists "packages\/money\/src\/index\.ts" as a slice file/);
+  await assert.rejects(applyPatch(out, ""), /as a slice file/);
+  // A deletion of a file outside the slice: listed, then absent.
+  rmSync(join(out, "packages"), { recursive: true, force: true });
+  forge("apps/shop/src/checkout.ts");
+  rmSync(join(out, "apps/shop/src/checkout.ts"), { force: true });
+  await assert.rejects(patchProject(out), /lists "apps\/shop\/src\/checkout\.ts" as a slice file/);
+  // The record as written still patches.
+  writeFileSync(path, JSON.stringify(record));
+  if (existsSync(join(out, "apps/shop/src/checkout.ts")) === false && record.manifest.included.some((file: { path: string }) => file.path === "apps/shop/src/checkout.ts"))
+    cpSync(join(repo, "apps/shop/src/checkout.ts"), join(out, "apps/shop/src/checkout.ts"));
+  const patch = await patchProject(out);
+  assert.deepEqual(patch.refused, []);
+});
+
 test("merge runs the verify command with only the environment it is given", async () => {
   const out = await cut("env");
   const edited = join(out, "apps/shop/src/tax.ts");

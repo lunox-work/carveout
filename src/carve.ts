@@ -1539,6 +1539,34 @@ export function readRecord(dir: string): CarveoutRecord {
   return record;
 }
 
+/**
+ * Throws unless every file the record says the slice holds is one of the
+ * repository's, at the bytes the cut read: its hash must be the blob's at
+ * the cut's commit, or the checkout's file's (a cut of uncommitted bytes).
+ * The record comes back with the folder, and its `included` list decides
+ * which files a patch may edit or delete and which packages may gain a new
+ * file: an entry added there for a cut module, with any hash, would carry
+ * an edit or a deletion of that module past the hand-off policy. Forging
+ * one now takes the file's exact bytes, which a slice never shows.
+ */
+export function checkRecordFiles(record: CarveoutRecord, repo: string): void {
+  const commit = record.manifest.sourceCommitSha;
+  for (const file of [...record.manifest.included, ...(record.extras ?? [])]) {
+    const committed = commit === null ? null : gitShow(repo, commit, file.path);
+    if (committed !== null && sha256(committed) === file.sha256) continue;
+    const current = join(repo, file.path);
+    if (
+      existsSync(current) &&
+      statSync(current).isFile() &&
+      sha256(readFileSync(current)) === file.sha256
+    )
+      continue;
+    throw new Error(
+      `carveout.json is not one carveout wrote: it lists ${JSON.stringify(file.path)} as a slice file, which the repository does not hold at those bytes. Cut the folder again rather than trust it.`,
+    );
+  }
+}
+
 export interface CheckStep {
   readonly command: string;
   readonly ok: boolean;
@@ -1856,6 +1884,7 @@ export async function patchProject(
   const root = resolve(dir);
   const record = readRecord(root);
   const repo = trustedRepo(record, options.repo);
+  checkRecordFiles(record, repo);
   const rewritesOf = new Map<string, ImportRewrite[]>();
   for (const rewrite of record.importRewrites)
     rewritesOf.set(rewrite.file, [

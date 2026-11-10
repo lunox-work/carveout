@@ -23,6 +23,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
   RECORD_PATH,
+  checkRecordFiles,
   computeCut,
   patchProject,
   readRecord,
@@ -94,6 +95,7 @@ export async function applyPatch(
   const root = resolve(dir);
   const record = readRecord(root);
   const source = trustedRepo(record, options.repo);
+  checkRecordFiles(record, source);
   const commit = record.manifest.sourceCommitSha;
   if (commit === null)
     throw new Error("The cut was not made in a Git checkout, so there is no commit to apply the patch at.");
