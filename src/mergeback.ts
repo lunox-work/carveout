@@ -128,6 +128,13 @@ export async function applyPatch(
       widenLiterals: record.request.widenLiterals,
       tests: record.request.tests === true,
       ...(record.request.live === undefined ? {} : { live: record.request.live }),
+      // The cut's own bounds: a private path given as a flag stays private,
+      // and a public folder stays public, when the cut is made again.
+      wholePackage: record.request.wholePackage === true,
+      followWorkspaces: record.request.followWorkspaces === true,
+      private: record.request.private ?? [],
+      copy: record.request.copy ?? [],
+      public: record.request.public === true,
       ...(options.log === undefined ? {} : { log: options.log }),
     };
     const cuts: ComputedCut[] = [await computeCut(request)];

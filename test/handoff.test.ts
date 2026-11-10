@@ -26,6 +26,7 @@ import { filterDeclaration } from "../src/extract/typescript.js";
 import { walkGraph } from "../src/graph.js";
 import { extensionStyles, restoreImports } from "../src/imports.js";
 import { applyPatch, mergeProject } from "../src/mergeback.js";
+import { statusProject } from "../src/status.js";
 
 const FIXTURE = resolve(import.meta.dirname, "../../test/fixtures/shop");
 const ENTRY = "apps/shop/src/cart.ts";
@@ -175,6 +176,8 @@ test("a public cut names neither the checkout nor the files outside that import 
   assert.equal(absolute, "");
   assert.match(readFileSync(join(out, "README.md"), "utf8"), /^A slice of a repository,/m);
   assert.doesNotMatch(readFileSync(join(out, "package.json"), "utf8"), /"name": "repo-/);
+  // Made again as a public cut, the folder is what it was.
+  assert.equal((await statusProject(out, { repo })).current, true);
   // The maintainer names the repository; nothing in the folder does.
   await assert.rejects(patchProject(out), /does not name its repository/);
   const edited = join(out, "apps/shop/src/tax.ts");

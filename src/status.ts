@@ -133,6 +133,7 @@ export async function statusProject(
       followWorkspaces: request.followWorkspaces === true,
       private: request.private ?? [],
       copy: request.copy ?? [],
+      public: request.public === true,
     });
   } catch (error) {
     return {

@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   cpSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -371,6 +372,32 @@ test("apply brings a module the patch adds past the cut's reach, with its test",
   assert.deepEqual(patch.added, ["apps/shop/src/report.test.ts", "apps/shop/src/report.ts"]);
   // Its import comes back as the repository's neighbours spell the target.
   assert.match(patch.diff, /^\+import \{ TAX_RATE \} from "@\/tax";$/m);
+});
+
+test("apply cuts again with the cut's own bounds: a private path given as a flag stays out", async () => {
+  const out = (
+    await cutSlice({
+      repo,
+      out: join(scratch, "apply-private"),
+      entryPoints: [ENTRY],
+      budget: { maxFiles: 40, maxDepth: 1 },
+      offline: true,
+      private: ["apps/shop/src/tax.ts"],
+    })
+  ).out;
+  assert.equal(existsSync(join(out, "apps/shop/src/tax.ts")), false);
+  const work = clone("apply-private-repo");
+  // A module the change adds, which imports the private one.
+  writeFileSync(
+    join(work, "apps/shop/src/report.ts"),
+    'import { tax } from "./tax.js";\nexport const taxed = (cents: number) => cents + tax(cents);\n',
+  );
+  git(work, ["add", "-A"]);
+  const applied = await applyPatch(out, git(work, ["diff", "--cached", "--full-index"]));
+  assert.deepEqual(applied.added, ["apps/shop/src/report.ts"]);
+  // Cut again without the flag, the private module would be copied in.
+  assert.equal(existsSync(join(out, "apps/shop/src/tax.ts")), false);
+  assert.ok(existsSync(join(out, "apps/shop/src/tax.d.ts")));
 });
 
 test("a live package is installed, and the environment its importers read is left to the shell", async () => {
