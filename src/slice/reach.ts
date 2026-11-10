@@ -104,6 +104,8 @@ export interface ReachResult {
   readonly helpers: readonly string[];
   /** Files the walk reached and kept out as private, sorted; each is a cut. */
   readonly privateFiles: readonly string[];
+  /** Of the included files, the pure code copied rather than mocked, sorted. */
+  readonly pure: readonly string[];
   /**
    * Tests of the slice left behind, sorted: they run on neither `node:test`
    * nor Vitest, or make an import no slice can carry (a computed dynamic
@@ -135,6 +137,20 @@ export interface ReachOptions {
   readonly wholePackage?: boolean;
   /** Files never entered: cut and stubbed wherever the walk reaches them. */
   readonly isPrivate?: (file: string) => boolean;
+  /**
+   * Copy pure code rather than mock it: a module the slice imports at
+   * runtime from outside comes along, past the depth, when every module
+   * its runtime imports reach outside the slice is pure. A mock of a
+   * validator, an error class or a formatter answers with more mocks, and
+   * the slice's tests fail on it before any change (a red baseline); the
+   * real code runs the same in the folder as in the repository.
+   */
+  readonly pure?: {
+    /** A package a pure module may import: no service, no I/O. */
+    readonly package: (specifier: string) => boolean;
+    /** Whether the file's own code reads the environment, the disk or the network. */
+    readonly sideEffects: (file: string) => boolean;
+  };
 }
 
 /** `x.test.ts`, `x.spec.tsx`, or anything under `__tests__/`. */
@@ -587,6 +603,96 @@ export function reach(
     }
     closePackage();
   }
+  // Pure code the slice runs, copied rather than mocked, while the budget
+  // lasts. A module comes with its runtime closure outside the slice, or
+  // not at all: one impure module in it (a driver, an environment read, a
+  // private file) leaves the whole of it a stub, as before.
+  const pure: string[] = [];
+  const pureOptions = options.pure;
+  if (pureOptions !== undefined && dropped.size === 0) {
+    const verdicts = new Map<string, boolean>();
+    const own = (file: string): boolean => {
+      const known = verdicts.get(file);
+      if (known !== undefined) return known;
+      const verdict =
+        /\.[cm]?tsx?$/.test(file) &&
+        !/\.d\.[cm]?ts$/.test(file) &&
+        !isTestPath(file) &&
+        !isPrivate(file) &&
+        !pureOptions.sideEffects(file) &&
+        (dependencyEdges.get(file) ?? []).every(
+          (dependency) =>
+            dependency.status === "external" &&
+            dependency.specifier !== null &&
+            pureOptions.package(dependency.specifier),
+        ) &&
+        (outgoing.get(file) ?? []).every(({ link }) => link.relation !== "reads");
+      verdicts.set(file, verdict);
+      return verdict;
+    };
+    /**
+     * What copying the names a link takes from `start` brings along: the
+     * module, when the slice needs its own code, with everything its code
+     * imports; for a barrel, only the re-exports that supply the names, its
+     * others left cut as the walk leaves them. Null when any of it is
+     * impure. `names` null is the whole module.
+     */
+    const closureOf = (start: string, names: readonly string[] | null): string[] | null => {
+      const found = new Set<string>();
+      const visited = new Set<string>();
+      const queue: [string, readonly string[] | null][] = [[start, names]];
+      while (queue.length > 0) {
+        const [file, wanted] = queue.pop() as [string, readonly string[] | null];
+        if (depthOf.has(file)) continue;
+        const key = `${file}\n${wanted === null ? "*" : [...wanted].sort(compare).join(",")}`;
+        if (visited.has(key)) continue;
+        visited.add(key);
+        if (!own(file)) return null;
+        found.add(file);
+        const declared = exportsOf.get(file) ?? null;
+        const ownCode =
+          wanted === null ||
+          declared === null ||
+          wanted.some((name) => declared.values.includes(name) || name === "default");
+        for (const { link, edge } of outgoing.get(file) ?? []) {
+          if (link.relation !== "imports" || link.typeOnly) continue;
+          if (link.forwards === null) {
+            if (ownCode) queue.push([edge.to, link.names]);
+          } else if (link.forwards === EVERYTHING) {
+            const supplied =
+              wanted === null
+                ? null
+                : wanted.filter((name) => exported(edge.to).names.has(name));
+            if (supplied === null || supplied.length > 0) queue.push([edge.to, supplied]);
+          } else
+            for (const [name, as] of link.forwards)
+              if (wanted === null || wanted.includes(as)) queue.push([edge.to, [name]]);
+        }
+      }
+      return [...found].sort(compare);
+    };
+    let frontier = [...depthOf.keys()].sort(compare);
+    while (frontier.length > 0) {
+      const next: string[] = [];
+      for (const file of frontier) {
+        const depth = (depthOf.get(file) ?? 0) + 1;
+        for (const { link, edge } of outgoing.get(file) ?? []) {
+          if (link.relation !== "imports" || link.typeOnly) continue;
+          if (depthOf.has(edge.to) || isTestPath(edge.to) || isPrivate(edge.to)) continue;
+          const closure = closureOf(edge.to, link.names);
+          // Past the budget the module stays a stub: nothing is dropped
+          // for code the walk did not need.
+          if (closure === null || depthOf.size + closure.length > maxFiles) continue;
+          for (const each of closure) {
+            depthOf.set(each, depth);
+            pure.push(each);
+            next.push(each);
+          }
+        }
+      }
+      frontier = next.sort(compare);
+    }
+  }
   const included = [...depthOf.keys()].sort(compare);
   const inside = new Set(included);
   const outbound = new Map<string, CutEdge>();
@@ -623,6 +729,7 @@ export function reach(
     tests: tests.sort(compare),
     helpers: helpers.sort(compare),
     privateFiles: [...privateFiles].sort(compare),
+    pure: pure.sort(compare),
     untestable: [...untestable].sort(compare),
   };
 }

@@ -35,6 +35,9 @@ What to tell them, accurately:
   as a constant), and `--public` or a `private` path in the configuration
   turns it on. Neither hides the slice's own source, so do not hand the
   folder to someone who should not read it.
+- `--copy-pure` copies the pure code the slice runs instead of mocking
+  it, so the folder's tests pass before any change; it shows the
+  contributor more of the repository, which `plan` lists.
 - For someone outside the repository, cut with `--public`, take the folder
   back with `carveout patch` (it runs none of the folder's code and keeps
   out CI, hook, manifest and lockfile files, new files in other packages

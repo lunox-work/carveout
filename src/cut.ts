@@ -10,7 +10,7 @@
  * package types it may fetch.
  */
 
-import { constants, type Stats } from "node:fs";
+import { constants, readFileSync, type Stats } from "node:fs";
 import { open, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
@@ -23,6 +23,7 @@ import {
   isRegistryVersion,
   isSecretPath,
   pathMatcher,
+  purityRules,
   reach,
   sliceReadiness,
 } from "./core.js";
@@ -323,6 +324,17 @@ export async function analyseSlice(input: {
     packageOf: packageFolder(input.sourceDir),
     ...(params.wholePackage === true ? { wholePackage: true } : {}),
     ...(isPrivate === null ? {} : { isPrivate }),
+    ...(params.copyPure === true
+      ? {
+          pure: purityRules((file) => {
+            try {
+              return readFileSync(join(input.sourceDir, file), "utf8");
+            } catch {
+              return null;
+            }
+          }, isNodeBuiltin),
+        }
+      : {}),
   });
   // Followed, a workspace import is a link and already an inbound cut;
   // unfollowed, the files importing the slice by a package's name are

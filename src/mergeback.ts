@@ -132,6 +132,7 @@ export async function applyPatch(
       // and a public folder stays public, when the cut is made again.
       wholePackage: record.request.wholePackage === true,
       followWorkspaces: record.request.followWorkspaces === true,
+      copyPure: record.request.copyPure === true,
       private: record.request.private ?? [],
       copy: record.request.copy ?? [],
       public: record.request.public === true,

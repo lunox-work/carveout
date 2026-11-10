@@ -330,6 +330,50 @@ test("the lazy graph walks as the whole graph does, importers through ../.. incl
   assert.equal(lazy.built.files.includes("lib/deep/other.ts"), false);
 });
 
+test("pure code is copied rather than mocked, and an impure module stays a stub", () => {
+  const files: Record<string, string> = {
+    "app/src/route.ts": [
+      'import { parseInput, BusyError } from "../../lib/src/index.js";',
+      'import { query } from "../../lib/src/store.js";',
+      "export const handle = (raw: unknown) => {",
+      "  try { return query(parseInput(raw)); } catch (e) { return e instanceof BusyError ? 409 : 500; }",
+      "};",
+      "",
+    ].join("\n"),
+    "lib/src/index.ts": 'export * from "./schema.js";\nexport * from "./errors.js";\nexport * from "./client.js";\n',
+    "lib/src/schema.ts": 'import { z } from "zod";\nexport const parseInput = (raw: unknown) => z.string().parse(raw);\n',
+    "lib/src/errors.ts": "export class BusyError extends Error {}\n",
+    "lib/src/client.ts": 'import postgres from "postgres";\nexport const sql = postgres("");\n',
+    "lib/src/config.ts": 'export const url = process.env["DATABASE_URL"] ?? "";\n',
+    "lib/src/store.ts": 'import { sql } from "./client.js";\nexport const query = (text: string) => sql`select ${text}`;\n',
+  };
+  const pure = {
+    package: (specifier: string) => serviceOf(specifier) === null,
+    sideEffects: (file: string) => /process\.env/.test(files[file] ?? ""),
+  };
+  const budget = { maxFiles: 40, maxDepth: 0 };
+  assert.deepEqual(walk(files, ["app/src/route.ts"], budget).included, ["app/src/route.ts"]);
+  const on = walk(files, ["app/src/route.ts"], budget, { pure });
+  // The barrel comes with the modules that supply the names, its driver
+  // re-export left cut; the store, which reaches the driver, stays a stub.
+  assert.deepEqual(on.pure, ["lib/src/errors.ts", "lib/src/index.ts", "lib/src/schema.ts"]);
+  assert.deepEqual(
+    [...new Set(on.cuts.outbound.map((edge) => edge.to))].sort(),
+    ["lib/src/client.ts", "lib/src/store.ts"],
+  );
+  // An environment read is not pure.
+  const env = walk(
+    { ...files, "app/src/route.ts": 'import { url } from "../../lib/src/config.js";\nexport const u = url;\n' },
+    ["app/src/route.ts"],
+    budget,
+    { pure },
+  );
+  assert.deepEqual(env.pure, []);
+  // Past the budget a pure module stays a stub, and nothing is dropped.
+  const tight = walk(files, ["app/src/route.ts"], { maxFiles: 2, maxDepth: 0 }, { pure });
+  assert.deepEqual([tight.pure, tight.dropped], [[], []]);
+});
+
 test("a file that imports the slice by its package's name is an importer, followed or not", () => {
   const root = repository({
     "package.json": '{"type":"module","workspaces":["packages/*","apps/*"]}\n',

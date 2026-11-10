@@ -39,6 +39,12 @@ export interface SliceParams {
    */
   readonly followWorkspaces?: boolean;
   /**
+   * Copy pure code the slice runs (validators, error classes, formatters)
+   * rather than mock it, past the depth; see `ReachOptions.pure`. Absent
+   * when off.
+   */
+  readonly copyPure?: boolean;
+  /**
    * Files never copied, as paths or globs from the repository's root:
    * wherever the walk reaches one it is cut and stubbed, with its literal
    * values widened. Absent when none.

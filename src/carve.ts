@@ -24,6 +24,7 @@ import {
   coverageGateOf,
   declarationPath,
   detectExternals,
+  purityRules,
   generateProject,
   isScript,
   isSecretPath,
@@ -95,6 +96,8 @@ export interface RepoConfig {
   readonly widenLiterals?: boolean;
   /** Every cut is for someone outside; see `CutRequest.public`. */
   readonly public?: boolean;
+  /** Copy pure code rather than mock it; see `SliceRequest.copyPure`. */
+  readonly copyPure?: boolean;
 }
 
 /** The owner's settings at the repository's root; empty when there are none. */
@@ -134,6 +137,7 @@ export function readRepoConfig(repo: string): RepoConfig {
   set("followWorkspaces", flag("followWorkspaces"));
   set("widenLiterals", flag("widenLiterals"));
   set("public", flag("public"));
+  set("copyPure", flag("copyPure"));
   set("private", paths("private"));
   set("copy", paths("copy"));
   return config;
@@ -164,6 +168,7 @@ function settle<
 ): T & {
   readonly wholePackage: boolean;
   readonly followWorkspaces: boolean;
+  readonly copyPure: boolean;
   readonly private: readonly string[];
   readonly copy: readonly string[];
   readonly widenLiterals: boolean;
@@ -172,10 +177,15 @@ function settle<
   const config = readRepoConfig(resolve(request.repo));
   const privatePaths = normalizePaths([...(config.private ?? []), ...(request.private ?? [])]);
   const outside = request.public ?? config.public ?? false;
+  const copyPure = request.copyPure ?? config.copyPure ?? false;
   return {
     ...request,
     wholePackage: request.wholePackage ?? config.wholePackage ?? false,
-    followWorkspaces: request.followWorkspaces ?? config.followWorkspaces ?? false,
+    // Pure code in another package is reached through its source, so
+    // copying it follows the workspaces unless told otherwise.
+    followWorkspaces:
+      request.followWorkspaces ?? config.followWorkspaces ?? copyPure,
+    copyPure,
     private: privatePaths,
     copy: normalizePaths([...(config.copy ?? []), ...(request.copy ?? [])]),
     // A private module's constants are not for the folder: widened unless
@@ -222,6 +232,15 @@ export interface SliceRequest {
    * configuration says, else off.
    */
   readonly followWorkspaces?: boolean;
+  /**
+   * Copy the pure code the slice runs (a validator, an error class, a
+   * formatter from another module or package) rather than mock it, so its
+   * tests run against the real code and do not fail on the mocks before
+   * any change. Follows the workspaces unless `followWorkspaces` is false.
+   * The copied code is the contributor's to read. Unset: as the
+   * configuration says, else off.
+   */
+  readonly copyPure?: boolean;
   /**
    * Paths or globs from the root that are never copied: cut and stubbed
    * wherever reached, their literal values widened. Joined with the
@@ -291,22 +310,39 @@ export interface Plan {
   /** How the walk was bounded, after the configuration. */
   readonly wholePackage: boolean;
   readonly followWorkspaces: boolean;
+  readonly copyPure: boolean;
   readonly private: readonly string[];
 }
 
 /** The walk's options for a settled request. */
-function walkOptions(request: {
-  readonly tests?: boolean;
-  readonly wholePackage: boolean;
-  readonly followWorkspaces: boolean;
-  readonly private: readonly string[];
-}) {
+function walkOptions(
+  request: {
+    readonly tests?: boolean;
+    readonly wholePackage: boolean;
+    readonly followWorkspaces: boolean;
+    readonly copyPure: boolean;
+    readonly private: readonly string[];
+  },
+  repo: string,
+) {
   return {
     tests: request.tests === true,
     ...(request.wholePackage ? { wholePackage: true } : {}),
     ...(request.followWorkspaces ? { followWorkspaces: true } : {}),
+    ...(request.copyPure ? { pure: pureRulesFor(repo) } : {}),
     ...(request.private.length === 0 ? {} : { isPrivate: pathMatcher(request.private) }),
   };
+}
+
+/** `purityRules` over the repository's files. */
+export function pureRulesFor(repo: string) {
+  return purityRules((file) => {
+    try {
+      return readFileSync(join(repo, file), "utf8");
+    } catch {
+      return null;
+    }
+  }, isNodeBuiltin);
 }
 
 /** What a cut of the request would hold, from the import graph alone. */
@@ -315,7 +351,7 @@ export function planSlice(request: SliceRequest): Plan {
   const repo = resolve(request.repo);
   const budget = request.budget ?? SLICE_BUDGET_DEFAULTS;
   const entryPoints = entriesOf(request);
-  const { built, walk } = walkGraph(repo, entryPoints, budget, walkOptions(settled));
+  const { built, walk } = walkGraph(repo, entryPoints, budget, walkOptions(settled, repo));
   const externals = detectExternals(
     walk.included.map((path) => ({
       path,
@@ -355,6 +391,7 @@ export function planSlice(request: SliceRequest): Plan {
       .sort(compare),
     wholePackage: settled.wholePackage,
     followWorkspaces: settled.followWorkspaces,
+    copyPure: settled.copyPure,
     private: settled.private,
   };
 }
@@ -443,6 +480,7 @@ export interface CarveoutRecord {
     /** The cut's bounds after the configuration; absent when off or none. */
     readonly wholePackage?: boolean;
     readonly followWorkspaces?: boolean;
+    readonly copyPure?: boolean;
     readonly private?: readonly string[];
     readonly copy?: readonly string[];
     /** A folder for someone outside; see `CutRequest.public`. */
@@ -717,7 +755,7 @@ export async function computeCut(
   const log = request.log ?? (() => {});
   const budget = request.budget ?? SLICE_BUDGET_DEFAULTS;
   const entryPoints = entriesOf(request);
-  const { built } = walkGraph(repo, entryPoints, budget, walkOptions(settled));
+  const { built } = walkGraph(repo, entryPoints, budget, walkOptions(settled, repo));
   log(`Read the imports of ${built.files.length} files.`);
   const commitSha = git(repo, ["rev-parse", "HEAD"]);
   const signal = AbortSignal.timeout(15 * 60_000);
@@ -733,6 +771,7 @@ export async function computeCut(
       ...(live.length === 0 ? {} : { live }),
       ...(settled.wholePackage ? { wholePackage: true } : {}),
       ...(settled.followWorkspaces ? { followWorkspaces: true } : {}),
+      ...(settled.copyPure ? { copyPure: true } : {}),
       ...(settled.private.length === 0 ? {} : { private: settled.private }),
       ...(settled.copy.length === 0 ? {} : { copy: settled.copy }),
     },
@@ -1175,6 +1214,7 @@ export async function computeCut(
         ...(live.length === 0 ? {} : { live }),
         ...(settled.wholePackage ? { wholePackage: true } : {}),
         ...(settled.followWorkspaces ? { followWorkspaces: true } : {}),
+        ...(settled.copyPure ? { copyPure: true } : {}),
         ...(settled.private.length === 0 ? {} : { private: settled.private }),
         ...(settled.copy.length === 0 ? {} : { copy: settled.copy }),
         ...(settled.public ? { public: true } : {}),

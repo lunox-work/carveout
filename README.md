@@ -115,6 +115,15 @@ slice starts from its locked versions. `--offline` skips both.
 - **Private paths** (`--private <path>`, or `private` in the
   configuration) are never copied: wherever the walk reaches one it is
   cut and stubbed, with literal values widened.
+- **Pure code**, with `--copy-pure`: a module the slice runs from outside
+  it is copied rather than mocked, past the depth and across packages,
+  when nothing its runtime imports reach outside the slice imports a
+  service SDK, Node's disk, network or process modules, reads the
+  environment or a path, or is private. A mocked validator or error
+  class answers with more mocks, and the tests that use it fail before
+  any change; copied, they run as in the repository. Through a barrel,
+  only the modules that supply the names come. The copied code is the
+  contributor's to read: `plan` lists it.
 
 Only the files the walk needs are parsed. Files that may import the slice
 are found by name first, and the compiler confirms each one.
@@ -142,15 +151,16 @@ Options for `plan` and `cut`:
   from it; such a barrel comes along, its other re-exports cut, and so do
   the test's own helpers. `npm test` in the folder runs them. Without a
   lockfile Vitest is mocked like any package; cut with `--install vitest`.
-- `--whole-package`, `--follow-workspaces` and `--private <path>` (see
-  above; `--private` takes a path, a folder or a glob, more than once).
+- `--whole-package`, `--follow-workspaces`, `--copy-pure` (which follows
+  the workspaces too) and `--private <path>` (see above; `--private` takes
+  a path, a folder or a glob, more than once).
 - `--json`
 
 A `carveout.config.json` at the repository's root sets the same for every
 cut, so the owner decides once where a slice may follow and what it keeps
 out: `{"wholePackage": true, "followWorkspaces": true, "private":
 ["packages/core/src/pricing/**"], "copy": ["packages/db/drizzle"],
-"widenLiterals": true, "public": true}`. A flag overrides a boolean; the
+"widenLiterals": true, "public": true, "copyPure": true}`. A flag overrides a boolean; the
 lists are joined. With any `private` path, or `public`, `widenLiterals` is
 on unless the file says otherwise.
 
@@ -202,8 +212,8 @@ maintainer cuts and later merges; the contributor only works in the folder.
 
 ```sh
 # maintainer, at the repository's root
-carveout plan  packages/api/src/quote.ts --depth 1 --with-tests --whole-package
-carveout cut   packages/api/src/quote.ts --depth 1 --with-tests --whole-package \
+carveout plan  packages/api/src/quote.ts --depth 1 --with-tests --whole-package --copy-pure
+carveout cut   packages/api/src/quote.ts --depth 1 --with-tests --whole-package --copy-pure \
                --public --out ../quote-slice
 carveout check ../quote-slice                 # read what it holds before sending it
 # contributor: npm ci, edit, npm test, send the folder back
@@ -220,7 +230,10 @@ What carveout holds to:
   `--public` (or `"public": true` in the configuration), literal values are
   widened and the folder names neither the maintainer's checkout nor the
   files outside the slice that import it. `--private <path>` keeps a module
-  out even when the walk reaches it.
+  out even when the walk reaches it, `--copy-pure` included. `--copy-pure`
+  copies more of the repository (the pure code the slice runs) so the
+  contributor's tests run against it rather than against mocks: leave it
+  off, or mark that code private, where it must stay closed.
 - **The folder that comes back.** Nothing in it is trusted. `patch` and
   `apply` refuse a `carveout.json` that names a path outside the folder or
   a `.git` path, and work against the checkout given with `--repo` (or the
@@ -249,7 +262,10 @@ What it does not promise:
   folder: the change comes back without it, and `patch` says how many. In
   the experiments, verdicts in the slice and after the merge agreed in 74%
   of cases, nearly all disagreements in the safe direction (the slice
-  failed, the repository passed). The repository's CI decides.
+  failed, the repository passed). `--copy-pure` turns most such baselines
+  green, and the surface check catches a changed export the importers in
+  other packages rely on; neither runs those importers. The repository's
+  CI decides.
 - **The slice's own source is the contributor's to read.** Choose the
   entry points and `--private` paths with that in mind; `plan` lists every
   file before anything is written.
@@ -345,6 +361,9 @@ What to tell them, accurately:
   as a constant), and `--public` or a `private` path in the configuration
   turns it on. Neither hides the slice's own source, so do not hand the
   folder to someone who should not read it.
+- `--copy-pure` copies the pure code the slice runs instead of mocking
+  it, so the folder's tests pass before any change; it shows the
+  contributor more of the repository, which `plan` lists.
 - For someone outside the repository, cut with `--public`, take the folder
   back with `carveout patch` (it runs none of the folder's code and keeps
   out CI, hook, manifest and lockfile files, new files in other packages

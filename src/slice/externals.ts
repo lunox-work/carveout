@@ -189,3 +189,48 @@ export function detectExternals(
       .map(([name, paths]) => ({ name, files: [...paths].sort(compare) })),
   };
 }
+
+/** Node's modules pure code may import: no disk, network or process. */
+export const PURE_NODE_MODULES: ReadonlySet<string> = new Set([
+  "assert",
+  "buffer",
+  "crypto",
+  "events",
+  "path",
+  "querystring",
+  "string_decoder",
+  "url",
+  "util",
+]);
+
+/**
+ * What makes a module pure for `ReachOptions.pure`: it imports no service
+ * package and none of Node's modules that reach the disk, the network or
+ * the process, and its own text reads no environment and calls no
+ * network. Read from the text, so a false "impure" costs only a mock, as
+ * before; `read` gives a file's text, or null when it cannot be read.
+ */
+export function purityRules(
+  read: (file: string) => string | null,
+  isBuiltin: (specifier: string) => boolean,
+): {
+  readonly package: (specifier: string) => boolean;
+  readonly sideEffects: (file: string) => boolean;
+} {
+  return {
+    package: (specifier) => {
+      if (isBuiltin(specifier))
+        return PURE_NODE_MODULES.has(
+          (specifier.startsWith("node:") ? specifier.slice(5) : specifier).split("/")[0] ?? "",
+        );
+      return serviceOf(specifier) === null;
+    },
+    sideEffects: (file) => {
+      const text = read(file);
+      return (
+        text === null ||
+        /\bprocess\.env\b|\bimport\.meta\.env\b|\bDeno\.env\b|\bBun\.env\b|\bfetch\s*\(|\bXMLHttpRequest\b|\bWebSocket\b|\bnew\s+Worker\b/.test(text)
+      );
+    },
+  };
+}

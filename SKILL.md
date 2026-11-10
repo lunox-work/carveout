@@ -28,7 +28,8 @@ their source. Entry points are files or directories relative to the root.
 
 ```sh
 carveout plan <entry>... [--depth N] [--max-files N] [--with-tests]
-              [--whole-package] [--follow-workspaces] [--private <path>]...
+              [--whole-package] [--follow-workspaces] [--copy-pure]
+              [--private <path>]...
 ```
 
 It reads the import graph and runs nothing. It prints:
@@ -81,10 +82,17 @@ leaves tests failing on the mocks:
   is followed into its source, copied or cut like a file, instead of the
   package being stubbed whole at the seam. It copies the lower layers of
   the repository, so pair it with `--private`.
+- `--copy-pure`: the pure code the slice runs (a validator, an error
+  class, a formatter, in any package) is copied instead of mocked, so the
+  tests that use it pass before any change. Pure means nothing its runtime
+  imports reach imports a service SDK or Node's disk, network or process
+  modules, reads the environment or a path, or is private; through a
+  barrel, only the modules that supply the names. It follows the
+  workspaces too. The plan lists what it copies: the person reads it.
 - `--private <path>`: a file, folder or glob never copied; stubbed wherever
   reached, its literal values widened. The plan names what it kept out.
 
-The repository's owner can set all three, with `copy` and `widenLiterals`,
+The repository's owner can set these, with `copy`, `widenLiterals` and `copyPure`,
 once in `carveout.config.json` at the root; a flag overrides a boolean,
 lists are joined. Read it before proposing flags: it says what the owner
 allows a slice to hold.
@@ -93,7 +101,7 @@ allows a slice to hold.
 
 ```sh
 carveout cut <entry>... --out <empty folder> [--depth N] [--max-files N] [--with-tests]
-             [--whole-package] [--follow-workspaces] [--private <path>]...
+             [--whole-package] [--follow-workspaces] [--copy-pure] [--private <path>]...
              [--copy <dir>]... [--mock <pkg>]... [--install <pkg>]... [--live <pkg>]...
              [--widen-literals] [--public] [--offline]
 ```
@@ -312,8 +320,10 @@ the person's own checkout only when they ask.
 
 To let a contributor work on one part of a closed repository: `plan`,
 agree the entries and `--private` paths with the maintainer, `cut
---public` (with `--with-tests --whole-package` so the folder's tests
-exercise real code), `check`, hand the folder over. When it comes back,
+--public` (with `--with-tests --whole-package --copy-pure` so the folder's
+tests exercise real code rather than mocks; drop `--copy-pure`, or mark
+that code `--private`, where it must stay closed), `check`, hand the
+folder over. When it comes back,
 `patch` from the repository's root, show the refusals, and apply the
 patch on a branch for a pull request. Tell the maintainer plainly: the
 slice's tests ran against mocks, a test that needed `carveout/` did not

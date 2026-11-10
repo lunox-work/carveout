@@ -131,6 +131,7 @@ export async function statusProject(
       ...(request.live === undefined ? {} : { live: request.live }),
       wholePackage: request.wholePackage === true,
       followWorkspaces: request.followWorkspaces === true,
+      copyPure: request.copyPure === true,
       private: request.private ?? [],
       copy: request.copy ?? [],
       public: request.public === true,
