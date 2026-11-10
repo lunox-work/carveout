@@ -307,10 +307,22 @@ export function walkGraph(
     // (`../src/index.js`): its own name is searched for too, in the slice's
     // packages, where `reach` looks for a barrel of a barrel and its tests.
     const barrelNeedles = new Set<string>();
+    // A workspace package's name names one module, not a common file name:
+    // it is searched for everywhere, so a test in another package that
+    // imports the barrel by the package's name is found (and named as left
+    // behind) rather than missed.
+    const everywhere = new Set<string>();
     for (const file of walk.barrels) {
       if (searchedBarrels.has(file)) continue;
       searchedBarrels.add(file);
-      for (const needle of needlesOf(file, aliases)) barrelNeedles.add(needle);
+      for (const needle of needlesOf(file, aliases))
+        (workspaces.has(needle) ? everywhere : barrelNeedles).add(needle);
+    }
+    if (everywhere.size > 0) {
+      const names = [...everywhere].map((needle) => needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+      const pattern = new RegExp(`(['"\`])(?:${names.join("|")})(?:/[^'"\`]*)?\\1`);
+      for (const file of scripts)
+        if (!read.has(file) && pattern.test(readFileSync(join(absoluteRoot, file), "utf8"))) wanted.add(file);
     }
     if (barrelNeedles.size > 0) {
       const packageOf = reachOptions.packageOf ?? (() => "");

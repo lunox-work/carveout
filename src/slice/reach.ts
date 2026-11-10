@@ -723,10 +723,12 @@ export function reach(
         exercising.set(file, entry);
       } else if (
         through !== undefined &&
-        codePackages.has(mine) &&
         (link.names === null || link.names.some((name) => through.names.has(name)))
       ) {
-        if (through.packages.has(mine)) {
+        // Another package's test through a barrel (its package's name, say)
+        // runs the slice's code too: it is never carried, but it is named
+        // as left behind, or a change it would catch passes unseen.
+        if (codePackages.has(mine) && through.packages.has(mine)) {
           entry.own = true;
           entry.through.add(edge.to);
         }

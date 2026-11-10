@@ -294,6 +294,7 @@ async function main(argv: readonly string[]) {
             : []),
           "Tests:",
           `  ${testsVerdict(plan.walk)}`,
+          `  Counted: tests that import the slice, directly or through barrels. Tests that reach it through other code are not: carveout impact ${plan.entryPoints.join(" ")} lists those too.`,
           ...(plan.walk.tests.length === 0
             ? []
             : [

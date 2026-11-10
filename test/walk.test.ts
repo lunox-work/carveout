@@ -452,3 +452,23 @@ test("a test on Vitest's globals runs on Vitest; one on Jest is named as left be
   assert.deepEqual(onJest.walk.tests, []);
   assert.deepEqual(onJest.walk.testsLeft, [{ file: "lib/test/a.test.ts", reason: "runner" }]);
 });
+
+test("another package's test that imports the slice by its package's name, through a barrel, is named as left behind", () => {
+  const root = repository({
+    "package.json": '{ "type": "module", "workspaces": ["packages/*", "apps/*"] }\n',
+    "packages/money/package.json": '{ "name": "@fx/money", "type": "module", "main": "./src/index.ts" }\n',
+    "packages/money/src/index.ts": 'export { round } from "./round.js";\nexport const other = 1;\n',
+    "packages/money/src/round.ts": "export const round = (n: number) => Math.round(n);\n",
+    "apps/shop/package.json": '{ "name": "@fx/shop", "type": "module" }\n',
+    "apps/shop/src/round.test.ts":
+      'import assert from "node:assert/strict";\nimport { test } from "node:test";\nimport { round } from "@fx/money";\n\ntest("round", () => assert.equal(round(1.4), 1));\n',
+    "apps/shop/src/other.test.ts":
+      'import assert from "node:assert/strict";\nimport { test } from "node:test";\nimport { other } from "@fx/money";\n\ntest("other", () => assert.equal(other, 1));\n',
+  });
+  const { walk: result } = walkGraph(root, ["packages/money/src/round.ts"], { maxFiles: 40, maxDepth: 1 }, {
+    tests: true,
+    followWorkspaces: true,
+  });
+  // other.test.ts takes only a name the barrel does not forward from the slice.
+  assert.deepEqual(result.testsLeft, [{ file: "apps/shop/src/round.test.ts", reason: "other-package" }]);
+});
