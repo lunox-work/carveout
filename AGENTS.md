@@ -60,8 +60,9 @@ What to tell them, accurately:
   contributor more of the repository, which `plan` lists.
 - For someone outside the repository, cut with `--public`, take the folder
   back with `carveout patch` (it runs none of the folder's code and keeps
-  out CI, hook, manifest and lockfile files, new files in other packages
-  and deleted tests), read the whole patch before anything runs it (its
+  out CI, hook, manifest and lockfile files, new files in other packages,
+  deleted tests and code that newly reaches the disk, network or
+  environment), read the whole patch before anything runs it (its
   tests and new files are code beside the closed repository, and a branch
   pushed there gets CI's secrets and network), then let the repository's
   CI judge the change: a pass in the slice is a pass against mocks.

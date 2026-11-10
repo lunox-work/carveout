@@ -349,11 +349,14 @@ What carveout holds to:
   tests that remove or rewrite an assertion, skip or focus (`.only`) a
   test, or leave an assertion unreachable or in a `catch` that swallows it
   (an expected value changed may be the change itself, or a test bent to
-  pass: the maintainer reads it).
-  `--allow <path|glob>` lets a reviewed one through. `merge` applies
-  nothing while any is refused. The policy judges paths and assertions,
-  not code: a new test, a new runner configuration (`vitest.config.ts`)
-  or any other new file in the slice's packages passes it.
+  pass: the maintainer reads it); and a script, new or edited, that gains
+  a reach it did not have: Node's disk, network or process modules, a
+  service SDK, `fetch`, `eval`, the environment, or a module or global
+  named by a computed value (a returned test that reads the closed source
+  and sends it out is one). `--allow <path|glob>` lets a reviewed one
+  through. `merge` applies nothing while any is refused. The policy reads
+  syntax, not intent: a new runner configuration (`vitest.config.ts`), or
+  code that does harm with only the reach its file already had, passes it.
 - **Running what came back.** The contributor's tests, and every new file
   the patch carries, are code that runs beside the whole repository, the
   part the slice kept closed included. A branch pushed to the repository
@@ -535,8 +538,9 @@ What to tell them, accurately:
   contributor more of the repository, which `plan` lists.
 - For someone outside the repository, cut with `--public`, take the folder
   back with `carveout patch` (it runs none of the folder's code and keeps
-  out CI, hook, manifest and lockfile files, new files in other packages
-  and deleted tests), read the whole patch before anything runs it (its
+  out CI, hook, manifest and lockfile files, new files in other packages,
+  deleted tests and code that newly reaches the disk, network or
+  environment), read the whole patch before anything runs it (its
   tests and new files are code beside the closed repository, and a branch
   pushed there gets CI's secrets and network), then let the repository's
   CI judge the change: a pass in the slice is a pass against mocks.

@@ -18,6 +18,8 @@ import { existsSync, statSync } from "node:fs";
 import { posix, resolve } from "node:path";
 import ts from "typescript";
 import { isTestPath, pathMatcher } from "./core.js";
+import { isNodeBuiltin } from "./extract/typescript.js";
+import { PURE_NODE_MODULES, serviceOf } from "./slice/externals.js";
 
 /**
  * Paths a patch from a slice never carries unless allowed: they run in CI
@@ -203,6 +205,13 @@ export function handoffPolicy(options: {
   readonly checks?: boolean;
   /** How a refusal names a test: "a test the slice was handed" by default. */
   readonly testNoun?: string;
+  /**
+   * Also refuse a script that gains a reach it did not have: the disk, the
+   * network, the process or its environment, a service SDK, or code loaded
+   * by a computed name (`reachOf`). A returned test or module runs beside
+   * the whole repository, the closed part included, so `patch` turns it on.
+   */
+  readonly reach?: boolean;
 }): (
   path: string,
   change: "added" | "changed" | "deleted",
@@ -236,8 +245,151 @@ export function handoffPolicy(options: {
       if (more > 0)
         return `adds ${more} check suppression${more === 1 ? "" : "s"} (@ts-ignore, eslint-disable, coverage ignores): review it and pass --allow to carry it`;
     }
+    if (options.reach === true && change !== "deleted" && texts !== undefined) {
+      const gained = gainedReach(path, texts.before, texts.after);
+      if (gained.length > 0)
+        return `reaches what it did not before (${gained.join(", ")}): it runs beside the whole repository, the closed part included; read it and pass --allow to carry it`;
+    }
     return null;
   };
+}
+
+/**
+ * Node's modules a returned script may import without a review: those pure
+ * code may (`PURE_NODE_MODULES`), and the test runner, timers and streams,
+ * which reach neither the disk, the network nor the process.
+ */
+const QUIET_NODE_MODULES: ReadonlySet<string> = new Set([
+  ...PURE_NODE_MODULES,
+  "async_hooks",
+  "console",
+  "diagnostics_channel",
+  "perf_hooks",
+  "punycode",
+  "stream",
+  "test",
+  "timers",
+  "zlib",
+]);
+
+/** Globals that reach the network, run text as code, or start a thread. */
+const REACHING_GLOBALS: ReadonlySet<string> = new Set([
+  "fetch",
+  "XMLHttpRequest",
+  "WebSocket",
+  "EventSource",
+  "eval",
+  "Function",
+  "Worker",
+  "Deno",
+  "Bun",
+]);
+
+/** What a `process` member reaches: its environment, or native code. */
+const REACHING_PROCESS: ReadonlySet<string> = new Set([
+  "env",
+  "binding",
+  "dlopen",
+  "mainModule",
+  "getBuiltinModule",
+]);
+
+/** Names the global object goes by. */
+const GLOBAL_OBJECTS: ReadonlySet<string> = new Set(["globalThis", "global", "window", "self"]);
+
+/**
+ * What a script reaches beyond its own computation, read from its syntax
+ * and never run: Node modules with the disk, the network or the process
+ * (`node:fs`), service SDKs, network and code-running globals (`fetch`,
+ * `eval`), the environment (`process.env`, `import.meta.env`), and modules
+ * or globals named by a computed value, which could be any of these. Each
+ * as a short label, sorted. Text-level: a hold for a reader, not a sandbox.
+ */
+export function reachOf(path: string, text: string): string[] {
+  const kind = /\.[cm]?tsx$|\.jsx$/.test(path) ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, kind);
+  const found = new Set<string>();
+  const specifier = (name: string) => {
+    if (isNodeBuiltin(name)) {
+      const root = (name.startsWith("node:") ? name.slice(5) : name).split("/")[0] ?? name;
+      if (!QUIET_NODE_MODULES.has(root)) found.add(`node:${root}`);
+    } else if (serviceOf(name) !== null) found.add(name);
+  };
+  const computed = "a module named by a computed value";
+  const literal = (node: ts.Node | undefined): string | null =>
+    node !== undefined && ts.isStringLiteralLike(node) ? node.text : null;
+  /** Whether an identifier is a binding's name or a member's, not a read. */
+  const named = (node: ts.Identifier): boolean => {
+    const parent = node.parent;
+    if (parent === undefined) return false;
+    // `x.fetch` is a member, but `globalThis.fetch` is the global.
+    if (ts.isPropertyAccessExpression(parent))
+      return parent.name === node && !(ts.isIdentifier(parent.expression) && GLOBAL_OBJECTS.has(parent.expression.text));
+    // A type erases: `x: Function`, `typeof fetch`.
+    if (ts.isTypeReferenceNode(parent) || ts.isQualifiedName(parent) || ts.isTypeQueryNode(parent)) return true;
+    // `{ fetch }` reads it; `{ fetch: 1 }`, `const fetch`, `f(fetch)` name or read.
+    if (ts.isShorthandPropertyAssignment(parent)) return false;
+    return (parent as { name?: ts.Node }).name === node;
+  };
+  /** `process`, or `globalThis.process`. */
+  const isProcess = (node: ts.Expression): boolean =>
+    (ts.isIdentifier(node) && node.text === "process") ||
+    (ts.isPropertyAccessExpression(node) &&
+      node.name.text === "process" &&
+      ts.isIdentifier(node.expression) &&
+      GLOBAL_OBJECTS.has(node.expression.text));
+  const visit = (node: ts.Node): void => {
+    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier !== undefined) {
+      const name = literal(node.moduleSpecifier);
+      if (name !== null && !(ts.isImportDeclaration(node) && node.importClause?.isTypeOnly === true)) specifier(name);
+    } else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
+      const name = literal(node.moduleReference.expression);
+      if (name === null) found.add(computed);
+      else specifier(name);
+    } else if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      if (callee.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(callee) && callee.text === "require")) {
+        const name = literal(node.arguments[0]);
+        if (name === null) found.add(computed);
+        else specifier(name);
+      }
+    } else if (ts.isPropertyAccessExpression(node)) {
+      if (isProcess(node.expression) && REACHING_PROCESS.has(node.name.text)) found.add(`process.${node.name.text}`);
+      if (
+        node.name.text === "env" &&
+        ts.isMetaProperty(node.expression) &&
+        node.expression.keywordToken === ts.SyntaxKind.ImportKeyword
+      )
+        found.add("import.meta.env");
+    } else if (ts.isElementAccessExpression(node)) {
+      const target = node.expression;
+      const key = literal(node.argumentExpression);
+      if (isProcess(target)) {
+        if (key === null) found.add("a process member named by a computed value");
+        else if (REACHING_PROCESS.has(key)) found.add(`process.${key}`);
+      } else if (ts.isIdentifier(target) && GLOBAL_OBJECTS.has(target.text)) {
+        if (key === null) found.add("a global named by a computed value");
+        else if (REACHING_GLOBALS.has(key)) found.add(key);
+        else if (key === "process") found.add("process");
+      }
+    } else if (ts.isIdentifier(node) && REACHING_GLOBALS.has(node.text) && !named(node)) {
+      found.add(node.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return [...found].sort();
+}
+
+/**
+ * The reach a script's new text has that its old text did not (`reachOf`),
+ * or nothing when it is no script. A file that already read the disk may
+ * keep doing so: only what the change adds is a question.
+ */
+export function gainedReach(path: string, before: string | null, after: string): string[] {
+  if (!/\.[cm]?[jt]sx?$/.test(path) || /\.d\.[cm]?ts$/.test(path)) return [];
+  const had = new Set(before === null ? [] : reachOf(path, before));
+  return reachOf(path, after).filter((label) => !had.has(label));
 }
 
 /**

@@ -336,8 +336,10 @@ It leaves out, and names:
   `.env*`, Dockerfiles, Makefiles, `*.sh`, `CODEOWNERS`,
   `carveout.config.json`); a deleted test; an edited test that removes or
   rewrites an assertion, skips or focuses (`.only`) a test, or leaves an
-  assertion unreachable or in a `catch` that swallows it. Show the person
-  the list;
+  assertion unreachable or in a `catch` that swallows it; a script, new or
+  edited, that gains a reach it did not have (Node's disk, network or
+  process modules, a service SDK, `fetch`, `eval`, the environment, a
+  module or global named by a computed value). Show the person the list;
   `--allow <path|glob>` carries one they reviewed.
 
 `patch` runs none of the folder's code and takes nothing in it on trust: a
@@ -379,7 +381,7 @@ maintainer read the whole patch, with `carveout impact --base HEAD` after
 applying it on a branch (it runs nothing) for the importers and tests the
 contributor never saw, before anything runs it: its tests and new
 files (a runner config among them) are code that runs beside the closed
-repository, and the policy does not judge code. Then apply it on a branch
+repository, and the policy reads their reach, not their intent. Then apply it on a branch
 for a pull request. Tell the maintainer plainly: the slice's tests ran
 against mocks, a test that needed `carveout/` did not come back, and the
 repository's CI is what decides, once the patch has been read.

