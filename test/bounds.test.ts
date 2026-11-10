@@ -207,6 +207,11 @@ test("a path matcher takes paths, folders and globs", () => {
     assert.ok(matches(path), path);
   for (const path of ["a/bc", "lib/z/w.ts", "src/x.ts", "a", "deeper/x.ts"])
     assert.equal(matches(path), false, path);
+  // A trailing `**`, as the README writes a private folder, is all under it.
+  const under = pathMatcher(["packages/core/src/pricing/**"]);
+  for (const path of ["packages/core/src/pricing/a.ts", "packages/core/src/pricing/x/a.ts"])
+    assert.ok(under(path), path);
+  assert.equal(under("packages/core/src/pricingx/a.ts"), false);
 });
 
 test("specifiers are read from the syntax tree, not from comments or strings", () => {

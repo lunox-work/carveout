@@ -72,9 +72,12 @@ export function pathMatcher(
     const source = clean
       .split(/(\*\*\/?|\*)/)
       .map((part) =>
-        part === "**/" || part === "**"
+        part === "**/"
           ? "(?:.*/)?"
-          : part === "*"
+          : // A trailing `**` (`pricing/**`) is everything under the folder.
+            part === "**"
+            ? ".*"
+            : part === "*"
             ? "[^/]*"
             : part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"),
       )
