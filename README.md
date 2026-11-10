@@ -247,7 +247,11 @@ Options for `plan` and `cut`:
   Vitest (imported, or its globals in a package that depends on Vitest and
   not Jest), directly or through barrels outside the slice that re-export
   from it; such a barrel comes along, its other re-exports cut, and so do
-  the test's own helpers. `npm test` in the folder runs them. Without a
+  the test's own helpers. `npm test` in the folder runs them. When the
+  file budget cannot hold them all, the tests nearest the entry points
+  come first: those that take names the entry points declare, whatever
+  barrel they import through, ahead of those that take names declared
+  further out. Without a
   lockfile Vitest is mocked like any package; cut with `--install vitest`.
 - `--whole-package`, `--follow-workspaces`, `--copy-pure` (which follows
   the workspaces too) and `--private <path>` (see above; `--private` takes

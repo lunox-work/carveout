@@ -744,8 +744,58 @@ export function reach(
   const noRunner = new Set<string>();
   const runnerOf =
     options.runnerOf ?? ((_file: string, specifiers: readonly string[]) => testRunnerOf(specifiers));
+  /**
+   * The module that declares `name` as `file` exports it, through its
+   * re-exports; `file` itself when the graph cannot say.
+   */
+  const declarerOf = (file: string, name: string, seen = new Set<string>()): string => {
+    const key = `${file}\n${name}`;
+    if (seen.has(key)) return file;
+    seen.add(key);
+    const own = exportsOf.get(file) ?? null;
+    if (own === null || own.values.includes(name) || own.types.includes(name)) return file;
+    const outs = outgoing.get(file) ?? [];
+    for (const { link, edge } of outs)
+      if (Array.isArray(link.forwards))
+        for (const [from, as] of link.forwards as readonly (readonly [string, string])[])
+          if (as === name) return from === EVERYTHING ? edge.to : declarerOf(edge.to, from, seen);
+    for (const { link, edge } of outs)
+      if (link.forwards === EVERYTHING && exported(edge.to).names.has(name))
+        return declarerOf(edge.to, name, seen);
+    return file;
+  };
+  /**
+   * How near a test's names lie to the entry points: the least depth of a
+   * slice module that declares a name it imports at runtime (0 for an entry
+   * point), whatever barrels it imports through. A name declared in code the
+   * slice cuts counts for nothing. When the budget cannot hold every test,
+   * the nearest come first: a test of the entry points' own functions is
+   * worth more than one that takes a single name of theirs through the
+   * package's barrel (Phase 9: `spec.test.ts`, the one test that caught a
+   * changed `renderGherkin`, was left out for six such tests that sorted
+   * before it).
+   */
+  const nearnessOf = (test: string): number => {
+    let best = Number.POSITIVE_INFINITY;
+    const at = (module: string) => depthOf.get(module) ?? barrels.get(module)?.depth;
+    for (const { link, edge } of outgoing.get(test) ?? []) {
+      if (link.relation !== "imports" || link.typeOnly) continue;
+      const declarers =
+        link.names === null ? [edge.to] : link.names.map((name) => declarerOf(edge.to, name));
+      for (const module of declarers) {
+        if (!code.has(module) && !barrels.has(module)) continue;
+        const depth = at(module);
+        if (depth !== undefined && depth < best) best = depth;
+      }
+    }
+    return best;
+  };
   if (options.tests === true && dropped.size === 0) {
-    for (const [file, { through, own }] of [...exercising].sort(([a], [b]) => compare(a, b))) {
+    const nearness = new Map([...exercising.keys()].map((file) => [file, nearnessOf(file)]));
+    const byNearness = ([a]: [string, unknown], [b]: [string, unknown]) =>
+      (nearness.get(a) ?? Number.POSITIVE_INFINITY) - (nearness.get(b) ?? Number.POSITIVE_INFINITY) ||
+      compare(a, b);
+    for (const [file, { through, own }] of [...exercising].sort(byNearness)) {
       // A test of the slice is one of its own package: another package's
       // test that imports the slice (through a followed workspace package,
       // say) tests that package, and would bring that package's files

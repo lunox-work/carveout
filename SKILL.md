@@ -112,7 +112,9 @@ of them included, counts; each barrel comes along at the depth of what it
 forwards, its other re-exports cut. Each test brings its own helpers too: what it imports
 at runtime from its package, or from a test folder anywhere, so a fake is
 copied rather than stubbed (a stubbed fake fails the test before any
-change). The plan lists them, and lists as left behind the tests on other
+change). When the file budget cannot hold every test, the ones that take
+names the entry points declare come first, ahead of tests that take a name
+declared further out through the same barrel. The plan lists them, and lists as left behind the tests on other
 runners, and those that make an import no slice can carry: a computed
 dynamic import, or one that resolves to no file.
 

@@ -244,6 +244,23 @@ test("a test that reaches the slice through a barrel comes along, and the barrel
   assert.deepEqual(walk(files, ["lib/a.ts"]).included, ["lib/a.ts"]);
 });
 
+test("when the budget cannot hold every test, the tests of the entry points' own names come first", () => {
+  const files = {
+    ...BARREL,
+    "lib/a.ts": 'import { b } from "./b.js";\nexport const a = () => b();\n',
+    // Sorts first, but takes only a name the entry point imports.
+    "lib/0b.test.ts": 'import { test } from "node:test";\nimport { b } from "./index.js";\ntest("b", () => void b());\n',
+    "lib/z.test.ts": 'import { test } from "node:test";\nimport { a } from "./index.js";\ntest("a", () => void a());\n',
+  };
+  // Room for the slice, the barrel and one test.
+  const tight = walk(files, ["lib/a.ts"], { maxFiles: 4, maxDepth: 1 }, { tests: true });
+  assert.deepEqual(tight.tests, ["lib/z.test.ts"]);
+  assert.deepEqual(tight.testsLeft, [{ file: "lib/0b.test.ts", reason: "budget" }]);
+  // With room for both, both come, in path order.
+  const roomy = walk(files, ["lib/a.ts"], { maxFiles: 40, maxDepth: 1 }, { tests: true });
+  assert.deepEqual(roomy.tests, ["lib/0b.test.ts", "lib/z.test.ts"]);
+});
+
 test("the files a full budget leaves out are named", () => {
   const result = walk(
     {
