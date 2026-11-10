@@ -159,8 +159,8 @@ The rest of the cut's behaviour:
   cuts. It does not hide the slice's own source.
 - **Someone outside.** `--public` (or `"public": true` in the
   configuration) is for a folder handed to someone outside the
-  repository: literals widened, and neither the checkout's path nor the
-  files outside the slice that import it written. Commands that need the
+  repository: literals widened, and neither the checkout's path or folder
+  name nor the files outside the slice that import it written. Commands that need the
   repository then take `--repo` (default: the current directory).
 - **Exit codes.** 0 means ready. 2 means the folder was written with
   blockers, which the cut prints and which `carveout.json` lists.

@@ -12,7 +12,8 @@
  * only what the slice itself leaves unresolved does.
  */
 
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { realpathSync } from "node:fs";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import ts from "typescript";
 import { NODE_GLOBAL_DECLARATIONS, packageNameOf } from "../core.js";
 import type { CompilationResult } from "../core.js";
@@ -397,6 +398,42 @@ export function packageModules(
   };
 }
 
+/**
+ * A compiler message with the checkout's path taken out. Messages name
+ * files by absolute path (TS6059 names the project's `rootDir`), and they
+ * are written into the folder's record, which may leave the machine: a
+ * path under the repository becomes repository-relative, and one under the
+ * fetched package types becomes `<package types>/...`.
+ */
+export function withoutRoots(
+  message: string,
+  root: string,
+  types: string | null = null,
+): string {
+  const replacements: [string, string][] = [];
+  const add = (base: string, label: string) => {
+    for (const variant of new Set([base, safeRealpath(base)])) {
+      replacements.push([`${variant}${sep}`, label === "" ? "" : `${label}/`]);
+      replacements.push([variant, label === "" ? "." : label]);
+    }
+  };
+  if (types !== null) add(resolve(types), "<package types>");
+  add(resolve(root), "");
+  // Longest first, so a path under another is replaced whole.
+  replacements.sort((a, b) => b[0].length - a[0].length);
+  let text = message;
+  for (const [from, to] of replacements) text = text.split(from).join(to);
+  return text;
+}
+
+function safeRealpath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
 export function compileFixture(input: FixtureInput): CompilationResult {
   const root = resolve(input.root);
   const files = new Map<string, string>();
@@ -500,7 +537,11 @@ export function compileFixture(input: FixtureInput): CompilationResult {
           : diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start)
               .line + 1,
       code: `TS${diagnostic.code}`,
-      message: ts.flattenDiagnosticMessageText(diagnostic.messageText, " "),
+      message: withoutRoots(
+        ts.flattenDiagnosticMessageText(diagnostic.messageText, " "),
+        root,
+        types,
+      ),
     }))
     .sort((a, b) =>
       `${a.file ?? ""}:${a.line ?? 0}:${a.code}`.localeCompare(

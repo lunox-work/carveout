@@ -162,8 +162,9 @@ Options for `cut` only:
 - `--widen-literals`, which writes `string` in stubs in place of literal
   values;
 - `--public`, for a folder handed to someone outside: literals widened,
-  and neither the checkout's path nor the files outside the slice that
-  import it written (each importer is named by its package folder). The
+  and neither the checkout's path or folder name nor the files outside the
+  slice that import it written (each importer is named by its package
+  folder; compiler messages name files from the repository's root). The
   commands that need the repository then take `--repo`, defaulting to the
   current directory;
 - `--offline`.

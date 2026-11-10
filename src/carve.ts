@@ -468,8 +468,11 @@ export interface CutResult {
 }
 
 /** A name npm accepts for the folder's package. */
-function projectName(repo: string, entries: readonly string[]): string {
-  const words = [basename(repo), ...entries.map((entry) => basename(entry))]
+function projectName(repo: string | null, entries: readonly string[]): string {
+  const words = [
+    ...(repo === null ? [] : [basename(repo)]),
+    ...entries.map((entry) => basename(entry)),
+  ]
     .join("-")
     .toLowerCase()
     .replace(/\.[cm]?[jt]sx?$/g, "")
@@ -891,10 +894,10 @@ export async function computeCut(
       // No readable package.json: no gate.
     }
   const project = generateProject({
-    origin: {
-      repository: basename(repo),
-      name: projectName(repo, entryPoints),
-    },
+    // A public folder names neither the checkout's path nor its folder.
+    origin: settled.public
+      ? { repository: null, name: projectName(null, entryPoints) }
+      : { repository: basename(repo), name: projectName(repo, entryPoints) },
     manifest,
     contract,
     sources,

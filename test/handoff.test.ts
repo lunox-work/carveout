@@ -165,6 +165,16 @@ test("a public cut names neither the checkout nor the files outside that import 
   assert.match(contract, /apps\/shop\/\(outside the slice\)/);
   assert.doesNotMatch(readFileSync(join(out, "carveout.json"), "utf8"), new RegExp(scratch));
   assert.doesNotMatch(readFileSync(join(out, "packages/money/src/index.d.ts"), "utf8"), /"usd"/);
+  // Nothing the cut writes names the checkout, compiler messages included.
+  let absolute = "";
+  try {
+    absolute = execFileSync("grep", ["-rlF", "--exclude-dir=node_modules", repo, out], { encoding: "utf8" });
+  } catch {
+    // grep exits 1 when nothing matches.
+  }
+  assert.equal(absolute, "");
+  assert.match(readFileSync(join(out, "README.md"), "utf8"), /^A slice of a repository,/m);
+  assert.doesNotMatch(readFileSync(join(out, "package.json"), "utf8"), /"name": "repo-/);
   // The maintainer names the repository; nothing in the folder does.
   await assert.rejects(patchProject(out), /does not name its repository/);
   const edited = join(out, "apps/shop/src/tax.ts");

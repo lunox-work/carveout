@@ -19,6 +19,7 @@ import {
   undoRewrites,
   type CutResult,
 } from "../src/carve.js";
+import { withoutRoots } from "../src/extract/fixture.js";
 import { buildGraph, globMatches } from "../src/graph.js";
 import { statusProject, symbolDiff } from "../src/status.js";
 import { scanSecrets } from "../src/project/secrets.js";
@@ -306,5 +307,14 @@ test("a schema field named token is not a credential", () => {
     scanSecrets([{ path: ".env.ts", text: "API_TOKEN=Zx81kPq7Lm2vR9tYw4Bn\n" }])
       .length,
     1,
+  );
+});
+
+test("a compiler message names files from the repository's root, never the checkout", () => {
+  const message =
+    "File '/home/me/code/acme/packages/a/test/x.ts' is not under 'rootDir' '/home/me/code/acme/packages/a/src'. Types at '/tmp/carveout-types/node_modules/zod/index.d.ts'.";
+  assert.equal(
+    withoutRoots(message, "/home/me/code/acme", "/tmp/carveout-types"),
+    "File 'packages/a/test/x.ts' is not under 'rootDir' 'packages/a/src'. Types at '<package types>/node_modules/zod/index.d.ts'.",
   );
 });

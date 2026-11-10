@@ -180,8 +180,8 @@ const ASSETS_LOADER = [
 
 /** Where a cut came from, as the README and package name say it. */
 export interface ProjectOrigin {
-  /** The repository folder's name. */
-  readonly repository: string;
+  /** The repository folder's name; null for a public folder. */
+  readonly repository: string | null;
   /** The project's package name. */
   readonly name: string;
 }
@@ -1175,7 +1175,7 @@ function readme(input: {
   return `${[
     `# ${input.origin.name}`,
     "",
-    `A slice of \`${input.origin.repository}\`, carved out by carveout (\`carveout.json\` names the commit). It holds only the files below; every module it imports from the rest of the repository is a stub with a recording mock behind it.`,
+    `A slice of ${input.origin.repository === null ? "a repository" : `\`${input.origin.repository}\``}, carved out by carveout (\`carveout.json\` names the commit). It holds only the files below; every module it imports from the rest of the repository is a stub with a recording mock behind it.`,
     "",
     "## Run it",
     "",
