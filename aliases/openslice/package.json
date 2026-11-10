@@ -1,0 +1,43 @@
+{
+  "name": "openslice",
+  "version": "0.1.0",
+  "description": "Alias for carveout: hand one part of a closed TypeScript repository to an outside contractor as a slice that installs, builds and tests on its own, and take a checked patch back.",
+  "keywords": [
+    "carveout",
+    "openslice",
+    "repository-slicing",
+    "code-slicing",
+    "monorepo",
+    "stubs",
+    "mocks",
+    "coding-agents",
+    "typescript",
+    "impact-analysis",
+    "test-selection"
+  ],
+  "homepage": "https://github.com/lunox-work/carveout#readme",
+  "bugs": {
+    "url": "https://github.com/lunox-work/carveout/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lunox-work/carveout.git",
+    "directory": "aliases/openslice"
+  },
+  "license": "MIT",
+  "author": "Charlie Angriawan",
+  "type": "module",
+  "bin": {
+    "openslice": "cli.js"
+  },
+  "files": [
+    "cli.js",
+    "README.md"
+  ],
+  "dependencies": {
+    "carveout": ">=0.1.0"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}
