@@ -45,6 +45,7 @@ import {
   workspacePackages,
 } from "./extract/compiler-config.js";
 import { packageRegistries } from "./extract/package-registry.js";
+import { workspaceImportersOf } from "./graph.js";
 import { packageFolder } from "./imports.js";
 import {
   DIAGNOSTICS_MAX,
@@ -315,12 +316,19 @@ export async function analyseSlice(input: {
     params.private === undefined || params.private.length === 0
       ? null
       : pathMatcher(params.private);
-  const walk = reach(graph, params.entryPoints, params.budget, {
+  const reached = reach(graph, params.entryPoints, params.budget, {
     tests: params.tests,
     packageOf: packageFolder(input.sourceDir),
     ...(params.wholePackage === true ? { wholePackage: true } : {}),
     ...(isPrivate === null ? {} : { isPrivate }),
   });
+  // Followed, a workspace import is a link and already an inbound cut;
+  // unfollowed, the files importing the slice by a package's name are
+  // added, so the public surface counts the other workspaces.
+  const walk =
+    params.followWorkspaces === true
+      ? reached
+      : workspaceImportersOf(input.sourceDir)(reached, graph);
   // A folder copied in whole beside the slice (`copy`) is there to be read.
   const copied = pathMatcher(params.copy ?? []);
   input.log(

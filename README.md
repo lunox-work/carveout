@@ -50,7 +50,8 @@ billing-slice/
 - **Workspace packages** are stubbed from their source rather than
   installed, unless the cut follows them (`--follow-workspaces`): then an
   import of one is an import of its source file, copied or cut like any
-  module.
+  module. Either way, a file in another package that imports the slice by
+  the package's name is one of its importers.
 - **Installed packages** are those the repository pins from the public
   registry. Each comes with its `@types` and its required peers, at the
   repository's versions.

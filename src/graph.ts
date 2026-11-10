@@ -46,6 +46,7 @@ import {
   reach,
   type FileExports,
   type ReachOptions,
+  type CutEdge,
   type ReachResult,
   type SliceBudget,
   type SliceGraph,
@@ -232,17 +233,17 @@ export function walkGraph(
     ),
   );
   const aliases = exactAliases(absoluteRoot, files);
-  // A followed workspace package is imported by its name, which spells
-  // neither the file's name nor its folder's: the name is a needle too.
-  if (followWorkspaces === true) {
-    const workspaces = workspacePackages(absoluteRoot);
-    const resolver = workspaceModuleResolver(absoluteRoot, () => workspaces);
-    for (const name of [...workspaces.keys()].sort(compare)) {
-      const module = resolver(name);
-      if (module === null) continue;
-      const key = moduleKey(module);
-      aliases.set(key, [...(aliases.get(key) ?? []), name]);
-    }
+  // A workspace package is imported by its name, which spells neither the
+  // file's name nor its folder's: the name is a needle too. Followed or
+  // not, the files that import it by name are importers of the slice when
+  // the module the name resolves to is in it.
+  const workspaces = workspacePackages(absoluteRoot);
+  const resolver = workspaceModuleResolver(absoluteRoot, () => workspaces);
+  for (const name of [...workspaces.keys()].sort(compare)) {
+    const module = resolver(name);
+    if (module === null) continue;
+    const key = moduleKey(module);
+    aliases.set(key, [...(aliases.get(key) ?? []), name]);
   }
   const searched = new Set<string>();
   const read = new Set<string>();
@@ -300,10 +301,77 @@ export function walkGraph(
     const fresh = [...wanted].filter(
       (file) => !read.has(file) && !requested.has(file) && SCRIPT.test(file),
     );
-    if (fresh.length === 0) return { built, walk };
+    if (fresh.length === 0)
+      return {
+        built,
+        walk:
+          followWorkspaces === true
+            ? walk
+            : withWorkspaceImporters(walk, built.graph, resolver),
+      };
     for (const file of fresh) requested.add(file);
     builder.add(fresh);
   }
+}
+
+/**
+ * The walk with the files that import the slice by a workspace package's
+ * name among its inbound cuts. Unfollowed, such an import is a package
+ * here, not a link, and the walk never sees it; but the package's other
+ * workspaces compile against the module its name resolves to, so a change
+ * to that module's exports breaks them. The public surface, the interface
+ * test and `status` read the inbound cuts, and must count them. The walk
+ * itself is unchanged: nothing is copied or cut for it.
+ */
+export function workspaceImportersOf(
+  root: string,
+): (walk: ReachResult, graph: SliceGraph) => ReachResult {
+  const absolute = resolve(root);
+  const workspaces = workspacePackages(absolute);
+  const resolver = workspaceModuleResolver(absolute, () => workspaces);
+  return (walk, graph) => withWorkspaceImporters(walk, graph, resolver);
+}
+
+function withWorkspaceImporters(
+  walk: ReachResult,
+  graph: SliceGraph,
+  resolver: (specifier: string) => string | null,
+): ReachResult {
+  const inside = new Set(walk.included);
+  const key = (edge: CutEdge) =>
+    `${edge.from}\n${edge.to}\n${edge.relation}\n${edge.specifier ?? ""}\n${edge.location ?? ""}`;
+  const inbound = new Map(walk.cuts.inbound.map((edge) => [key(edge), edge]));
+  const before = inbound.size;
+  for (const link of graph.links) {
+    if (
+      link.relation !== "imports" ||
+      link.specifier === null ||
+      !link.target.startsWith("dependency:") ||
+      !link.source.startsWith("file:")
+    )
+      continue;
+    const from = link.source.slice("file:".length);
+    if (inside.has(from)) continue;
+    const module = resolver(link.specifier);
+    if (module === null || !inside.has(module)) continue;
+    const edge: CutEdge = {
+      from,
+      to: module,
+      relation: link.relation,
+      specifier: link.specifier,
+      location: link.location,
+      typeOnly: link.typeOnly,
+    };
+    inbound.set(key(edge), edge);
+  }
+  if (inbound.size === before) return walk;
+  return {
+    ...walk,
+    cuts: {
+      ...walk.cuts,
+      inbound: [...inbound.values()].sort((a, b) => compare(key(a), key(b))),
+    },
+  };
 }
 
 /** A path without its script extension or a trailing `/index`. */

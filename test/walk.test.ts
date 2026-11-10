@@ -329,3 +329,23 @@ test("the lazy graph walks as the whole graph does, importers through ../.. incl
   );
   assert.equal(lazy.built.files.includes("lib/deep/other.ts"), false);
 });
+
+test("a file that imports the slice by its package's name is an importer, followed or not", () => {
+  const root = repository({
+    "package.json": '{"type":"module","workspaces":["packages/*","apps/*"]}\n',
+    "packages/money/package.json": '{"name":"@fx/money","type":"module","main":"./src/index.ts"}\n',
+    "packages/money/src/index.ts": "export const format = (cents: number) => `${cents}`;\n",
+    "apps/shop/package.json": '{"name":"shop","type":"module"}\n',
+    "apps/shop/src/cart.ts": 'import { format } from "@fx/money";\nexport const total = format(1);\n',
+  });
+  const budget = { maxFiles: 40, maxDepth: 1 };
+  for (const followWorkspaces of [false, true]) {
+    const { walk: result } = walkGraph(root, ["packages/money/src/index.ts"], budget, { followWorkspaces });
+    assert.deepEqual(result.included, ["packages/money/src/index.ts"]);
+    assert.deepEqual(
+      result.cuts.inbound.map((edge) => [edge.from, edge.to, edge.specifier]),
+      [["apps/shop/src/cart.ts", "packages/money/src/index.ts", "@fx/money"]],
+      `followWorkspaces: ${followWorkspaces}`,
+    );
+  }
+});
