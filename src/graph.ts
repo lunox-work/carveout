@@ -52,6 +52,7 @@ import {
   type SliceGraph,
   type SliceGraphLink,
   type SliceGraphNode,
+  type SliceRelation,
 } from "./core.js";
 
 /** Directories never read, whatever Git tracks. */
@@ -1085,4 +1086,423 @@ function factsOf(source: ts.SourceFile): {
   };
   visit(source);
   return { modules, reads, globs, computed };
+}
+
+/** A confirmed link from an importer to a file `importersOf` searched for. */
+export interface ImporterLink {
+  readonly from: string;
+  readonly to: string;
+  readonly specifier: string | null;
+  readonly relation: SliceRelation;
+  readonly typeOnly: boolean;
+  readonly forwards: SliceGraphLink["forwards"];
+}
+
+/**
+ * Every file that imports `targets`, directly or through other importers,
+ * up to `maxDepth` hops (unbounded by default): the reverse of the slice
+ * walk, read as lazily. Each hop finds candidates by text (a target's name,
+ * its folder's for an `index`, an exact alias, a workspace package's name,
+ * a folder-only import, `import.meta.glob`) and keeps those whose import
+ * the compiler resolves to a target. A target that no longer exists (a
+ * deleted module) is matched by resolving imports as if it still were.
+ * `references` (`vi.mock`) count: such a test runs against the module.
+ *
+ * It follows names, as the slice walk does: a barrel carries the change
+ * only through the names it forwards from a changed module, so a file that
+ * imports other names from the barrel is not reached. A file whose own code
+ * takes a name that carries the change is reached, and carries it on only
+ * through its exports whose declarations reach that name, by way of its
+ * other top-level declarations. Nothing here runs repository code.
+ */
+export function importersOf(
+  root: string,
+  targets: readonly string[],
+  options: {
+    readonly maxDepth?: number;
+    /** The names of each target that changed (`changedExports`); all by default. */
+    readonly seeds?: ReadonlyMap<string, ReadonlySet<string> | "*">;
+  } = {},
+): {
+  built: BuiltGraph;
+  /** Hops from the nearest target; the targets themselves at 0. */
+  depthOf: ReadonlyMap<string, number>;
+  links: readonly ImporterLink[];
+} {
+  const started = performance.now();
+  const absoluteRoot = resolve(root);
+  const files = listFiles(absoluteRoot);
+  const builder = graphBuilder(absoluteRoot, files, performance.now() - started, {});
+  const scripts = files.filter((file) => SCRIPT.test(file));
+  const aliases = exactAliases(absoluteRoot, files);
+  const workspaces = workspacePackages(absoluteRoot);
+  const resolver = workspaceModuleResolver(absoluteRoot, () => workspaces);
+  for (const name of [...workspaces.keys()].sort(compare)) {
+    const module = resolver(name);
+    if (module === null) continue;
+    const key = moduleKey(module);
+    aliases.set(key, [...(aliases.get(key) ?? []), name]);
+  }
+  // Targets that are no longer files: an import of one is resolved by the
+  // compiler as if it still were, aliases and all.
+  const listed = new Set(files);
+  const gone = new Set(targets.filter((target) => !listed.has(target)).map((target) => join(absoluteRoot, target)));
+  const goneOptions = new Map<string, ts.CompilerOptions>();
+  const goneHost: ts.ModuleResolutionHost = {
+    fileExists: (path) => gone.has(path) || ts.sys.fileExists(path),
+    readFile: (path) => ts.sys.readFile(path),
+    directoryExists: (path) => [...gone].some((file) => file.startsWith(`${path}/`)) || ts.sys.directoryExists(path),
+    getCurrentDirectory: () => absoluteRoot,
+    realpath: (path) => path,
+  };
+  const resolveGone = (from: string, specifier: string): string | null => {
+    const absolute = join(absoluteRoot, from);
+    let options = goneOptions.get(dirname(absolute));
+    if (options === undefined) {
+      const loaded = loadConfig(absoluteRoot, absolute);
+      options = {
+        module: ts.ModuleKind.NodeNext,
+        moduleResolution: ts.ModuleResolutionKind.NodeNext,
+        allowJs: true,
+        ...(loaded.path === null ? {} : loaded.options),
+      };
+      goneOptions.set(dirname(absolute), options);
+    }
+    const resolved = ts.resolveModuleName(specifier, absolute, options, goneHost).resolvedModule;
+    return resolved !== undefined && gone.has(resolved.resolvedFileName)
+      ? posix(relative(absoluteRoot, resolved.resolvedFileName))
+      : null;
+  };
+  // The bindings a file makes of a specifier's names by its import
+  // statements, types included: what the graph's `names` leaves out (an
+  // inline `type`) decides here whether a changed type reaches the file. A
+  // `require`, an `import()`, an `import("x").T` or a side-effect import
+  // the statements do not bind takes all, and so does `export =`.
+  const sources = new Map<string, ts.SourceFile>();
+  const sourceOf = (file: string) => {
+    let source = sources.get(file);
+    if (source === undefined) {
+      source = ts.createSourceFile(file, readFileSync(join(absoluteRoot, file), "utf8"), ts.ScriptTarget.Latest, true);
+      sources.set(file, source);
+    }
+    return source;
+  };
+  const bindingsBy = (file: string, specifier: string | null): Map<string, string[]> | "*" => {
+    if (specifier === null) return "*";
+    const bound = new Map<string, string[]>();
+    const bind = (name: string, local: string) => bound.set(name, [...(bound.get(name) ?? []), local]);
+    let found = false;
+    for (const statement of sourceOf(file).statements) {
+      if (
+        !ts.isImportDeclaration(statement) ||
+        !ts.isStringLiteralLike(statement.moduleSpecifier) ||
+        statement.moduleSpecifier.text !== specifier
+      )
+        continue;
+      found = true;
+      const clause = statement.importClause;
+      if (clause === undefined) return "*";
+      if (clause.name !== undefined) bind("default", clause.name.text);
+      const bindings = clause.namedBindings;
+      if (bindings !== undefined && ts.isNamespaceImport(bindings)) bind("*", bindings.name.text);
+      else if (bindings !== undefined)
+        for (const element of bindings.elements) bind((element.propertyName ?? element.name).text, element.name.text);
+    }
+    return found ? bound : "*";
+  };
+  const exportsReaching = (file: string, locals: ReadonlySet<string>) =>
+    exportsReachingIn(sourceOf(file), locals);
+  const maxDepth = options.maxDepth ?? Number.POSITIVE_INFINITY;
+  const depthOf = new Map<string, number>();
+  // The names of each reached file through which the change reaches its
+  // importers: every name of a changed file or of a file that uses one;
+  // for a barrel, only the names it forwards from them.
+  const exposed = new Map<string, Set<string> | "*">();
+  for (const target of targets) {
+    depthOf.set(target, 0);
+    const seed = options.seeds?.get(target) ?? "*";
+    exposed.set(target, seed === "*" ? "*" : new Set(seed));
+  }
+  builder.add(targets);
+  const links: ImporterLink[] = [];
+  const seenLink = new Set<string>();
+  let frontier = [...new Set(targets)].sort(compare);
+  const searched = new Set<string>();
+  /** Adds `names` to what `file` exposes; whether that grew. */
+  const expose = (file: string, names: Set<string> | "*"): boolean => {
+    const had = exposed.get(file);
+    if (had === "*") return false;
+    if (names === "*") {
+      exposed.set(file, "*");
+      return true;
+    }
+    const set = had ?? new Set<string>();
+    const size = set.size;
+    for (const name of names) set.add(name);
+    exposed.set(file, set);
+    return had === undefined ? set.size > 0 : set.size > size;
+  };
+  for (let depth = 1; frontier.length > 0 && depth <= maxDepth; depth += 1) {
+    const needles = new Set<string>();
+    for (const file of frontier) {
+      if (searched.has(file)) continue;
+      searched.add(file);
+      for (const needle of needlesOf(file, aliases)) needles.add(needle);
+    }
+    const parsed = new Set(builder.built().files);
+    if (needles.size > 0) {
+      const pattern = new RegExp(
+        [...needles]
+          .map((needle) => needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+          .concat(["import\\.meta\\.glob", "(['\"`])(?:\\.\\.?/)*\\.\\.?/?\\1"])
+          .join("|"),
+        "i",
+      );
+      builder.add(
+        scripts.filter(
+          (file) => !parsed.has(file) && pattern.test(readFileSync(join(absoluteRoot, file), "utf8")),
+        ),
+      );
+    }
+    const built = builder.built();
+    const current = new Set(frontier);
+    const next = new Set<string>();
+    for (const link of built.graph.links) {
+      if (link.relation === "reads" || !link.source.startsWith("file:")) continue;
+      const from = link.source.slice("file:".length);
+      let to: string | null = null;
+      if (link.target.startsWith("file:")) {
+        const target = link.target.slice("file:".length);
+        if (current.has(target)) to = target;
+      } else if (link.specifier !== null) {
+        // A workspace package's name, or an import of a module that is
+        // gone, which resolves to nothing now.
+        const module = resolver(link.specifier) ?? (gone.size === 0 ? null : resolveGone(from, link.specifier));
+        if (module !== null && current.has(module)) to = module;
+      }
+      if (to === null || from === to) continue;
+      const reaching = exposed.get(to) ?? new Set<string>();
+      const reaches = (name: string) => reaching === "*" || reaching.has(name);
+      // What a re-export forwards of the names that carry the change.
+      const forwarded = new Set<string>();
+      const inner = new Set<string>();
+      if (link.forwards === "*") {
+        if (reaching === "*") forwarded.add("*");
+        else for (const name of reaching) forwarded.add(name);
+      } else if (link.forwards !== null)
+        for (const [name, outer] of link.forwards) {
+          inner.add(name);
+          if (name === "*" ? reaching === "*" || reaching.size > 0 : reaches(name)) forwarded.add(outer);
+        }
+      // What the file's own code binds of them, and so which of its own
+      // exports carry the change on.
+      let uses = false;
+      let carried: Set<string> | "*" = new Set<string>();
+      if (link.relation === "references") {
+        uses = true;
+        carried = "*";
+      } else if (!(link.forwards === "*" || (link.forwards !== null && link.names !== null && link.names.length === 0))) {
+        const bound = bindingsBy(from, link.specifier);
+        if (bound === "*") {
+          uses = true;
+          carried = "*";
+        } else {
+          const locals = new Set<string>();
+          for (const [name, names] of bound)
+            if (!inner.has(name) && (name === "*" ? reaching === "*" || reaching.size > 0 : reaches(name)))
+              for (const local of names) locals.add(local);
+          if (locals.size > 0) {
+            uses = true;
+            carried = exportsReaching(from, locals);
+          }
+        }
+      }
+      if (!uses && forwarded.size === 0) continue;
+      const key = `${from}\n${to}\n${link.specifier ?? ""}\n${link.location ?? ""}`;
+      if (!seenLink.has(key)) {
+        seenLink.add(key);
+        links.push({
+          from,
+          to,
+          specifier: link.specifier,
+          relation: link.relation,
+          typeOnly: link.typeOnly,
+          forwards: link.forwards,
+        });
+      }
+      if (depthOf.get(from) === undefined) depthOf.set(from, depth);
+      const grew = expose(
+        from,
+        carried === "*" || forwarded.has("*") ? "*" : new Set([...carried, ...forwarded]),
+      );
+      if (grew && !targets.includes(from)) next.add(from);
+    }
+    frontier = [...next].sort(compare);
+  }
+  return { built: builder.built(), depthOf, links };
+}
+
+/** One top-level statement, as `exportsReachingIn` and `changedExports` read it. */
+interface TopLevel {
+  /** The local names it declares (`<default>` for an anonymous default). */
+  readonly declares: readonly string[];
+  /** Every identifier it names. */
+  readonly names: ReadonlySet<string>;
+  /** [exported name, local name] for what it exports of its own. */
+  readonly exports: readonly (readonly [string, string])[];
+  /** For `export ... from`: the names it forwards, as exported. */
+  readonly forwards: readonly string[] | "*";
+  /** Its text, whitespace collapsed. */
+  readonly text: string;
+  /** An import, whose declared names are its local bindings. */
+  readonly isImport: boolean;
+}
+
+function topLevelOf(source: ts.SourceFile): TopLevel[] | "*" {
+  const out: TopLevel[] = [];
+  const identifiers = (node: ts.Node, into: Set<string>) => {
+    if (ts.isIdentifier(node)) into.add(node.text);
+    ts.forEachChild(node, (child) => identifiers(child, into));
+  };
+  for (const statement of source.statements) {
+    if (ts.isExportAssignment(statement) && statement.isExportEquals === true) return "*";
+    const text = statement.getText(source).replace(/\s+/g, " ").trim();
+    const names = new Set<string>();
+    const declares: string[] = [];
+    const exports: [string, string][] = [];
+    let forwards: string[] | "*" = [];
+    const modifiers = ts.canHaveModifiers(statement) ? (ts.getModifiers(statement) ?? []) : [];
+    const exported = modifiers.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword);
+    const isDefault = modifiers.some((modifier) => modifier.kind === ts.SyntaxKind.DefaultKeyword);
+    if (ts.isImportDeclaration(statement)) {
+      const clause = statement.importClause;
+      if (clause?.name !== undefined) declares.push(clause.name.text);
+      const bindings = clause?.namedBindings;
+      if (bindings !== undefined && ts.isNamespaceImport(bindings)) declares.push(bindings.name.text);
+      else if (bindings !== undefined) for (const element of bindings.elements) declares.push(element.name.text);
+      out.push({ declares, names, exports, forwards, text, isImport: true });
+      continue;
+    }
+    if (ts.isExportDeclaration(statement)) {
+      const clause = statement.exportClause;
+      if (statement.moduleSpecifier !== undefined) {
+        forwards =
+          clause === undefined
+            ? "*"
+            : ts.isNamespaceExport(clause)
+              ? [clause.name.text]
+              : clause.elements.map((element) => element.name.text);
+      } else if (clause !== undefined && ts.isNamedExports(clause))
+        for (const element of clause.elements)
+          exports.push([element.name.text, (element.propertyName ?? element.name).text]);
+      out.push({ declares, names, exports, forwards, text, isImport: false });
+      continue;
+    }
+    identifiers(statement, names);
+    if (ts.isVariableStatement(statement)) {
+      const bound = new Set<string>();
+      for (const declaration of statement.declarationList.declarations) bindingNames(declaration.name, bound);
+      declares.push(...bound);
+      if (exported) for (const name of bound) exports.push([name, name]);
+    } else if (
+      ts.isFunctionDeclaration(statement) ||
+      ts.isClassDeclaration(statement) ||
+      ts.isInterfaceDeclaration(statement) ||
+      ts.isTypeAliasDeclaration(statement) ||
+      ts.isEnumDeclaration(statement) ||
+      ts.isModuleDeclaration(statement)
+    ) {
+      const name = statement.name !== undefined && ts.isIdentifier(statement.name) ? statement.name.text : null;
+      declares.push(name ?? "<default>");
+      if (exported) exports.push([isDefault ? "default" : (name ?? "default"), name ?? "<default>"]);
+    } else if (ts.isExportAssignment(statement)) {
+      declares.push("<default>");
+      exports.push(["default", "<default>"]);
+    }
+    out.push({ declares, names, exports, forwards, text, isImport: false });
+  }
+  return out;
+}
+
+/** `locals` and every top-level name whose declaration reaches one of them. */
+function reachingLocals(statements: readonly TopLevel[], locals: ReadonlySet<string>): Set<string> {
+  const reached = new Set(locals);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const statement of statements) {
+      if (statement.isImport || statement.declares.every((name) => reached.has(name))) continue;
+      if ([...statement.names].some((name) => reached.has(name) && !statement.declares.includes(name)))
+        for (const name of statement.declares)
+          if (!reached.has(name)) {
+            reached.add(name);
+            grew = true;
+          }
+    }
+  }
+  return reached;
+}
+
+/**
+ * The exports of a module whose declarations reach one of `locals`, through
+ * its other top-level declarations. Read by the identifiers each statement
+ * names, so a shadowing name counts too: it errs toward more.
+ */
+export function exportsReachingIn(source: ts.SourceFile, locals: ReadonlySet<string>): Set<string> | "*" {
+  const statements = topLevelOf(source);
+  if (statements === "*") return "*";
+  const reached = reachingLocals(statements, locals);
+  const out = new Set<string>();
+  for (const statement of statements)
+    for (const [name, local] of statement.exports) if (reached.has(local)) out.add(name);
+  return out;
+}
+
+/**
+ * The exports of a module that a change from `before` to `after` reaches:
+ * those whose own declaration changed, those that reach a changed
+ * declaration or import through the module's other declarations, and
+ * those added, removed or re-pointed by an export list or a re-export. A
+ * changed statement that declares nothing (code run at load, `export *`)
+ * reaches everything. Null `before` or `after`: an added or deleted module,
+ * all of it.
+ */
+export function changedExports(path: string, before: string | null, after: string | null): Set<string> | "*" {
+  if (before === null || after === null) return "*";
+  const read = (text: string) => topLevelOf(ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true));
+  const old = read(before);
+  const now = read(after);
+  if (old === "*" || now === "*") return "*";
+  const textsOf = (statements: readonly TopLevel[]) => {
+    const byName = new Map<string, string[]>();
+    const bare: string[] = [];
+    const exported = new Map<string, string>();
+    const forwarded = new Map<string, string>();
+    let forwardsAll = false;
+    for (const statement of statements) {
+      for (const name of statement.declares) byName.set(name, [...(byName.get(name) ?? []), statement.text]);
+      for (const [name, local] of statement.exports) exported.set(name, local);
+      if (statement.forwards === "*") forwardsAll = true;
+      else for (const name of statement.forwards) forwarded.set(name, statement.text);
+      if (statement.declares.length === 0 && statement.exports.length === 0 && statement.forwards.length === 0)
+        bare.push(statement.text);
+    }
+    return { byName, bare: bare.sort().join("\n"), exported, forwarded, forwardsAll };
+  };
+  const a = textsOf(old);
+  const b = textsOf(now);
+  if (a.bare !== b.bare) return "*";
+  const changed = new Set<string>();
+  for (const name of new Set([...a.byName.keys(), ...b.byName.keys()]))
+    if ((a.byName.get(name) ?? []).join("\n") !== (b.byName.get(name) ?? []).join("\n")) changed.add(name);
+  const out = new Set<string>();
+  for (const name of exportsReachingIn(ts.createSourceFile(path, after, ts.ScriptTarget.Latest, true), changed) as Set<string>)
+    out.add(name);
+  for (const name of exportsReachingIn(ts.createSourceFile(path, before, ts.ScriptTarget.Latest, true), changed) as Set<string>)
+    out.add(name);
+  for (const name of new Set([...a.exported.keys(), ...b.exported.keys()]))
+    if (a.exported.get(name) !== b.exported.get(name)) out.add(name);
+  if (a.forwardsAll !== b.forwardsAll) return "*";
+  for (const name of new Set([...a.forwarded.keys(), ...b.forwarded.keys()]))
+    if (a.forwarded.get(name) !== b.forwarded.get(name)) out.add(name);
+  return out;
 }

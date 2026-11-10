@@ -27,6 +27,7 @@ import {
   type DependencyChoice,
 } from "./core.js";
 import { gateRepository } from "./gate.js";
+import { impactOf, runImpactTests } from "./impact.js";
 import { applyPatch, mergeProject } from "./mergeback.js";
 import { statusProject } from "./status.js";
 
@@ -84,6 +85,15 @@ const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript r
       eslint-disable), and with --scope, files outside it. Exits 6 on any.
       --hook: for a Claude Code Stop hook, exits 2 with the findings on stderr,
       once per stop.
+
+  carveout impact [<file>...] [--repo <dir>] [--base <ref>] [--depth N] [--run] [--json]
+      What the change from <ref> (default HEAD) to the working tree reaches, or
+      the files named: every file that imports a changed module, directly or
+      through others; each export whose type changed or that is gone, and who
+      takes it; the tests among the importers, and the commands that run just
+      them. --depth bounds the hops (default: all). --run runs those commands
+      in the repository, one at a time, with your environment; exits 2 if one
+      fails. Without --run nothing of the repository is run.
 
   carveout where
       The folder fetched package types are cached in (CARVEOUT_HOME).
@@ -166,6 +176,7 @@ async function main(argv: readonly string[]) {
       base: { type: "string" },
       scope: { type: "string", multiple: true },
       hook: { type: "boolean" },
+      run: { type: "boolean" },
       json: { type: "boolean" },
     },
   });
@@ -668,6 +679,82 @@ async function main(argv: readonly string[]) {
             : merge.patch.boundary.length > 0
               ? 5
               : 0;
+      return;
+    }
+
+    case "impact": {
+      const impact = impactOf({
+        repo,
+        ...(values.base === undefined ? {} : { base: values.base }),
+        ...(positionals.length === 0 ? {} : { files: positionals }),
+        ...(values.depth === undefined ? {} : { maxDepth: integer(values.depth, "depth", 0) }),
+      });
+      const runs =
+        values.run === true
+          ? runImpactTests(impact.repo, impact.commands, {
+              log: (line) => {
+                if (values.json !== true) process.stderr.write(`${line}\n`);
+              },
+            })
+          : [];
+      if (values.json === true) print(values.run === true ? { ...impact, runs } : impact);
+      else {
+        const shown = (items: readonly string[], limit = 25) =>
+          list(items.length <= limit ? items : [...items.slice(0, limit), `... ${items.length - limit} more (--json lists all)`]);
+        const since = impact.base === null ? "named" : `changed since ${impact.base}`;
+        process.stdout.write(
+          [
+            `${impact.changed.length} script file(s) ${since}; ${impact.importers.length} file(s) import them, ${impact.tests.length} test(s) among them and the change (graph ${impact.timings.graphMs} ms, types ${impact.timings.typesMs} ms).`,
+            "",
+            "Exports whose type changed or that are gone:",
+            impact.exports.length === 0
+              ? "  (none)"
+              : impact.exports
+                  .map((item) =>
+                    [
+                      `  ${item.file} ${item.name}: ${item.change}`,
+                      `    was: ${item.before.replaceAll("\n", "; ")}`,
+                      ...(item.after === null ? [] : [`    now: ${item.after.replaceAll("\n", "; ")}`]),
+                      `    taken by: ${item.usedBy.length === 0 ? "no file outside the change" : item.usedBy.join(", ")}`,
+                    ].join("\n"),
+                  )
+                  .join("\n"),
+            ...(impact.unchecked.length === 0
+              ? []
+              : ["", "Types not compared:", list(impact.unchecked.map(({ file, reason }) => `${file}: ${reason}`))]),
+            "",
+            "Importers, nearest first:",
+            shown(impact.importers.map(({ file, depth }) => `${file}  (${depth} hop${depth === 1 ? "" : "s"})`)),
+            "",
+            "Tests that run the changed code:",
+            shown(
+              impact.tests.map(
+                ({ file, depth, runner }) =>
+                  `${file}  (${runner ?? "runner unknown"}, ${depth === 0 ? "changed" : `${depth} hop${depth === 1 ? "" : "s"}`})`,
+              ),
+            ),
+            "",
+            "Run them:",
+            list(
+              impact.commands.map(
+                (command) =>
+                  `(cd ${command.cwd || "."} && ${command.argv.join(" ")})${command.whole ? "  # the package's whole suite: no runner known" : ""}`,
+              ),
+            ),
+            ...(runs.length === 0
+              ? []
+              : [
+                  "",
+                  ...runs.map(
+                    (run) =>
+                      `${run.ok ? "ok  " : "FAIL"} (cd ${run.command.cwd || "."} && ${run.command.argv.join(" ")})${run.ok ? "" : `\n${run.output}`}`,
+                  ),
+                ]),
+            "",
+          ].join("\n"),
+        );
+      }
+      if (runs.some((run) => !run.ok)) process.exitCode = 2;
       return;
     }
 
