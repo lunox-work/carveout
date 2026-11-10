@@ -31,9 +31,10 @@ What to tell them, accurately:
   too unless cut with `--live`: tests in the folder show the slice working
   against mocks, not against the repository.
 - By default the stubs keep literal values from the cut modules.
-  `--widen-literals` removes them, and `--public` or a `private` path in
-  the configuration turns it on. Neither hides the slice's own source, so
-  do not hand the folder to someone who should not read it.
+  `--widen-literals` removes them (but for the members of a type spelled
+  as a constant), and `--public` or a `private` path in the configuration
+  turns it on. Neither hides the slice's own source, so do not hand the
+  folder to someone who should not read it.
 - For someone outside the repository, cut with `--public`, take the folder
   back with `carveout patch` (it runs none of the folder's code and keeps
   out CI, hook, manifest and lockfile files, new files in other packages

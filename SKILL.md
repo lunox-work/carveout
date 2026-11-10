@@ -156,7 +156,9 @@ The rest of the cut's behaviour:
 - **Literal types.** Stubs keep them as the source declares them.
   `--widen-literals` writes `string` in place of `"live"`. Use it when the
   folder goes to someone who should not see the constants of the modules it
-  cuts. It does not hide the slice's own source.
+  cuts. A constant the stub reads as a type (`(typeof KINDS)[number]`)
+  keeps its name-like strings, the type's members. It does not hide the
+  slice's own source.
 - **Someone outside.** `--public` (or `"public": true` in the
   configuration) is for a folder handed to someone outside the
   repository: literals widened, and neither the checkout's path or folder

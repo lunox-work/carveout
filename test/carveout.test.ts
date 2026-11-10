@@ -19,6 +19,7 @@ import {
   undoRewrites,
   type CutResult,
 } from "../src/carve.js";
+import { sanitizeDeclaration } from "../src/extract/typescript.js";
 import { withoutRoots } from "../src/extract/fixture.js";
 import { buildGraph, globMatches } from "../src/graph.js";
 import { statusProject, symbolDiff } from "../src/status.js";
@@ -129,7 +130,7 @@ test("a cut is ready: the workspace package stubbed, the SDK mocked", () => {
   assert.equal(existsSync(join(out, "packages/money/src/index.ts")), false);
 });
 
-test("stubs keep literal types unless asked to widen them", async () => {
+test("stubs keep literal types unless asked to widen them, and a type's members either way", async () => {
   const stub = readFileSync(
     join(cut.out, "packages/money/src/index.d.ts"),
     "utf8",
@@ -147,7 +148,30 @@ test("stubs keep literal types unless asked to widen them", async () => {
     join(widened.out, "packages/money/src/index.d.ts"),
     "utf8",
   );
-  assert.doesNotMatch(text, /"usd"/);
+  // `Currency` is `(typeof CURRENCIES)[number]`: its members stay, or the
+  // slice would type-check `format(cents, "anything")`.
+  assert.match(text, /readonly \["usd", "eur"\]|readonly \[\s*"usd",\s*"eur"\s*\]/);
+  const values = sanitizeDeclaration(
+    [
+      'export declare const KINDS: readonly ["github", "jira"];',
+      "export type Kind = (typeof KINDS)[number];",
+      'export declare const ENDPOINT = "https://rates.internal.example/v2";',
+      "export declare const DISCOUNT = 0.37;",
+      'export declare const MIXED: readonly ["draft", "https://x.example", 3];',
+      "export type Mixed = (typeof MIXED)[number];",
+      'export declare const LONE: "draft";',
+      "",
+    ].join("\n"),
+    { widenLiterals: true },
+  );
+  assert.match(values, /KINDS: readonly \[\s*"github",\s*"jira"\s*\]/);
+  assert.match(values, /ENDPOINT: string/);
+  assert.match(values, /DISCOUNT: number/);
+  // Read as a type: the name stays, the URL and the number widen.
+  assert.match(values, /MIXED: readonly \[\s*"draft",\s*string,\s*number\s*\]/);
+  // Not read as a type: a value like any other.
+  assert.match(values, /LONE: string/);
+  assert.doesNotMatch(values, /rates\.internal|0\.37/);
 });
 
 test("imports are rewritten to what Node resolves, and recorded", () => {

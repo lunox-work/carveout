@@ -482,13 +482,24 @@ export function stubExtractionOptions(
   return { ...extractionOptions(base), removeComments: true };
 }
 
+/**
+ * A string literal that names something rather than holds a value: a
+ * provider, a status, a kind (`"github"`, `"in-progress"`). Such literals
+ * are a type's members when code reads the constant as a type, and the
+ * slice's own code spells them anyway. A URL, a key, a sentence or a
+ * number is a value, and widens.
+ */
+const NAME_LIKE = /^[A-Za-z_][A-Za-z0-9_-]{0,39}$/;
+
 /** The type a literal widens to, or null for anything else. */
-function widened(literal: ts.Expression): ts.TypeNode | null {
+function widened(literal: ts.Expression, keepNames = false): ts.TypeNode | null {
   const keyword = (kind: ts.KeywordTypeSyntaxKind) =>
     ts.factory.createKeywordTypeNode(kind);
   const value = ts.isPrefixUnaryExpression(literal) ? literal.operand : literal;
   if (ts.isStringLiteralLike(value))
-    return keyword(ts.SyntaxKind.StringKeyword);
+    return keepNames && NAME_LIKE.test(value.text)
+      ? null
+      : keyword(ts.SyntaxKind.StringKeyword);
   if (ts.isNumericLiteral(value)) return keyword(ts.SyntaxKind.NumberKeyword);
   if (ts.isBigIntLiteral(value)) return keyword(ts.SyntaxKind.BigIntKeyword);
   if (
@@ -507,27 +518,28 @@ function widened(literal: ts.Expression): ts.TypeNode | null {
  * function type, a type reference and its arguments are an API's types,
  * not a value, and are kept. `null` stays.
  */
-function widenType(node: ts.TypeNode): ts.TypeNode {
+function widenType(node: ts.TypeNode, keepNames = false): ts.TypeNode {
   const { factory } = ts;
-  if (ts.isLiteralTypeNode(node)) return widened(node.literal) ?? node;
+  const again = (type: ts.TypeNode) => widenType(type, keepNames);
+  if (ts.isLiteralTypeNode(node)) return widened(node.literal, keepNames) ?? node;
   if (ts.isTemplateLiteralTypeNode(node))
     return factory.createKeywordTypeNode(ts.SyntaxKind.StringKeyword);
   if (ts.isParenthesizedTypeNode(node))
-    return factory.updateParenthesizedType(node, widenType(node.type));
+    return factory.updateParenthesizedType(node, again(node.type));
   if (ts.isUnionTypeNode(node))
     return factory.updateUnionTypeNode(
       node,
-      factory.createNodeArray(node.types.map(widenType)),
+      factory.createNodeArray(node.types.map(again)),
     );
   if (ts.isIntersectionTypeNode(node))
     return factory.updateIntersectionTypeNode(
       node,
-      factory.createNodeArray(node.types.map(widenType)),
+      factory.createNodeArray(node.types.map(again)),
     );
   if (ts.isArrayTypeNode(node))
-    return factory.updateArrayTypeNode(node, widenType(node.elementType));
+    return factory.updateArrayTypeNode(node, again(node.elementType));
   if (ts.isTypeOperatorNode(node))
-    return factory.updateTypeOperatorNode(node, widenType(node.type));
+    return factory.updateTypeOperatorNode(node, again(node.type));
   if (ts.isTupleTypeNode(node))
     return factory.updateTupleTypeNode(
       node,
@@ -539,13 +551,13 @@ function widenType(node: ts.TypeNode): ts.TypeNode {
                 element.dotDotDotToken,
                 element.name,
                 element.questionToken,
-                widenType(element.type),
+                again(element.type),
               )
             : ts.isOptionalTypeNode(element)
-              ? factory.updateOptionalTypeNode(element, widenType(element.type))
+              ? factory.updateOptionalTypeNode(element, again(element.type))
               : ts.isRestTypeNode(element)
-                ? factory.updateRestTypeNode(element, widenType(element.type))
-                : widenType(element),
+                ? factory.updateRestTypeNode(element, again(element.type))
+                : again(element),
         ),
       ),
     );
@@ -560,7 +572,7 @@ function widenType(node: ts.TypeNode): ts.TypeNode {
                 member.modifiers,
                 member.name,
                 member.questionToken,
-                widenType(member.type),
+                again(member.type),
               )
             : member,
         ),
@@ -573,14 +585,35 @@ function widenType(node: ts.TypeNode): ts.TypeNode {
 function valueType(
   type: ts.TypeNode | undefined,
   initializer: ts.Expression | undefined,
+  keepNames = false,
 ): { readonly type: ts.TypeNode | undefined; readonly cleared: boolean } {
   const fromInitializer =
-    initializer === undefined ? null : widened(initializer);
+    initializer === undefined ? null : widened(initializer, keepNames);
   if (fromInitializer !== null) return { type: fromInitializer, cleared: true };
   return {
-    type: type === undefined ? undefined : widenType(type),
+    type: type === undefined ? undefined : widenType(type, keepNames),
     cleared: false,
   };
+}
+
+/**
+ * The constants a declaration file reads as types (`(typeof KINDS)[number]`,
+ * `kind: typeof KIND`). Their name-like literals are the members of those
+ * types: widened, the type is `string`, and the slice no longer checks
+ * the code that relies on it.
+ */
+function constantsReadAsTypes(source: ts.SourceFile): Set<string> {
+  const names = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isTypeQueryNode(node)) {
+      let name: ts.EntityName = node.exprName;
+      while (ts.isQualifiedName(name)) name = name.left;
+      names.add(name.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return names;
 }
 
 const isPrivateMember = (member: ts.ClassElement) =>
@@ -601,10 +634,12 @@ const isPrivateMember = (member: ts.ClassElement) =>
  * comments, and private members only as one nameless brand, since no code
  * outside the class can use them.
  *
- * Widening changes a type that reads a value's literal: a cut constant used
- * as a discriminant (`kind: typeof KIND`) is a plain `string` in the stub,
- * and code that relies on the narrower type may then not compile. That is
- * the price of not shipping the value; the fixture compile reports it.
+ * A constant the file reads as a type (`(typeof PROVIDERS)[number]`, `kind:
+ * typeof KIND`) keeps its name-like string literals (`"github"`, `"draft"`):
+ * they are that type's members, and widened, the type would be `string` and
+ * the slice would stop checking the code that relies on it (a guard taken
+ * out compiles). Its other literals (numbers, URLs, keys, sentences) widen
+ * as any value's do.
  *
  * A string enum member's value becomes its own name: it stays a string
  * enum, each member its own type, without the text it stood for. Numeric
@@ -623,11 +658,16 @@ export function sanitizeDeclaration(
     true,
   );
   const { factory } = ts;
+  const readAsTypes = constantsReadAsTypes(source);
   const result = ts.transform(source, [
     (context) => {
       const visit = (node: ts.Node): ts.Node => {
         if (ts.isVariableDeclaration(node) && widen) {
-          const value = valueType(node.type, node.initializer);
+          const value = valueType(
+            node.type,
+            node.initializer,
+            ts.isIdentifier(node.name) && readAsTypes.has(node.name.text),
+          );
           return factory.updateVariableDeclaration(
             node,
             node.name,

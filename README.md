@@ -161,7 +161,10 @@ Options for `cut` only:
   defaults apply otherwise. For tests that need the service itself, such
   as a database driver against a local server;
 - `--widen-literals`, which writes `string` in stubs in place of literal
-  values;
+  values. A constant the stub reads as a type (`type Kind = (typeof
+KINDS)[number]`) keeps its name-like strings (`"github"`, `"draft"`):
+  they are that type's members, and widened, the slice would stop checking
+  the code that relies on them. Its numbers, URLs and sentences widen;
 - `--public`, for a folder handed to someone outside: literals widened,
   and neither the checkout's path or folder name nor the files outside the
   slice that import it written (each importer is named by its package
@@ -327,9 +330,10 @@ What to tell them, accurately:
   too unless cut with `--live`: tests in the folder show the slice working
   against mocks, not against the repository.
 - By default the stubs keep literal values from the cut modules.
-  `--widen-literals` removes them, and `--public` or a `private` path in
-  the configuration turns it on. Neither hides the slice's own source, so
-  do not hand the folder to someone who should not read it.
+  `--widen-literals` removes them (but for the members of a type spelled
+  as a constant), and `--public` or a `private` path in the configuration
+  turns it on. Neither hides the slice's own source, so do not hand the
+  folder to someone who should not read it.
 - For someone outside the repository, cut with `--public`, take the folder
   back with `carveout patch` (it runs none of the folder's code and keeps
   out CI, hook, manifest and lockfile files, new files in other packages

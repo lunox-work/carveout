@@ -165,7 +165,9 @@ test("a public cut names neither the checkout nor the files outside that import 
   assert.doesNotMatch(contract, /checkout\.ts/);
   assert.match(contract, /apps\/shop\/\(outside the slice\)/);
   assert.doesNotMatch(readFileSync(join(out, "carveout.json"), "utf8"), new RegExp(scratch));
-  assert.doesNotMatch(readFileSync(join(out, "packages/money/src/index.d.ts"), "utf8"), /"usd"/);
+  // A value read as a type keeps its members (`Currency`); the tax rate,
+  // a value, is widened wherever it is stubbed.
+  assert.match(readFileSync(join(out, "packages/money/src/index.d.ts"), "utf8"), /"usd"/);
   // Nothing the cut writes names the checkout, compiler messages included.
   let absolute = "";
   try {
