@@ -816,6 +816,21 @@ export async function computeCut(
         }
     }
   }
+  // And a package whose class the slice's code tests with `instanceof`
+  // (`error instanceof Anthropic.APIError`): a mock is typed `any`, so the
+  // test narrows nothing, the code reading the narrowed value does not
+  // compile, and the folder's build fails where the cut said ready. The
+  // real class narrows, and is never called.
+  for (const [name, cls] of instanceofPackages(
+    manifest.included
+      .filter((file) => isScript(file.path))
+      .map((file) => ({ path: file.path, text: readFileSync(join(repo, file.path), "utf8") })),
+    new Set(workspaces.keys()),
+  ))
+    if (choices[name] === undefined) {
+      choices[name] = "approved-package";
+      log(`Installs ${name}: the code tests a value with instanceof ${cls}, which a mock cannot narrow.`);
+    }
   const scope = resolveScope({
     manifest,
     contract,
@@ -1212,6 +1227,67 @@ function prototypePatchedPackages(
           break;
         }
     }
+  }
+  return found;
+}
+
+/**
+ * The packages whose classes the code tests with `instanceof`, by package
+ * name with the class as written: `import Anthropic from
+ * "@anthropic-ai/sdk"` and `instanceof Anthropic.APIError` in the same
+ * file, or a named or namespace import on the right of one. The
+ * repository's own packages and Node's are not among them.
+ */
+export function instanceofPackages(
+  sources: readonly { path: string; text: string }[],
+  workspaces: ReadonlySet<string>,
+): Map<string, string> {
+  const found = new Map<string, string>();
+  for (const source of sources) {
+    if (!/\binstanceof\b/.test(source.text)) continue;
+    const parsed = parseSource(source.path, source.text);
+    const bindings = new Map<string, string>();
+    for (const statement of parsed.statements) {
+      if (
+        !ts.isImportDeclaration(statement) ||
+        !ts.isStringLiteral(statement.moduleSpecifier)
+      )
+        continue;
+      const specifier = statement.moduleSpecifier.text;
+      if (
+        specifier.startsWith(".") ||
+        specifier.startsWith("/") ||
+        isNodeBuiltin(specifier)
+      )
+        continue;
+      const name = packageNameOf(specifier);
+      if (workspaces.has(name)) continue;
+      const clause = statement.importClause;
+      if (clause === undefined || clause.phaseModifier === ts.SyntaxKind.TypeKeyword)
+        continue;
+      if (clause.name !== undefined) bindings.set(clause.name.text, name);
+      const named = clause.namedBindings;
+      if (named !== undefined && ts.isNamespaceImport(named))
+        bindings.set(named.name.text, name);
+      else if (named !== undefined)
+        for (const element of named.elements)
+          if (!element.isTypeOnly) bindings.set(element.name.text, name);
+    }
+    if (bindings.size === 0) continue;
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword
+      ) {
+        let root: ts.Expression = node.right;
+        while (ts.isPropertyAccessExpression(root)) root = root.expression;
+        const name = ts.isIdentifier(root) ? bindings.get(root.text) : undefined;
+        if (name !== undefined && !found.has(name))
+          found.set(name, node.right.getText(parsed));
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(parsed);
   }
   return found;
 }

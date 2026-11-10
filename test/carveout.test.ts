@@ -14,6 +14,7 @@ import { join, resolve } from "node:path";
 import { after, before, test } from "node:test";
 import {
   cutSlice,
+  instanceofPackages,
   patchProject,
   planSlice,
   undoRewrites,
@@ -253,6 +254,33 @@ test("the public surface's types are checked, and a changed signature names its 
   } finally {
     writeFileSync(cart, before);
   }
+});
+
+test("a package whose class the code tests with instanceof is found, so it is installed", () => {
+  const found = instanceofPackages(
+    [
+      {
+        path: "a.ts",
+        text: [
+          'import Anthropic from "@anthropic-ai/sdk";',
+          'import * as s3 from "@aws-sdk/client-s3";',
+          'import { Thing } from "@fx/money";',
+          'import type { Other } from "stripe";',
+          "export const f = (e: unknown, o: Other) =>",
+          "  e instanceof Anthropic.APIError || e instanceof s3.S3ServiceException || e instanceof Thing || o;",
+          "",
+        ].join("\n"),
+      },
+    ],
+    new Set(["@fx/money"]),
+  );
+  assert.deepEqual(
+    [...found],
+    [
+      ["@anthropic-ai/sdk", "Anthropic.APIError"],
+      ["@aws-sdk/client-s3", "s3.S3ServiceException"],
+    ],
+  );
 });
 
 test("status is current until the repository changes what a cut writes", async () => {

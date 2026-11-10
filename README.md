@@ -160,7 +160,9 @@ Options for `cut` only:
   defaults. A package whose class a carried test patches by prototype
   (`S3Client.prototype.send = ...`) is installed without being asked: a
   mock has no prototype to patch, and such a test never reaches the
-  service;
+  service. So is one whose class the code tests with `instanceof`
+  (`error instanceof Anthropic.APIError`): a mock narrows nothing, and the
+  folder would not build;
 - `--copy <dir>`, which copies a folder the code reads by a name the walk
   cannot follow (a migrations folder) beside the slice. Its files are the
   repository's: an edit to one is in the patch;
