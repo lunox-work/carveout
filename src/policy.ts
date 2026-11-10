@@ -155,14 +155,54 @@ export interface Refusal {
 }
 
 /**
+ * Configuration that decides what a check holds code to: compiler, linter
+ * and test-runner settings. A change that loosens one makes every check
+ * after it pass more, so `gate` names it for a review.
+ */
+export const CHECK_CONFIG_PATHS: readonly string[] = [
+  "**/tsconfig*.json",
+  "**/jsconfig*.json",
+  "**/.eslintrc",
+  "**/.eslintrc.*",
+  "**/eslint.config.*",
+  "**/biome.json",
+  "**/biome.jsonc",
+  "**/vitest.config.*",
+  "**/vitest.workspace.*",
+  "**/vite.config.*",
+  "**/jest.config.*",
+  "**/.c8rc",
+  "**/.c8rc.json",
+  "**/.nycrc",
+  "**/.nycrc.json",
+];
+
+/** Comments that switch a check off for the code after them. */
+const SUPPRESSION = /@ts-ignore|@ts-nocheck|@ts-expect-error|eslint-disable|biome-ignore|istanbul ignore|c8 ignore|v8 ignore/g;
+
+/** How many check suppressions a script's text holds. */
+export function suppressionsOf(text: string): number {
+  return text.match(SUPPRESSION)?.length ?? 0;
+}
+
+/**
  * Judges each path a patch would carry. `packages` are the repository's
  * package folders the slice holds files of ("" for the root package);
  * `allow` are the maintainer's paths and globs that pass whatever the rule.
  */
 export function handoffPolicy(options: {
-  readonly packages: ReadonlySet<string>;
-  readonly packageOf: (path: string) => string;
+  /** Without it, a new file may go anywhere. */
+  readonly packages?: ReadonlySet<string>;
+  readonly packageOf?: (path: string) => string;
   readonly allow?: readonly string[];
+  /**
+   * Also refuse what loosens a check: an edit to compiler, linter or
+   * test-runner configuration, and a script that gains suppressions
+   * (`@ts-ignore`, `eslint-disable`, coverage ignores). `gate` turns it on.
+   */
+  readonly checks?: boolean;
+  /** How a refusal names a test: "a test the slice was handed" by default. */
+  readonly testNoun?: string;
 }): (
   path: string,
   change: "added" | "changed" | "deleted",
@@ -170,17 +210,31 @@ export function handoffPolicy(options: {
 ) => string | null {
   const allowed = pathMatcher(options.allow ?? []);
   const protectedPath = pathMatcher(PROTECTED_PATHS);
+  const checkConfig = pathMatcher(options.checks === true ? CHECK_CONFIG_PATHS : []);
+  const noun = options.testNoun ?? "a test the slice was handed";
+  const { packages, packageOf } = options;
   return (path, change, texts) => {
     if (allowed(path)) return null;
     if (protectedPath(path))
       return "a protected path (CI, hooks, manifests, lockfiles, environment): review it and pass --allow to carry it";
-    if (change === "added" && !options.packages.has(options.packageOf(path)))
+    if (checkConfig(path) && change !== "added")
+      return "changes what a check holds code to (compiler, linter or test-runner configuration): review it and pass --allow to carry it";
+    if (
+      change === "added" &&
+      packages !== undefined &&
+      packageOf !== undefined &&
+      !packages.has(packageOf(path))
+    )
       return "a new file outside the slice's packages";
-    if (change === "deleted" && isTestPath(path))
-      return "deletes a test the slice was handed";
+    if (change === "deleted" && isTestPath(path)) return `deletes ${noun}`;
     if (change === "changed" && isTestPath(path) && texts !== undefined && texts.before !== null) {
-      const weakened = weakenedTest(path, texts.before, texts.after);
+      const weakened = weakenedTest(path, texts.before, texts.after, noun);
       if (weakened !== null) return `${weakened}: review it and pass --allow to carry it`;
+    }
+    if (options.checks === true && change !== "deleted" && texts !== undefined && /\.[cm]?[jt]sx?$/.test(path)) {
+      const more = suppressionsOf(texts.after) - suppressionsOf(texts.before ?? "");
+      if (more > 0)
+        return `adds ${more} check suppression${more === 1 ? "" : "s"} (@ts-ignore, eslint-disable, coverage ignores): review it and pass --allow to carry it`;
     }
     return null;
   };
@@ -194,9 +248,13 @@ const ASSERTION_MODULES = /^(node:)?assert(\/strict)?$|^(vitest|chai|expect|@jes
  * tests it skips. An assertion is a call rooted at `assert` or `expect`,
  * or at a name imported from an assertion module (`strictEqual` from
  * `node:assert`); a skip is `test.skip`, `it.todo`, `describe.skip`,
- * `xit`, `xdescribe`, or a `{ skip }` or `{ todo }` option.
+ * `xit`, `xdescribe`, or a `{ skip }` or `{ todo }` option; a focus is
+ * `test.only`, `describe.only`, `fit` or `fdescribe`, which skips the rest.
  */
-function assertionsOf(path: string, text: string): { assertions: string[]; skips: number } {
+function assertionsOf(
+  path: string,
+  text: string,
+): { assertions: string[]; skips: number; focused: number } {
   const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
   const roots = new Set(["assert", "expect"]);
   for (const statement of source.statements) {
@@ -222,6 +280,7 @@ function assertionsOf(path: string, text: string): { assertions: string[]; skips
   };
   const assertions: string[] = [];
   let skips = 0;
+  let focused = 0;
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
       const callee = node.expression;
@@ -233,6 +292,10 @@ function assertionsOf(path: string, text: string): { assertions: string[]; skips
         ["test", "it", "describe", "suite"].includes(base)
       )
         skips += 1;
+      if (name === "only" && base !== null && ["test", "it", "describe", "suite"].includes(base))
+        focused += 1;
+      if (ts.isIdentifier(callee) && (callee.text === "fit" || callee.text === "fdescribe"))
+        focused += 1;
       if (ts.isIdentifier(callee) && (callee.text === "xit" || callee.text === "xdescribe" || callee.text === "xtest"))
         skips += 1;
       if (base !== null && ["test", "it", "describe", "suite"].includes(base))
@@ -256,17 +319,23 @@ function assertionsOf(path: string, text: string): { assertions: string[]; skips
     ts.forEachChild(node, visit);
   };
   visit(source);
-  return { assertions, skips };
+  return { assertions, skips, focused };
 }
 
 /**
  * Why a change to a test the slice was handed weakens it, or null: an
- * assertion removed or rewritten (an expected value changed), or a test
- * skipped. Assertions only added pass. A rewritten assertion may be the
- * change itself (a behaviour the contributor was asked to change), so it
- * is refused for a maintainer to read, not judged wrong.
+ * assertion removed or rewritten (an expected value changed), a test
+ * skipped, or one focused with `.only`. Assertions only added pass. A
+ * rewritten assertion may be the change itself (a behaviour the
+ * contributor was asked to change), so it is refused for a maintainer to
+ * read, not judged wrong.
  */
-export function weakenedTest(path: string, before: string, after: string): string | null {
+export function weakenedTest(
+  path: string,
+  before: string,
+  after: string,
+  noun = "a test the slice was handed",
+): string | null {
   const old = assertionsOf(path, before);
   const now = assertionsOf(path, after);
   const left = new Map<string, number>();
@@ -279,8 +348,12 @@ export function weakenedTest(path: string, before: string, after: string): strin
   }
   const reasons: string[] = [];
   if (removed > 0)
-    reasons.push(`removes or rewrites ${removed} assertion${removed === 1 ? "" : "s"} of a test the slice was handed`);
+    reasons.push(`removes or rewrites ${removed} assertion${removed === 1 ? "" : "s"} of ${noun}`);
   if (now.skips > old.skips)
     reasons.push(`skips ${now.skips - old.skips} more test${now.skips - old.skips === 1 ? "" : "s"}`);
+  if (now.focused > old.focused)
+    reasons.push(
+      `focuses ${now.focused - old.focused} more test${now.focused - old.focused === 1 ? "" : "s"} with .only, which skips the rest of the file`,
+    );
   return reasons.length === 0 ? null : reasons.join(", and ");
 }

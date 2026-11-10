@@ -4,7 +4,7 @@
  * Exit codes: 0 done, 1 refused or failed, 2 written with blockers (cut)
  * or a step failed (check, merge), 3 nothing to patch, 4 stale (status),
  * 5 the edits reach past the slice (patch, merge), 6 the hand-off policy
- * kept files out of the patch (patch, merge).
+ * kept files out of the patch (patch, merge) or held a change (gate).
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
@@ -26,6 +26,7 @@ import {
   testsVerdict,
   type DependencyChoice,
 } from "./core.js";
+import { gateRepository } from "./gate.js";
 import { applyPatch, mergeProject } from "./mergeback.js";
 import { statusProject } from "./status.js";
 
@@ -73,6 +74,16 @@ const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript r
       patch, then git apply --3way in <checkout>, then <command> at its root,
       with a scratch HOME and only the environment variables named. Applies
       nothing while the hand-off policy keeps a file out.
+
+  carveout gate  [--repo <dir>] [--base <ref>] [--scope <path>]... [--allow <path>]...
+                 [--hook] [--json]
+      Judges the change from <ref> (default HEAD) to the working tree, made in
+      the repository itself: protected paths, deleted or weakened tests (an
+      assertion removed or rewritten, a test skipped or focused with .only),
+      check configuration edited, suppressions added (@ts-ignore,
+      eslint-disable), and with --scope, files outside it. Exits 6 on any.
+      --hook: for a Claude Code Stop hook, exits 2 with the findings on stderr,
+      once per stop.
 
   carveout where
       The folder fetched package types are cached in (CARVEOUT_HOME).
@@ -152,6 +163,9 @@ async function main(argv: readonly string[]) {
       allow: { type: "string", multiple: true },
       public: { type: "boolean" },
       isolated: { type: "boolean" },
+      base: { type: "string" },
+      scope: { type: "string", multiple: true },
+      hook: { type: "boolean" },
       json: { type: "boolean" },
     },
   });
@@ -654,6 +668,48 @@ async function main(argv: readonly string[]) {
             : merge.patch.boundary.length > 0
               ? 5
               : 0;
+      return;
+    }
+
+    case "gate": {
+      if (positionals.length > 0) fail("gate takes no positional arguments; pass --base <ref>.");
+      // A Stop hook that blocked once lets the next stop through: a change
+      // that is meant to rewrite an assertion would otherwise never end.
+      if (values.hook === true && !process.stdin.isTTY) {
+        try {
+          const event = JSON.parse(readFileSync(0, "utf8") || "{}") as { stop_hook_active?: unknown };
+          if (event.stop_hook_active === true) return;
+        } catch {
+          // No event on stdin: judge as usual.
+        }
+      }
+      const gate = gateRepository({
+        repo,
+        ...(values.base === undefined ? {} : { base: values.base }),
+        ...(values.allow === undefined ? {} : { allow: values.allow }),
+        ...(values.scope === undefined ? {} : { scope: values.scope }),
+      });
+      if (values.json === true) print(gate);
+      else if (values.hook === true) {
+        if (gate.refused.length > 0)
+          process.stderr.write(
+            [
+              `carveout gate: ${gate.refused.length} file(s) in this change need a reviewer's eye:`,
+              list(gate.refused.map(({ path, reason }) => `${path}: ${reason}`)),
+              "",
+              "Undo any of these the task did not ask for. If one is the change itself (the task changes that behaviour), keep it and say so plainly in your reply, naming the file, so the person can check it.",
+              "",
+            ].join("\n"),
+          );
+      } else
+        process.stdout.write(
+          gate.refused.length === 0
+            ? `${gate.changes.length} changed file(s) since ${gate.base}; nothing for the gate to hold.\n`
+            : `${gate.changes.length} changed file(s) since ${gate.base}; ${gate.refused.length} held for review:\n${list(
+                gate.refused.map(({ path, reason }) => `${path}: ${reason}`),
+              )}\n`,
+        );
+      if (gate.refused.length > 0) process.exitCode = values.hook === true ? 2 : 6;
       return;
     }
 
