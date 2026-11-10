@@ -3,7 +3,8 @@
  * carveout <command>: plan, cut, check and patch slices of a repository.
  * Exit codes: 0 done, 1 refused or failed, 2 written with blockers (cut)
  * or a step failed (check, merge), 3 nothing to patch, 4 stale (status),
- * 5 the edits reach past the slice (patch, merge).
+ * 5 the edits reach past the slice (patch, merge), 6 the hand-off policy
+ * kept files out of the patch (patch, merge).
  */
 
 import { readFileSync, writeFileSync } from "node:fs";
@@ -33,27 +34,38 @@ const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript r
                  [--with-tests] [--whole-package] [--follow-workspaces]
                  [--private <path>]... [--copy <dir>]... [--mock <package>]...
                  [--install <package>]... [--live <package>]... [--offline]
-                 [--widen-literals] [--json]
+                 [--widen-literals] [--public] [--json]
       Copies the slice to <dir> at its repository paths, with a .d.ts stub and a
       recording mock for every module it imports from outside, mock packages for
       what it does not install, package.json, tsconfig.json and a lockfile.
+      Writes nothing when a file it would write holds a credential. --public
+      makes a folder for someone outside: literals widened, and neither the
+      checkout's path nor the files outside the slice that import it named.
 
-  carveout check <dir> [--in-place] [--json]
-      npm ci, npm run build and npm test in a scratch copy of <dir>.
+  carveout check <dir> [--in-place] [--isolated] [--json]
+      npm ci, npm run build and npm test in a scratch copy of <dir>. --isolated,
+      for a folder that came back from someone else: a scratch HOME and npm
+      cache and no install scripts (not a sandbox).
 
-  carveout status <dir> [--json]
+  carveout status <dir> [--repo <checkout>] [--json]
       Whether <dir> still matches the repository, and what changed if not.
 
-  carveout patch <dir> [--output <file>] [--json]
-      The edits made in <dir> as a patch for the repository (git apply).
+  carveout patch <dir> [--repo <checkout>] [--allow <path>]... [--output <file>] [--json]
+      The edits made in <dir> as a patch for the repository (git apply). Runs
+      none of the folder's code. Keeps out, and names, new files outside the
+      slice's packages, protected paths (CI, hooks, manifests, lockfiles,
+      environment) and deleted tests; --allow <path|glob> lets one through.
 
-  carveout apply <dir> <patch-file> [--stubs] [--json]
+  carveout apply <dir> <patch-file> [--repo <checkout>] [--stubs] [--json]
       Brings a patch for the repository at the cut's commit into <dir>, with its
       imports rewritten as a cut writes them. --stubs also writes the stubs the
       change needs from the modules the slice cuts.
 
-  carveout merge <dir> --into <checkout> [--verify <command>] [--json]
-      patch, then git apply --3way in <checkout>, then <command> at its root.
+  carveout merge <dir> --into <checkout> [--verify <command>] [--verify-env <name>]...
+                 [--allow <path>]... [--json]
+      patch, then git apply --3way in <checkout>, then <command> at its root,
+      with a scratch HOME and only the environment variables named. Applies
+      nothing while the hand-off policy keeps a file out.
 
   carveout where
       The folder fetched package types are cached in (CARVEOUT_HOME).
@@ -125,6 +137,10 @@ async function main(argv: readonly string[]) {
       stubs: { type: "boolean" },
       into: { type: "string" },
       verify: { type: "string" },
+      "verify-env": { type: "string", multiple: true },
+      allow: { type: "string", multiple: true },
+      public: { type: "boolean" },
+      isolated: { type: "boolean" },
       json: { type: "boolean" },
     },
   });
@@ -140,6 +156,13 @@ async function main(argv: readonly string[]) {
   const print = (value: unknown) =>
     process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
   // Only a flag given overrides the repository's configuration.
+  /**
+   * The checkout a folder's command works against: `--repo` when given;
+   * else the record's, or the current directory when the record names none
+   * (a public cut). The library checks it holds the cut's commit.
+   */
+  const repoFor = (dir: string): string | undefined =>
+    values.repo !== undefined ? repo : readRecord(dir).repo === undefined ? repo : undefined;
   const bounds = {
     ...(values["whole-package"] === true ? { wholePackage: true } : {}),
     ...(values["follow-workspaces"] === true ? { followWorkspaces: true } : {}),
@@ -318,6 +341,7 @@ async function main(argv: readonly string[]) {
         ...(values["with-tests"] === true ? { tests: true } : {}),
         ...(values.offline === true ? { offline: true } : {}),
         ...(values["widen-literals"] === true ? { widenLiterals: true } : {}),
+        ...(values.public === true ? { public: true } : {}),
         ...bounds,
         ...(values.copy === undefined ? {} : { copy: values.copy }),
         log: (line) => {
@@ -390,6 +414,7 @@ async function main(argv: readonly string[]) {
       readRecord(dir);
       const steps = await checkProject(dir, {
         ...(values["in-place"] === true ? { inPlace: true } : {}),
+        ...(values.isolated === true ? { isolated: true } : {}),
       });
       const ok = steps.length === 3 && steps.every((step) => step.ok);
       if (values.json === true) print({ ok, steps });
@@ -431,8 +456,9 @@ async function main(argv: readonly string[]) {
     case "status": {
       const [dir] = positionals;
       if (dir === undefined) fail("status needs the folder a cut wrote.");
+      const given = repoFor(dir);
       const status = await statusProject(dir, {
-        ...(values.repo === undefined ? {} : { repo }),
+        ...(given === undefined ? {} : { repo: given }),
       });
       if (values.json === true) print(status);
       else {
@@ -464,7 +490,11 @@ async function main(argv: readonly string[]) {
     case "patch": {
       const [dir] = positionals;
       if (dir === undefined) fail("patch needs the folder a cut wrote.");
-      const patch = await patchProject(dir);
+      const given = repoFor(dir);
+      const patch = await patchProject(dir, {
+        ...(given === undefined ? {} : { repo: given }),
+        ...(values.allow === undefined ? {} : { allow: values.allow }),
+      });
       const boundary = new Set(patch.boundary.map((edit) => edit.path));
       const notes = [
         ...patch.generatedEdits
@@ -492,9 +522,26 @@ async function main(argv: readonly string[]) {
           (path) =>
             `${path} was cut from uncommitted changes, so --3way cannot merge it; apply it by hand if git apply refuses.`,
         ),
+        ...patch.deleted.map((path) => `deletes ${path}.`),
+        ...patch.refused.map(
+          ({ path, reason }) => `kept out: ${path}, ${reason}.`,
+        ),
+        ...(patch.sliceOnly.length === 0
+          ? []
+          : [
+              `${patch.sliceOnly.length} file(s) stay in the folder: the change comes back without the tests that ran on the mocks.`,
+            ]),
       ];
-      // The change needs more than the slice: the patch alone is short of it.
-      const code = patch.boundary.length > 0 ? 5 : patch.diff === "" ? 3 : 0;
+      // Kept out by the policy first; then the change needs more than the
+      // slice: the patch alone is short of it.
+      const code =
+        patch.refused.length > 0
+          ? 6
+          : patch.boundary.length > 0
+            ? 5
+            : patch.diff === ""
+              ? 3
+              : 0;
       if (values.json === true) {
         if (values.output !== undefined) writeFileSync(values.output, patch.diff);
         print(patch);
@@ -520,8 +567,10 @@ async function main(argv: readonly string[]) {
       const [dir, file] = positionals;
       if (dir === undefined || file === undefined)
         fail("apply needs the folder a cut wrote and a patch file.");
+      const given = repoFor(dir);
       const applied = await applyPatch(dir, readFileSync(file, "utf8"), {
         ...(values.stubs === true ? { stubs: true } : {}),
+        ...(given === undefined ? {} : { repo: given }),
       });
       if (values.json === true) print(applied);
       else {
@@ -549,6 +598,9 @@ async function main(argv: readonly string[]) {
       const merge = await mergeProject(dir, {
         into: values.into,
         ...(values.verify === undefined ? {} : { verify: values.verify }),
+        ...(values.repo === undefined ? {} : { repo }),
+        ...(values.allow === undefined ? {} : { allow: values.allow }),
+        ...(values["verify-env"] === undefined ? {} : { verifyEnv: values["verify-env"] }),
       });
       if (values.json === true) print(merge);
       else {
@@ -558,7 +610,14 @@ async function main(argv: readonly string[]) {
           process.stdout.write(`${step.ok ? "ok  " : "FAIL"} ${step.step}: ${step.ok && step.step === "verify" ? "" : step.output}\n`);
         }
       }
-      process.exitCode = !merge.ok ? 2 : merge.patch.boundary.length > 0 ? 5 : 0;
+      process.exitCode =
+        merge.patch.refused.length > 0
+          ? 6
+          : !merge.ok
+            ? 2
+            : merge.patch.boundary.length > 0
+              ? 5
+              : 0;
       return;
     }
 

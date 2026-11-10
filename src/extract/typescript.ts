@@ -739,6 +739,15 @@ function bindingNames(name: ts.BindingName, into: Set<string>): void {
       if (ts.isBindingElement(element)) bindingNames(element.name, into);
 }
 
+/** The elements of `export { ... }` (with or without `from`), else null. */
+function namedExportElements(
+  statement: ts.Statement,
+): readonly ts.ExportSpecifier[] | null {
+  if (!ts.isExportDeclaration(statement)) return null;
+  const clause = statement.exportClause;
+  return clause !== undefined && ts.isNamedExports(clause) ? clause.elements : null;
+}
+
 function describe(statement: ts.Statement): Declared {
   const exported = new Set<string>();
   const local = new Set<string>();
@@ -886,6 +895,10 @@ export function filterDeclaration(
   const described = source.statements.map(describe);
   const kept = new Set<Declared>();
   const needed = new Set<string>();
+  // `export { a, b, c } from "./m"` is one statement: keeping it whole for
+  // `a` would declare `b` and `c` too, with their literal values, and ask
+  // `./m` for them. Such a statement keeps only the names asked of it.
+  const narrowed = new Map<Declared, Set<string>>();
   const exportedBy = (name: string) =>
     described.filter((d) => d.exported.has(name) && d.reexportAll === null);
   if (requested === ALL) {
@@ -894,7 +907,16 @@ export function filterDeclaration(
     for (const name of requested)
       for (const d of exportedBy(name)) {
         kept.add(d);
-        for (const reference of d.references) needed.add(reference);
+        const elements = namedExportElements(d.statement);
+        if (elements === null) {
+          for (const reference of d.references) needed.add(reference);
+          continue;
+        }
+        narrowed.set(d, (narrowed.get(d) ?? new Set()).add(name));
+        const element = elements.find((e) => e.name.text === name);
+        const local = ts.isExportDeclaration(d.statement) && d.statement.moduleSpecifier === undefined;
+        if (element !== undefined && local)
+          needed.add((element.propertyName ?? element.name).text);
       }
     let grew = true;
     while (grew) {
@@ -912,14 +934,29 @@ export function filterDeclaration(
   const imports: { specifier: string; names: RequestedNames }[] = [];
   // A namespace import asks its module for what the kept statements read
   // off it, not the whole module, unless the namespace escapes.
+  /** What a statement asks of its module, narrowed with it. */
+  const importOf = (d: Declared): Declared["importFrom"] => {
+    const names = narrowed.get(d);
+    if (d.importFrom === null || names === undefined) return d.importFrom;
+    const elements = namedExportElements(d.statement) ?? [];
+    return {
+      specifier: d.importFrom.specifier,
+      names: new Set(
+        elements
+          .filter((e) => names.has(e.name.text))
+          .map((e) => (e.propertyName ?? e.name).text),
+      ),
+    };
+  };
   for (const d of kept) {
-    if (d.importFrom === null) continue;
+    const importFrom = importOf(d);
+    if (importFrom === null) continue;
     const clause = ts.isImportDeclaration(d.statement)
       ? d.statement.importClause
       : undefined;
     const bindings = clause?.namedBindings;
     if (bindings === undefined || !ts.isNamespaceImport(bindings)) {
-      imports.push(d.importFrom);
+      imports.push(importFrom);
       continue;
     }
     const used = namespaceUses(
@@ -928,7 +965,7 @@ export function filterDeclaration(
       bindings.name,
     );
     imports.push({
-      specifier: d.importFrom.specifier,
+      specifier: importFrom.specifier,
       names:
         used === ALL
           ? ALL
@@ -1005,7 +1042,35 @@ export function filterDeclaration(
           declaration: (origin ?? d).statement.getText(source).trim(),
         });
       }
-  let body = ordered.map((d) => d.statement.getText(source).trim()).join("\n");
+  const printer = ts.createPrinter({ removeComments: true });
+  /** The statement as kept: a narrowed export lists only its kept names. */
+  const textOf = (d: Declared): string => {
+    const names = narrowed.get(d);
+    const statement = d.statement;
+    if (names === undefined || !ts.isExportDeclaration(statement))
+      return statement.getText(source).trim();
+    const clause = statement.exportClause;
+    if (clause === undefined || !ts.isNamedExports(clause))
+      return statement.getText(source).trim();
+    const elements = clause.elements.filter((e) => names.has(e.name.text));
+    if (elements.length === clause.elements.length)
+      return statement.getText(source).trim();
+    return printer
+      .printNode(
+        ts.EmitHint.Unspecified,
+        ts.factory.updateExportDeclaration(
+          statement,
+          statement.modifiers,
+          statement.isTypeOnly,
+          ts.factory.updateNamedExports(clause, elements),
+          statement.moduleSpecifier,
+          statement.attributes,
+        ),
+        source,
+      )
+      .trim();
+  };
+  let body = ordered.map(textOf).join("\n");
   if (!ordered.some((d) => d.exported.size > 0 || d.reexportAll !== null))
     body = `${body}${body === "" ? "" : "\n"}export {};`;
   return { text: `${body}\n`, missing, forwarded, imports, symbols };

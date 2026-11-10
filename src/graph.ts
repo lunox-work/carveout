@@ -246,6 +246,10 @@ export function walkGraph(
   }
   const searched = new Set<string>();
   const read = new Set<string>();
+  // Files already handed to the builder. One it does not read (a file
+  // under an ignored folder such as `build/`) never joins `read`, and
+  // asked for again it would keep the walk turning forever.
+  const requested = new Set<string>();
   for (;;) {
     const built = builder.built();
     for (const file of built.files) read.add(file);
@@ -293,8 +297,11 @@ export function walkGraph(
         if (!read.has(file) && pattern.test(readFileSync(join(absoluteRoot, file), "utf8")))
           wanted.add(file);
     }
-    const fresh = [...wanted].filter((file) => !read.has(file) && SCRIPT.test(file));
+    const fresh = [...wanted].filter(
+      (file) => !read.has(file) && !requested.has(file) && SCRIPT.test(file),
+    );
     if (fresh.length === 0) return { built, walk };
+    for (const file of fresh) requested.add(file);
     builder.add(fresh);
   }
 }

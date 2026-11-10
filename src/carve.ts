@@ -55,7 +55,7 @@ import { npmPackageTypes, typesPackageOf } from "./extract/package-types.js";
 import { NODE_BUILTINS, isNodeBuiltin } from "./extract/typescript.js";
 import { walkGraph } from "./graph.js";
 import {
-  extensionlessPackages,
+  extensionStyles,
   packageFolder,
   restoreImports,
   specifiersOf,
@@ -63,10 +63,14 @@ import {
   type ImportContext,
 } from "./imports.js";
 import { moduleSpecifiers, parseSource } from "./specifiers.js";
+import { scanSecrets, secretBlockers } from "./project/secrets.js";
+import { checkRecordPaths, handoffPolicy, trustedRepo, type Refusal } from "./policy.js";
 
 export const CARVEOUT_VERSION = "0.1.0";
 export const RECORD_PATH = "carveout.json";
 export const RECORD_SCHEMA_VERSION = 1;
+/** Blockers that stop a cut before it writes anything. */
+const CREDENTIAL_BLOCKERS = new Set(["secret_file", "secret_found"]);
 export const BOUNDARY_PATH = "BOUNDARY.md";
 export const CONTRACT_PATH = "carveout/contract.json";
 /** The repository owner's settings for every cut of it, at its root. */
@@ -89,6 +93,8 @@ export interface RepoConfig {
   readonly copy?: readonly string[];
   /** Widen literal types in every stub; see `CutRequest.widenLiterals`. */
   readonly widenLiterals?: boolean;
+  /** Every cut is for someone outside; see `CutRequest.public`. */
+  readonly public?: boolean;
 }
 
 /** The owner's settings at the repository's root; empty when there are none. */
@@ -127,6 +133,7 @@ export function readRepoConfig(repo: string): RepoConfig {
   set("wholePackage", flag("wholePackage"));
   set("followWorkspaces", flag("followWorkspaces"));
   set("widenLiterals", flag("widenLiterals"));
+  set("public", flag("public"));
   set("private", paths("private"));
   set("copy", paths("copy"));
   return config;
@@ -146,7 +153,13 @@ function normalizePaths(paths: readonly string[]): string[] {
 }
 
 /** The request with the owner's configuration applied where it says nothing. */
-function settle<T extends SliceRequest & { readonly copy?: readonly string[]; readonly widenLiterals?: boolean }>(
+function settle<
+  T extends SliceRequest & {
+    readonly copy?: readonly string[];
+    readonly widenLiterals?: boolean;
+    readonly public?: boolean;
+  },
+>(
   request: T,
 ): T & {
   readonly wholePackage: boolean;
@@ -154,9 +167,11 @@ function settle<T extends SliceRequest & { readonly copy?: readonly string[]; re
   readonly private: readonly string[];
   readonly copy: readonly string[];
   readonly widenLiterals: boolean;
+  readonly public: boolean;
 } {
   const config = readRepoConfig(resolve(request.repo));
   const privatePaths = normalizePaths([...(config.private ?? []), ...(request.private ?? [])]);
+  const outside = request.public ?? config.public ?? false;
   return {
     ...request,
     wholePackage: request.wholePackage ?? config.wholePackage ?? false,
@@ -166,7 +181,8 @@ function settle<T extends SliceRequest & { readonly copy?: readonly string[]; re
     // A private module's constants are not for the folder: widened unless
     // the owner says otherwise.
     widenLiterals:
-      request.widenLiterals ?? config.widenLiterals ?? privatePaths.length > 0,
+      request.widenLiterals ?? config.widenLiterals ?? (privatePaths.length > 0 || outside),
+    public: outside,
   };
 }
 
@@ -370,6 +386,14 @@ export interface CutRequest extends SliceRequest {
    * patch carries an edit to one. Joined with the configuration's.
    */
   readonly copy?: readonly string[];
+  /**
+   * A folder for someone outside the repository: literals widened unless
+   * asked otherwise, and the maintainer's paths left out of what is
+   * written, the checkout's location and the files outside the slice that
+   * import it (each named by its package folder only). Commands that need
+   * the repository then take `--repo`.
+   */
+  readonly public?: boolean;
   readonly log?: (line: string) => void;
 }
 
@@ -377,8 +401,12 @@ export interface CutRequest extends SliceRequest {
 export interface CarveoutRecord {
   readonly schemaVersion: typeof RECORD_SCHEMA_VERSION;
   readonly carveoutVersion: string;
-  /** The checkout the slice was cut from, as given. */
-  readonly repo: string;
+  /**
+   * The checkout the slice was cut from, as given. Absent from a `public`
+   * cut, which leaves the maintainer's paths out: commands that need the
+   * repository then take `--repo`.
+   */
+  readonly repo?: string;
   readonly manifest: SliceManifest;
   readonly dependencies: readonly ResolvedDependency[];
   /**
@@ -417,6 +445,8 @@ export interface CarveoutRecord {
     readonly followWorkspaces?: boolean;
     readonly private?: readonly string[];
     readonly copy?: readonly string[];
+    /** A folder for someone outside; see `CutRequest.public`. */
+    readonly public?: boolean;
   };
   /**
    * Files copied in whole from the `copy` folders, with their hashes: not
@@ -658,6 +688,24 @@ function resolutionInputs(
 }
 
 /** Everything a cut writes, without writing it or resolving a lockfile. */
+/** A contract whose inbound importers are named by their package only. */
+function withoutOutsideImporters(
+  contract: Record<string, unknown>,
+  outsideName: (path: string) => string,
+): Record<string, unknown> {
+  const inbound = contract["inbound"];
+  if (!Array.isArray(inbound)) return contract;
+  return {
+    ...contract,
+    inbound: inbound.map((module: Record<string, unknown>) => ({
+      ...module,
+      importedBy: Array.isArray(module["importedBy"])
+        ? [...new Set((module["importedBy"] as string[]).map(outsideName))].sort(compare)
+        : module["importedBy"],
+    })),
+  };
+}
+
 export async function computeCut(
   request: Omit<CutRequest, "out">,
 ): Promise<ComputedCut> {
@@ -702,7 +750,27 @@ export async function computeCut(
           }),
         }),
   });
-  const { manifest, contract, contractJson } = analysis;
+  const { contract, contractJson } = analysis;
+  // A public folder names a file outside the slice only by its package.
+  const outsideName = (() => {
+    const packageOf = packageFolder(repo);
+    return (path: string) => {
+      const pkg = packageOf(path);
+      return `${pkg === "" ? "" : `${pkg}/`}(outside the slice)`;
+    };
+  })();
+  const manifest: SliceManifest = settled.public
+    ? {
+        ...analysis.manifest,
+        cuts: {
+          ...analysis.manifest.cuts,
+          inbound: analysis.manifest.cuts.inbound.map((edge) => ({
+            ...edge,
+            from: outsideName(edge.from),
+          })),
+        },
+      }
+    : analysis.manifest;
   // A live package is installed, whatever the default for its service.
   const choices: Record<string, DependencyChoice> = {
     ...request.choices,
@@ -980,7 +1048,13 @@ export async function computeCut(
     },
     {
       path: CONTRACT_PATH,
-      text: `${JSON.stringify(withoutCommit(JSON.parse(contractJson)), null, 2)}\n`,
+      text: `${JSON.stringify(
+        settled.public
+          ? withoutOutsideImporters(withoutCommit(JSON.parse(contractJson)), outsideName)
+          : withoutCommit(JSON.parse(contractJson)),
+        null,
+        2,
+      )}\n`,
       class: "config",
       public: true,
     },
@@ -1017,6 +1091,17 @@ export async function computeCut(
   }
   if (extras.length > 0)
     log(`Copies ${extras.length} file(s) from ${settled.copy.join(", ")} beside the slice.`);
+  // A copied folder leaves the repository as it is: scan it like
+  // everything else the cut writes.
+  extraBlockers.push(
+    ...secretBlockers(
+      scanSecrets(
+        extras
+          .filter((path) => !isBinaryPath(path))
+          .map((path) => ({ path, text: readFileSync(join(repo, path), "utf8") })),
+      ),
+    ).map(({ code, file, detail }) => ({ code, file: file ?? null, detail })),
+  );
   const blockers: CarveoutRecord["blockers"] = [
     ...manifest.blockers.map(({ code, file, detail }) => ({
       code,
@@ -1041,7 +1126,7 @@ export async function computeCut(
     record: {
       schemaVersion: RECORD_SCHEMA_VERSION,
       carveoutVersion: CARVEOUT_VERSION,
-      repo,
+      ...(settled.public ? {} : { repo }),
       manifest,
       dependencies: [
         ...dependencies,
@@ -1073,6 +1158,7 @@ export async function computeCut(
         ...(settled.followWorkspaces ? { followWorkspaces: true } : {}),
         ...(settled.private.length === 0 ? {} : { private: settled.private }),
         ...(settled.copy.length === 0 ? {} : { copy: settled.copy }),
+        ...(settled.public ? { public: true } : {}),
       },
       inputs: resolutionInputs(repo, manifest.requiredBuildInputs.configs),
     },
@@ -1142,6 +1228,18 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
   if (out === repo)
     throw new Error("The output folder cannot be the repository itself.");
   const { files, binaries, extras, record: computed, contract } = await computeCut(request);
+  // A credential never leaves the repository: with one found, nothing is
+  // written, not even a folder with blockers.
+  const credentials = computed.blockers.filter((blocker) =>
+    CREDENTIAL_BLOCKERS.has(blocker.code),
+  );
+  if (credentials.length > 0)
+    throw new Error(
+      `Nothing written: the cut would carry a credential.\n${credentials
+        .map((blocker) => `  ${blocker.code}${blocker.file === null ? "" : ` ${blocker.file}`}: ${blocker.detail}`)
+        .join("\n")}`,
+    );
+  const fresh = !existsSync(out);
   for (const file of files) {
     const path = join(out, file.path);
     await mkdir(dirname(path), { recursive: true });
@@ -1194,6 +1292,22 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
         `No lockfile: ${error instanceof Error ? error.message : String(error)}. \`npm install\` makes one.`,
       );
     }
+  // The lock is seeded from the repository's, whose resolved URLs can carry
+  // a private registry's token. The folder was empty or new: remove it all.
+  const lockFindings = lockfile
+    ? scanSecrets([
+        { path: "package-lock.json", text: readFileSync(join(out, "package-lock.json"), "utf8") },
+      ])
+    : [];
+  if (lockFindings.length > 0) {
+    await rm(out, { recursive: true, force: true });
+    if (!fresh) await mkdir(out, { recursive: true });
+    throw new Error(
+      `Nothing kept: the resolved lockfile carries a credential. ${secretBlockers(lockFindings)
+        .map((blocker) => blocker.detail)
+        .join(" ")}`,
+    );
+  }
   const generated = [
     ...files.filter((file) => file.class !== "source"),
     ...(lockfile
@@ -1241,6 +1355,9 @@ export function readRecord(dir: string): CarveoutRecord {
     throw new Error(
       `${RECORD_PATH} is schema ${String(record.schemaVersion)}; this carveout reads ${RECORD_SCHEMA_VERSION}.`,
     );
+  // A folder can come back from someone else: no path it names may lead
+  // carveout outside the folder or the repository.
+  checkRecordPaths(record);
   return record;
 }
 
@@ -1250,6 +1367,48 @@ export interface CheckStep {
   readonly output: string;
   /** Tests that failed in an unedited folder, recorded as its baseline. */
   readonly baseline?: readonly string[];
+}
+
+/**
+ * Whether the folder holds an edit since the cut, read from the folder
+ * alone (a public folder names no repository): a slice file whose bytes
+ * differ from what the cut wrote, one gone, or a new source file beside
+ * them. What a build emits and what the harness writes do not count.
+ */
+function folderEdited(dir: string): boolean {
+  const root = resolve(dir);
+  const record = readRecord(root);
+  const written = new Map([
+    ...(record.copied ?? []).map((file) => [file.path, file.sha256] as const),
+    ...(record.extras ?? []).map((file) => [file.path, file.sha256] as const),
+  ]);
+  const generated = new Set(record.generated.map((file) => file.path));
+  const ignored = new Set(
+    existsSync(join(root, ".gitignore"))
+      ? readFileSync(join(root, ".gitignore"), "utf8").split("\n").filter(Boolean)
+      : [],
+  );
+  const tree = listTree(root);
+  const present = new Set(tree);
+  for (const [path, hash] of written) {
+    if (!present.has(path)) return true;
+    if (sha256(readFileSync(join(root, path))) !== hash) return true;
+  }
+  return tree.some(
+    (path) =>
+      !written.has(path) &&
+      !generated.has(path) &&
+      !ignored.has(path) &&
+      path !== RECORD_PATH &&
+      path !== "package-lock.json" &&
+      !path.startsWith("carveout/") &&
+      !(
+        /\.[cm]?js$/.test(path) &&
+        ["ts", "tsx", "mts", "cts"].some((ext) =>
+          present.has(path.replace(/\.[cm]?js$/, `.${ext}`)),
+        )
+      ),
+  );
 }
 
 /**
@@ -1275,7 +1434,12 @@ async function recordBaseline(
   ].sort(compare);
   if (failing.length === 0 || /coverage does not meet threshold/.test(tap))
     return null;
-  if ((await patchProject(source)).diff !== "") return null;
+  // Records from before `copied` was kept are judged by a patch, as before.
+  const edited =
+    readRecord(source).copied === undefined
+      ? (await patchProject(source)).diff !== ""
+      : folderEdited(source);
+  if (edited) return null;
   await writeFile(
     join(source, BASELINE_PATH),
     `${JSON.stringify({ failing }, null, 2)}\n`,
@@ -1289,21 +1453,46 @@ async function recordBaseline(
  */
 export async function checkProject(
   dir: string,
-  options: { readonly inPlace?: boolean } = {},
+  options: {
+    readonly inPlace?: boolean;
+    /**
+     * For a folder that came back from someone else: a scratch HOME and npm
+     * cache, so the folder's code cannot read the caller's credentials
+     * through them, and no install scripts. Not a sandbox: the folder's
+     * tests still run with the caller's user, filesystem and network.
+     */
+    readonly isolated?: boolean;
+  } = {},
 ): Promise<readonly CheckStep[]> {
   const record = readRecord(dir);
   const source = resolve(dir);
   let work = source;
-  if (options.inPlace !== true) {
-    work = join(mkdtempSync(join(tmpdir(), "carveout-check-")), "project");
+  const scratch =
+    options.inPlace !== true || options.isolated === true
+      ? mkdtempSync(join(tmpdir(), "carveout-check-"))
+      : null;
+  if (options.inPlace !== true && scratch !== null) {
+    work = join(scratch, "project");
     execFileSync("cp", ["-R", source, work]);
     await rm(join(work, "node_modules"), { recursive: true, force: true });
   }
+  const env: Record<string, string> = {};
+  if (options.isolated === true && scratch !== null) {
+    await mkdir(join(scratch, "home"), { recursive: true });
+    env["HOME"] = join(scratch, "home");
+    env["npm_config_cache"] = join(scratch, "npm-cache");
+    env["npm_config_userconfig"] = join(scratch, "home", ".npmrc");
+  }
+  const installFlags = [
+    "--no-audit",
+    "--no-fund",
+    ...(options.isolated === true ? ["--ignore-scripts"] : []),
+  ];
   const steps: CheckStep[] = [];
   const run = [
     record.lockfile || existsSync(join(work, "package-lock.json"))
-      ? ["npm", "ci", "--no-audit", "--no-fund"]
-      : ["npm", "install", "--no-audit", "--no-fund"],
+      ? ["npm", "ci", ...installFlags]
+      : ["npm", "install", ...installFlags],
     ["npm", "run", "build"],
     ["npm", "test"],
   ];
@@ -1314,6 +1503,7 @@ export async function checkProject(
       const output = await command(executable, args, {
         cwd: work,
         signal: AbortSignal.timeout(10 * 60_000),
+        env,
       });
       steps.push({ command: argv.join(" "), ok: true, output });
     } catch (error) {
@@ -1333,8 +1523,7 @@ export async function checkProject(
       if (baseline === null) break;
     }
   }
-  if (work !== source)
-    await rm(dirname(work), { recursive: true, force: true });
+  if (scratch !== null) await rm(scratch, { recursive: true, force: true });
   return steps;
 }
 
@@ -1378,6 +1567,18 @@ export interface Patch {
    * uncommitted bytes), so `git apply --3way` cannot merge them.
    */
   readonly noThreeWay: readonly string[];
+  /**
+   * What the hand-off policy keeps out of the patch: new files outside the
+   * slice's packages, protected paths, deleted tests. `allow` lets them in.
+   */
+  readonly refused: readonly Refusal[];
+}
+
+export interface PatchOptions {
+  /** The repository's checkout; else the one the record names. */
+  readonly repo?: string;
+  /** Paths and globs the hand-off policy lets through. */
+  readonly allow?: readonly string[];
 }
 
 function listTree(root: string, dir = "", into: string[] = []): string[] {
@@ -1470,9 +1671,13 @@ function boundaryEdit(
  * outputs, the generated files and the lockfile are not part of it; edits
  * to generated files that the change needed are reported as `boundary`.
  */
-export async function patchProject(dir: string): Promise<Patch> {
+export async function patchProject(
+  dir: string,
+  options: PatchOptions = {},
+): Promise<Patch> {
   const root = resolve(dir);
   const record = readRecord(root);
+  const repo = trustedRepo(record, options.repo);
   const rewritesOf = new Map<string, ImportRewrite[]>();
   for (const rewrite of record.importRewrites)
     rewritesOf.set(rewrite.file, [
@@ -1514,7 +1719,23 @@ export async function patchProject(dir: string): Promise<Patch> {
         path !== RECORD_PATH,
     ),
   );
-  const packageOf = packageFolder(record.repo);
+  const packageOf = packageFolder(repo);
+  // The packages the slice holds files of: where a new file may go.
+  const packages = new Set(
+    [...included.keys()].map((path) => packageOf(path)),
+  );
+  const judge = handoffPolicy({
+    packages,
+    packageOf,
+    ...(options.allow === undefined ? {} : { allow: options.allow }),
+  });
+  const refused: Refusal[] = [];
+  /** Whether the policy lets `path` into the patch; a refusal is named. */
+  const admits = (path: string, change: "added" | "changed" | "deleted") => {
+    const reason = judge(path, change);
+    if (reason !== null) refused.push({ path, reason });
+    return reason === null;
+  };
   const edges = [
     ...record.manifest.internalImports,
     ...record.manifest.cuts.outbound,
@@ -1529,7 +1750,7 @@ export async function patchProject(dir: string): Promise<Patch> {
     files: sources,
     stubs: stubModules,
     packageOf,
-    extensionless: extensionlessPackages(edges, packageOf),
+    extensionStyle: extensionStyles(edges, packageOf),
   };
   // What `npm run build` wrote for a source the folder's edits added.
   const emitted = (path: string) =>
@@ -1562,12 +1783,12 @@ export async function patchProject(dir: string): Promise<Patch> {
    * moved; otherwise null, and the patch is against what the cut copied.
    */
   const readBase = (path: string, original: string) => {
-    const repoPath = join(record.repo, path);
+    const repoPath = join(repo, path);
     const current = existsSync(repoPath) ? readFileSync(repoPath) : null;
     const committed =
       record.manifest.sourceCommitSha === null
         ? null
-        : gitShow(record.repo, record.manifest.sourceCommitSha, path);
+        : gitShow(repo, record.manifest.sourceCommitSha, path);
     const moved = current === null || sha256(current) !== original;
     return {
       moved,
@@ -1620,6 +1841,7 @@ export async function patchProject(dir: string): Promise<Patch> {
             crossPackage.push({ file: path, specifier });
           content = Buffer.from(restored.text);
         }
+        if (!admits(path, "added")) continue;
         added.push(path);
         await mkdir(dirname(join(scratch, "b", path)), { recursive: true });
         await writeFile(join(scratch, "b", path), content);
@@ -1660,6 +1882,7 @@ export async function patchProject(dir: string): Promise<Patch> {
           crossPackage.push({ file: path, specifier });
         restored = Buffer.from(result.text);
       }
+      if (!admits(path, "changed")) continue;
       changed.push(path);
       await mkdir(dirname(join(scratch, "a", path)), { recursive: true });
       await mkdir(dirname(join(scratch, "b", path)), { recursive: true });
@@ -1670,6 +1893,7 @@ export async function patchProject(dir: string): Promise<Patch> {
       compare(a, b),
     )) {
       if (present.has(path)) continue;
+      if (!admits(path, "deleted")) continue;
       deleted.push(path);
       const base = baseOf(path, original);
       await mkdir(dirname(join(scratch, "a", path)), { recursive: true });
@@ -1735,6 +1959,7 @@ export async function patchProject(dir: string): Promise<Patch> {
       crossPackage,
       drifted,
       noThreeWay,
+      refused,
     };
   } finally {
     await rm(scratch, { recursive: true, force: true });

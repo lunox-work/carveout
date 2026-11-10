@@ -17,7 +17,7 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -37,6 +37,7 @@ import {
   type IncludedFile,
 } from "./core.js";
 import { symbolDiff } from "./status.js";
+import { trustedRepo } from "./policy.js";
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const sha256 = (data: string | Buffer) =>
@@ -83,17 +84,23 @@ function packageDirOf(repo: string, path: string): string {
 export async function applyPatch(
   dir: string,
   patchText: string,
-  options: { readonly stubs?: boolean; readonly log?: (line: string) => void } = {},
+  options: {
+    readonly stubs?: boolean;
+    readonly log?: (line: string) => void;
+    /** The repository's checkout; else the one the record names. */
+    readonly repo?: string;
+  } = {},
 ): Promise<Applied> {
   const root = resolve(dir);
   const record = readRecord(root);
+  const source = trustedRepo(record, options.repo);
   const commit = record.manifest.sourceCommitSha;
   if (commit === null)
     throw new Error("The cut was not made in a Git checkout, so there is no commit to apply the patch at.");
   const scratch = mkdtempSync(join(tmpdir(), "carveout-apply-"));
   const repo = join(scratch, "repo");
   try {
-    git(scratch, ["clone", "-q", "--shared", "--no-checkout", record.repo, repo]);
+    git(scratch, ["clone", "-q", "--shared", "--no-checkout", source, repo]);
     git(repo, ["checkout", "-q", "--detach", commit]);
     const file = join(scratch, "change.patch");
     writeFileSync(file, patchText);
@@ -289,13 +296,37 @@ export interface Merge {
  */
 export async function mergeProject(
   dir: string,
-  options: { readonly into: string; readonly verify?: string },
+  options: {
+    readonly into: string;
+    readonly verify?: string;
+    /** The repository's checkout to diff against; else `into`, else the record's. */
+    readonly repo?: string;
+    /** Paths and globs the hand-off policy lets through. */
+    readonly allow?: readonly string[];
+    /** Environment variables the verify command is given, by name. */
+    readonly verifyEnv?: readonly string[];
+  },
 ): Promise<Merge> {
   const into = resolve(options.into);
   if (!existsSync(join(into, ".git")))
     throw new Error(`${into} is not the root of a Git checkout.`);
-  const patch = await patchProject(dir);
+  const patch = await patchProject(dir, {
+    repo: options.repo ?? into,
+    ...(options.allow === undefined ? {} : { allow: options.allow }),
+  });
   const steps: MergeStep[] = [];
+  // Nothing is applied while the policy keeps a path out: the maintainer
+  // reads those first, then allows them or asks for the change without.
+  if (patch.refused.length > 0) {
+    steps.push({
+      step: "patch",
+      ok: false,
+      output: `Kept out by the hand-off policy, so nothing was applied:\n${patch.refused
+        .map((refusal) => `  ${refusal.path}: ${refusal.reason}`)
+        .join("\n")}`,
+    });
+    return { patch, steps, ok: false };
+  }
   if (patch.diff === "") {
     steps.push({ step: "patch", ok: false, output: "No edits to the slice." });
     return { patch, steps, ok: false };
@@ -320,10 +351,21 @@ export async function mergeProject(
       output: `${apply.stdout ?? ""}${apply.stderr ?? ""}`.trim(),
     });
     if (applied && options.verify !== undefined) {
+      // The command runs code the folder brought: a minimal environment
+      // and a scratch HOME, so it reads no credential of the caller's but
+      // what is passed by name.
+      const home = join(scratch, "home");
+      mkdirSync(home, { recursive: true });
+      const env: Record<string, string> = { HOME: home, PATH: process.env["PATH"] ?? "", CI: "1" };
+      for (const name of options.verifyEnv ?? []) {
+        const value = process.env[name];
+        if (value !== undefined) env[name] = value;
+      }
       const verify = spawnSync("sh", ["-c", options.verify], {
         cwd: into,
         encoding: "utf8",
         maxBuffer: 256 * 1024 * 1024,
+        env,
       });
       steps.push({
         step: "verify",

@@ -1214,6 +1214,8 @@ function readme(input: {
     "",
     "Everything under `carveout/`, and the configuration at the root, is generated. `carveout patch` turns your edits back into a patch for the repository, with the import rewrites below undone.",
     "",
+    "What comes back: your edits to these files and new files beside them, in the same packages. A test that imports `carveout/` (to make a mock answer) stays here, so write the tests you hand back against the slice's own code, and keep mock-driven ones as your own check. New files elsewhere, CI and hook files, package manifests and lockfiles, and deleted tests are not carried back. Passing here means the change builds and passes against mocks; the repository's own checks decide after the merge.",
+    "",
     "## Mocks",
     "",
     `Modules outside the slice are declared by \`.d.ts\` stubs beside generated \`.js\` runtimes whose values are recording mocks (\`${MOCK_RUNTIME_PATH}\`). Packages it does not install are mock packages under \`${MOCKS_DIR}/\`. A mock answers any property or call with another mock and records the call; \`mockImplementation(path, fn)\` installs behaviour and \`recordedCalls()\` reads it back. Environment values are placeholders in \`${ENV_FILE}\`.`,

@@ -21,6 +21,7 @@ import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import ts from "typescript";
 import { computeCut, readRecord, type CarveoutRecord } from "./carve.js";
+import { trustedRepo } from "./policy.js";
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const sha256 = (data: string | Buffer) =>
@@ -115,7 +116,7 @@ export async function statusProject(
 ): Promise<Status> {
   const root = resolve(dir);
   const record: CarveoutRecord = readRecord(root);
-  const repo = resolve(options.repo ?? record.repo);
+  const repo = trustedRepo(record, options.repo);
   const request = record.request;
   let fresh;
   try {

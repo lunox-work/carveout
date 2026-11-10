@@ -55,6 +55,9 @@ export function specifiersOf(text: string, path = "file.ts"): Set<string> {
 const isRelative = (specifier: string) =>
   specifier.startsWith("./") || specifier.startsWith("../");
 
+/** How a package spells a relative import's extension. */
+export type ExtensionStyle = "none" | "js" | "ts";
+
 /** What a cut knows about the slice's imports, for restoring new ones. */
 export interface ImportContext {
   /** Import edges the cut resolved, by importer, target and specifier. */
@@ -65,8 +68,12 @@ export interface ImportContext {
   readonly stubs: ReadonlySet<string>;
   /** The repository's package folder holding a path, "" for the root. */
   readonly packageOf: (path: string) => string;
-  /** Whether a package writes relative imports without extensions. */
-  readonly extensionless: (pkg: string) => boolean;
+  /**
+   * How a package writes the extension of a relative import: none, the
+   * emitted `.js`, or the source's own `.ts` (Node's type stripping,
+   * `allowImportingTsExtensions`).
+   */
+  readonly extensionStyle: (pkg: string) => ExtensionStyle;
 }
 
 /** The folder file or cut module a relative specifier in `file` names. */
@@ -81,7 +88,9 @@ export function importTarget(
   const candidates =
     stem === base
       ? [base, ...["ts", "tsx", "mts", "cts"].flatMap((ext) => [`${base}.${ext}`, `${base}/index.${ext}`])]
-      : [base, `${stem}.ts`, `${stem}.tsx`, `${stem}.mts`, `${stem}.cts`];
+      : // The source before a `.js` of the same name: in a folder that was
+        // built, that is what the build emitted beside it.
+        [`${stem}.ts`, `${stem}.tsx`, `${stem}.mts`, `${stem}.cts`, base];
   return (
     candidates.find((path) => context.files.has(path) || context.stubs.has(path)) ??
     null
@@ -162,7 +171,15 @@ function spellingOf(
 
 function relativeIn(file: string, target: string, context: ImportContext): string {
   const written = relativeSpecifier(file, target);
-  if (!context.extensionless(context.packageOf(file))) return written;
+  const style = context.extensionStyle(context.packageOf(file));
+  if (style === "js") return written;
+  if (style === "ts") {
+    // The target's own extension: `.tsx` stays `.tsx`, `.mts` stays `.mts`.
+    const extension = /\.[cm]?tsx?$/.exec(target)?.[0];
+    return extension === undefined
+      ? written
+      : written.replace(/\.[cm]?jsx?$/, extension.replace(/^\.d(?=\.)/, ""));
+  }
   return written.replace(/\.[cm]?js$/, "").replace(/\/index$/, "") || ".";
 }
 
@@ -190,21 +207,35 @@ export function packageFolder(
 }
 
 /**
- * Whether relative imports in a package are written without extensions,
- * by the imports the cut read there: the more common style wins.
+ * How each package writes relative imports, by the imports the cut read
+ * there: without an extension, with the emitted `.js`, or with the
+ * source's `.ts`. The most common style wins; `.js` on a tie or none.
  */
-export function extensionlessPackages(
+export function extensionStyles(
   edges: readonly { from: string; specifier: string }[],
   packageOf: (path: string) => string,
-): (pkg: string) => boolean {
-  const votes = new Map<string, number>();
+): (pkg: string) => ExtensionStyle {
+  const votes = new Map<string, Record<ExtensionStyle, number>>();
   for (const edge of edges) {
     if (!isRelative(edge.specifier)) continue;
-    const bare = !/\.[a-z0-9]+$/i.test(edge.specifier);
-    const script = /\.([cm]?jsx?|[cm]?tsx?)$/.test(edge.specifier);
-    if (!bare && !script) continue;
+    const style: ExtensionStyle | null = !/\.[a-z0-9]+$/i.test(edge.specifier)
+      ? "none"
+      : /\.[cm]?tsx?$/.test(edge.specifier) && !/\.d\.[cm]?ts$/.test(edge.specifier)
+        ? "ts"
+        : /\.[cm]?jsx?$/.test(edge.specifier)
+          ? "js"
+          : null;
+    if (style === null) continue;
     const pkg = packageOf(edge.from);
-    votes.set(pkg, (votes.get(pkg) ?? 0) + (bare ? 1 : -1));
+    const counts = votes.get(pkg) ?? { none: 0, js: 0, ts: 0 };
+    counts[style] += 1;
+    votes.set(pkg, counts);
   }
-  return (pkg) => (votes.get(pkg) ?? 0) > 0;
+  return (pkg) => {
+    const counts = votes.get(pkg);
+    if (counts === undefined) return "js";
+    if (counts.ts > counts.js && counts.ts >= counts.none) return "ts";
+    if (counts.none > counts.js && counts.none > counts.ts) return "none";
+    return "js";
+  };
 }
