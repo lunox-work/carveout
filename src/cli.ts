@@ -19,7 +19,13 @@ import {
   planSlice,
   readRecord,
 } from "./carve.js";
-import { SLICE_BUDGET_DEFAULTS, type DependencyChoice } from "./core.js";
+import {
+  SLICE_BUDGET_DEFAULTS,
+  TEST_LEFT_REASON,
+  renderExposure,
+  testsVerdict,
+  type DependencyChoice,
+} from "./core.js";
 import { applyPatch, mergeProject } from "./mergeback.js";
 import { statusProject } from "./status.js";
 
@@ -207,6 +213,10 @@ async function main(argv: readonly string[]) {
           tests: plan.walk.tests,
           helpers: plan.walk.helpers,
           untestable: plan.walk.untestable,
+          testsLeft: plan.walk.testsLeft,
+          testsVerdict: testsVerdict(plan.walk),
+          originOf: plan.walk.originOf,
+          exposure: plan.exposure,
           cutModules: plan.cutModules,
           typeOnlyCuts: plan.typeOnlyCuts,
           inbound: [...new Set(plan.walk.cuts.inbound.map((e) => e.from))].sort(),
@@ -234,6 +244,8 @@ async function main(argv: readonly string[]) {
         [
           `${plan.walk.included.length} files from ${plan.entryPoints.join(", ")} (budget ${plan.budget.maxFiles} files, depth ${plan.budget.maxDepth}${plan.wholePackage ? ", the whole package" : ""}${plan.followWorkspaces ? ", workspace packages followed" : ""}${plan.copyPure ? ", pure code copied" : ""}; ${plan.graphFiles} script files read)${atLimit ? ", at the file limit: raise --max-files or narrow the entry points" : ""}.`,
           "",
+          `Shows ${renderExposure(plan.exposure)}`,
+          "",
           "Included:",
           list(
             plan.walk.included.map(
@@ -255,23 +267,30 @@ async function main(argv: readonly string[]) {
                 "",
               ]
             : []),
-          ...(plan.walk.tests.length + plan.walk.untestable.length === 0
+          "Tests:",
+          `  ${testsVerdict(plan.walk)}`,
+          ...(plan.walk.tests.length === 0
             ? []
             : [
+                "",
                 "Tests brought along:",
                 list(plan.walk.tests),
                 ...(plan.walk.helpers.length === 0
                   ? []
                   : ["", "Their helpers, copied with them:", list(plan.walk.helpers)]),
-                ...(plan.walk.untestable.length === 0
-                  ? []
-                  : [
-                      "",
-                      "Tests left behind (they run on neither node:test nor Vitest, or read a path no slice can carry):",
-                      list(plan.walk.untestable),
-                    ]),
-                "",
               ]),
+          ...(plan.walk.testsLeft.length === 0
+            ? []
+            : [
+                "",
+                "Tests that run this code and stay in the repository:",
+                list(
+                  plan.walk.testsLeft.map(
+                    ({ file, reason }) => `${file}  (${TEST_LEFT_REASON[reason]})`,
+                  ),
+                ),
+              ]),
+          "",
           "Cut, becomes a stub and a mock:",
           list(
             plan.cutModules.map((path) =>
@@ -385,6 +404,8 @@ async function main(argv: readonly string[]) {
           [
             `${record.ready ? "Ready" : "Written with blockers"}: ${result.out}`,
             `${record.manifest.meta.includedFiles} files copied, ${record.manifest.meta.outboundCuts} cut imports, stub coverage ${record.manifest.meta.stubCoverage}${record.lockfile ? "" : ", no lockfile"}.`,
+            ...(record.exposure === undefined ? [] : [`Shows ${renderExposure(record.exposure)}`]),
+            ...(record.tests === undefined ? [] : [`Tests: ${record.tests.verdict}`]),
             "",
             "Mocked:",
             list(mocked),

@@ -15,6 +15,7 @@ import { undoRewrites } from "../src/carve.js";
 import { specifiersOf } from "../src/imports.js";
 import { serviceOf } from "../src/slice/externals.js";
 import { reach } from "../src/slice/reach.js";
+import { testRunnerResolver } from "../src/project/runner.js";
 
 const roots: string[] = [];
 after(() => {
@@ -392,4 +393,62 @@ test("a file that imports the slice by its package's name is an importer, follow
       `followWorkspaces: ${followWorkspaces}`,
     );
   }
+});
+
+test("a test that reaches the slice through a chain of barrels comes along, the chain with it", () => {
+  const files = {
+    "pkg/src/pricing/weight.ts": 'export const WEIGHT = 4;\n',
+    "pkg/src/pricing/rubric.ts": 'export const RUBRIC = 1;\n',
+    "pkg/src/pricing/index.ts": 'export * from "./weight.js";\nexport * from "./rubric.js";\n',
+    "pkg/src/other.ts": 'export const OTHER = 2;\n',
+    "pkg/src/index.ts": 'export * from "./pricing/index.js";\nexport * from "./other.js";\n',
+    "pkg/test/weight.test.ts": 'import { test } from "node:test";\nimport { WEIGHT } from "../src/index.js";\ntest("w", () => void WEIGHT);\n',
+    "pkg/test/other.test.ts": 'import { test } from "node:test";\nimport { OTHER } from "../src/index.js";\ntest("o", () => void OTHER);\n',
+  };
+  const packageOf = (file: string) => file.split("/")[0] ?? "";
+  const tested = walk(files, ["pkg/src/pricing/weight.ts"], undefined, { packageOf, tests: true });
+  // Two barrels between the test and the module: both come, cut to the
+  // name the test asks; a test of another name stays behind.
+  assert.deepEqual(tested.tests, ["pkg/test/weight.test.ts"]);
+  assert.deepEqual(tested.barrels, ["pkg/src/index.ts", "pkg/src/pricing/index.ts"]);
+  assert.deepEqual(tested.included, ["pkg/src/index.ts", "pkg/src/pricing/index.ts", "pkg/src/pricing/weight.ts", "pkg/test/weight.test.ts"]);
+  assert.equal(tested.originOf["pkg/src/index.ts"], "barrel");
+  assert.deepEqual(tested.testsLeft, []);
+  // Not asked for, the test is named as one the folder does not run.
+  const bare = walk(files, ["pkg/src/pricing/weight.ts"], undefined, { packageOf });
+  assert.deepEqual(bare.testsLeft, [{ file: "pkg/test/weight.test.ts", reason: "not-asked" }]);
+  // With the whole package, a barrel brings only the modules that supply
+  // the names asked of it, not every module it re-exports.
+  const whole = walk(files, ["pkg/src/pricing/weight.ts"], undefined, { packageOf, tests: true, wholePackage: true });
+  assert.equal(whole.included.includes("pkg/src/other.ts"), false);
+  assert.equal(whole.included.includes("pkg/src/pricing/rubric.ts"), false);
+  // The lazy graph finds the chain and its test, whatever their names.
+  const root = repository(files);
+  for (const options of [{ tests: true }, {}, { tests: true, wholePackage: true }]) {
+    const lazy = walkGraph(root, ["pkg/src/pricing/weight.ts"], { maxFiles: 40, maxDepth: 1 }, { ...options, packageOf });
+    assert.deepEqual(lazy.walk, reach(buildGraph(root).graph, ["pkg/src/pricing/weight.ts"], { maxFiles: 40, maxDepth: 1 }, { ...options, packageOf }));
+  }
+});
+
+test("a test on Vitest's globals runs on Vitest; one on Jest is named as left behind", () => {
+  const base = {
+    "lib/src/a.ts": "export const a = 1;\n",
+    "lib/test/a.test.ts": 'import { a } from "../src/a.js";\ndescribe("a", () => { it("is one", () => { expect(a).toBe(1); }); });\n',
+  };
+  const packageOf = (file: string) => file.split("/")[0] ?? "";
+  const vitest = repository({ ...base, "lib/package.json": '{"type":"module","devDependencies":{"vitest":"^3.0.0"}}\n' });
+  const onVitest = walkGraph(vitest, ["lib/src/a.ts"], { maxFiles: 40, maxDepth: 1 }, {
+    packageOf,
+    tests: true,
+    runnerOf: testRunnerResolver(vitest, packageOf),
+  });
+  assert.deepEqual([onVitest.walk.tests, onVitest.walk.globalsTests], [["lib/test/a.test.ts"], ["lib/test/a.test.ts"]]);
+  const jest = repository({ ...base, "lib/package.json": '{"type":"module","devDependencies":{"jest":"^29.0.0"}}\n' });
+  const onJest = walkGraph(jest, ["lib/src/a.ts"], { maxFiles: 40, maxDepth: 1 }, {
+    packageOf,
+    tests: true,
+    runnerOf: testRunnerResolver(jest, packageOf),
+  });
+  assert.deepEqual(onJest.walk.tests, []);
+  assert.deepEqual(onJest.walk.testsLeft, [{ file: "lib/test/a.test.ts", reason: "runner" }]);
 });

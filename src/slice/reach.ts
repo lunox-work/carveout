@@ -112,6 +112,45 @@ export interface ReachResult {
    * import, one that resolves to nothing, a path read of no file).
    */
   readonly untestable: readonly string[];
+  /**
+   * Every test that runs the slice's code, directly or through a chain of
+   * barrels, that the folder does not hold, with the reason; sorted. A
+   * change these tests would catch passes in the folder unseen.
+   */
+  readonly testsLeft: readonly SliceTestLeft[];
+  /** Of the tests, those on Vitest's globals, which import no runner. */
+  readonly globalsTests: readonly string[];
+  /** Barrels outside the slice that forward names from it, sorted. */
+  readonly barrels: readonly string[];
+  /** Why each included file is in the slice. */
+  readonly originOf: Readonly<Record<string, SliceOrigin>>;
+}
+
+/**
+ * Why a file is in the slice: an entry point, reached within the depth,
+ * brought by `wholePackage`, a test, a barrel a test imports through, a
+ * test's helper, code of the package the tests run (`wholePackage` after
+ * the tests), or pure code copied rather than mocked.
+ */
+export type SliceOrigin =
+  | "entry"
+  | "walk"
+  | "package"
+  | "test"
+  | "barrel"
+  | "helper"
+  | "test-code"
+  | "pure";
+
+/**
+ * A test that runs the slice's code and is not in the folder: it was not
+ * asked for (`tests` off), it tests another package, it runs on no runner
+ * a slice runs (Jest, say), it reads what no slice carries, or the budget
+ * ran out.
+ */
+export interface SliceTestLeft {
+  readonly file: string;
+  readonly reason: "not-asked" | "other-package" | "runner" | "unreadable" | "budget";
 }
 
 export interface ReachOptions {
@@ -137,6 +176,11 @@ export interface ReachOptions {
   readonly wholePackage?: boolean;
   /** Files never entered: cut and stubbed wherever the walk reaches them. */
   readonly isPrivate?: (file: string) => boolean;
+  /**
+   * The runner of a test file, from its path and the bare specifiers it
+   * imports; `testRunnerOf` without it, which knows only a runner imported.
+   */
+  readonly runnerOf?: (file: string, specifiers: readonly string[]) => TestRunner | null;
   /**
    * Copy pure code rather than mock it: a module the slice imports at
    * runtime from outside comes along, past the depth, when every module
@@ -167,6 +211,12 @@ export const TEST_SUPPORT_PATH_PATTERN =
 export function isTestSupportPath(path: string): boolean {
   return TEST_SUPPORT_PATH_PATTERN.test(path);
 }
+
+/**
+ * A runner a slice runs tests on: `node:test`, Vitest imported, or Vitest
+ * with its globals (`describe`, `it`, `expect` unimported).
+ */
+export type TestRunner = "node" | "vitest" | "vitest-globals";
 
 /** The test runner a test file imports, when carveout can run it. */
 export function testRunnerOf(specifiers: readonly string[]): "node" | "vitest" | null {
@@ -351,6 +401,7 @@ export function reach(
   // `constructor` or `__proto__` would read as already reached through the
   // prototype under `in`.
   const depthOf = new Map<string, number>();
+  const originOf = new Map<string, SliceOrigin>();
   const dropped = new Set<string>();
   const seen = new Set<string>();
   const byState = (a: [string, Demand], b: [string, Demand]) =>
@@ -369,6 +420,7 @@ export function reach(
         return false;
       }
       depthOf.set(file, depth);
+      originOf.set(file, entries.has(file) ? "entry" : "walk");
       return true;
     };
     // A re-export forwards a name at the barrel's depth; an import of the
@@ -443,32 +495,207 @@ export function reach(
   // the tests are in, for the barrel a test imports through and the files
   // the tests reach.
   const packages = new Set([...entries].map(packageOf));
-  const closePackage = () => {
+  /** Why each file is in the slice, for `plan`'s account of what it shows. */
+  const place = (file: string, at: number, origin: SliceOrigin) => {
+    depthOf.set(file, at);
+    originOf.set(file, origin);
+  };
+  /**
+   * The names the slice asks of each included file: everything of an entry
+   * point or of a module imported whole, else the names its included
+   * importers take and the names an included barrel forwards from it. Only
+   * a file's re-exports are judged by it: a re-export that supplies none of
+   * those names is not followed, so a barrel in the slice does not bring
+   * every module it re-exports (its own imports are always followed).
+   */
+  const demands = (): Map<string, Set<string> | typeof EVERYTHING> => {
+    const demand = new Map<string, Set<string> | typeof EVERYTHING>();
+    const add = (file: string, names: Iterable<string> | typeof EVERYTHING): boolean => {
+      const known = demand.get(file);
+      if (known === EVERYTHING) return false;
+      if (names === EVERYTHING) {
+        demand.set(file, EVERYTHING);
+        return true;
+      }
+      const set = known ?? new Set<string>();
+      let grew = known === undefined;
+      for (const name of names) {
+        if (name === EVERYTHING) {
+          demand.set(file, EVERYTHING);
+          return true;
+        }
+        if (!set.has(name)) {
+          set.add(name);
+          grew = true;
+        }
+      }
+      demand.set(file, set);
+      return grew;
+    };
+    for (const file of entries) if (depthOf.has(file)) add(file, EVERYTHING);
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const file of depthOf.keys()) {
+        const mine = demand.get(file);
+        for (const { link, edge } of outgoing.get(file) ?? []) {
+          if (link.relation !== "imports" || link.typeOnly || !depthOf.has(edge.to)) continue;
+          if (link.forwards === null || (link.names !== null && link.names.length > 0)) {
+            if (add(edge.to, link.names ?? EVERYTHING)) changed = true;
+          }
+          if (link.forwards === null || mine === undefined) continue;
+          const passed =
+            link.forwards === EVERYTHING
+              ? mine
+              : link.forwards
+                  .filter(([, as]) => mine === EVERYTHING || mine.has(as))
+                  .map(([name]) => name);
+          if (passed !== EVERYTHING && [...passed].length === 0) continue;
+          if (add(edge.to, passed)) changed = true;
+        }
+      }
+    }
+    return demand;
+  };
+  /**
+   * The names a link carries into its target for the slice: the link's own
+   * names for an import, those of the importer's demand a re-export
+   * supplies, or false when a re-export supplies none of them. A file with
+   * no demand (reached by path, say) forwards everything, as before.
+   */
+  const carried = (
+    demand: ReadonlyMap<string, Set<string> | typeof EVERYTHING>,
+    file: string,
+    link: SliceGraphLink,
+    to: string,
+  ): readonly string[] | null | false => {
+    if (link.forwards === null) return link.names;
+    if (link.names !== null && link.names.length > 0) return link.names;
+    const mine = demand.get(file);
+    if (mine === undefined || mine === EVERYTHING)
+      return link.forwards === EVERYTHING ? null : link.forwards.map(([name]) => name);
+    if (link.forwards === EVERYTHING) {
+      const inner = exported(to);
+      if (!inner.complete) return null;
+      const names = [...mine].filter((name) => inner.names.has(name)).sort(compare);
+      return names.length === 0 ? false : names;
+    }
+    const names = link.forwards.filter(([, as]) => mine.has(as)).map(([name]) => name);
+    if (names.includes(EVERYTHING)) return null;
+    return names.length === 0 ? false : names.sort(compare);
+  };
+  // The entry points' package in whole: from every included file, each
+  // import or path read into that package is followed, at any depth, until
+  // the package is exhausted or the budget is; a re-export only when it
+  // supplies a name the slice asks of the barrel. A test comes only with
+  // `tests`; another package's file only within the depth. Run again once
+  // the tests are in, for the barrel a test imports through and the files
+  // the tests reach.
+  const closePackage = (origin: SliceOrigin) => {
     if (options.wholePackage !== true || dropped.size > 0) return;
-    let frontier = [...depthOf.keys()].sort(compare);
-    while (frontier.length > 0) {
-      const next: string[] = [];
-      for (const file of frontier) {
-        const depth = depthOf.get(file) ?? 0;
+    for (;;) {
+      const demand = demands();
+      const added: string[] = [];
+      for (const file of [...depthOf.keys()].sort(compare)) {
+        const at = depthOf.get(file) ?? 0;
         for (const { link, edge } of outgoing.get(file) ?? []) {
           if (link.relation === "references") continue;
           if (depthOf.has(edge.to) || isTestPath(edge.to) || keptOut(edge.to)) continue;
           if (!packages.has(packageOf(edge.to))) continue;
+          if (carried(demand, file, link, edge.to) === false) continue;
           if (depthOf.size >= maxFiles) {
             dropped.add(edge.to);
             continue;
           }
-          depthOf.set(edge.to, depth + 1);
-          next.push(edge.to);
+          place(edge.to, at + 1, origin);
+          added.push(edge.to);
         }
       }
-      frontier = next.sort(compare);
+      if (added.length === 0 || dropped.size > 0) return;
     }
   };
-  closePackage();
-  const tests: string[] = [];
-  const helpers: string[] = [];
-  const untestable = new Set<string>();
+  closePackage("package");
+  /** The code the tests are chosen for: what the walk and the package gave. */
+  const code = new Set(depthOf.keys());
+  const codePackages = new Set([...code].map(packageOf));
+  /**
+   * Barrels outside the slice that forward names from inside it, directly
+   * or through another such barrel (`src/index.ts` re-exporting
+   * `pricing/index.ts` re-exporting `pricing/weight.ts`), with the names
+   * they forward from the slice, the depth of the nearest, the packages of
+   * the slice files behind them and the barrels they forward through. A
+   * barrel of a barrel is looked for in the slice's own packages: that is
+   * where the tests of the slice are, and where the lazy graph looks.
+   */
+  const barrels = new Map<
+    string,
+    { depth: number; names: Set<string>; packages: Set<string>; inner: Set<string> }
+  >();
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const [file, outs] of outgoing) {
+      if (code.has(file) || isTestPath(file) || isPrivate(file)) continue;
+      for (const { link, edge } of outs) {
+        if (link.forwards === null || link.typeOnly) continue;
+        const direct = code.has(edge.to) ? (depthOf.get(edge.to) ?? 0) : undefined;
+        const via = direct === undefined ? barrels.get(edge.to) : undefined;
+        if (direct === undefined && via === undefined) continue;
+        if (via !== undefined && !codePackages.has(packageOf(file))) continue;
+        let names: string[];
+        if (direct !== undefined)
+          names =
+            link.forwards === EVERYTHING
+              ? [...exported(edge.to).names]
+              : link.forwards.map(([, as]) => as);
+        else if (link.forwards === EVERYTHING)
+          names = [...(via?.names ?? [])].filter((name) => name !== "default");
+        else
+          names = link.forwards
+            .filter(([name]) => name === EVERYTHING || via?.names.has(name) === true)
+            .map(([, as]) => as);
+        if (names.length === 0) continue;
+        let entry = barrels.get(file);
+        if (entry === undefined) {
+          entry = { depth: Number.POSITIVE_INFINITY, names: new Set(), packages: new Set(), inner: new Set() };
+          barrels.set(file, entry);
+          changed = true;
+        }
+        const before = entry.names.size + entry.packages.size + entry.inner.size;
+        const at = direct ?? via?.depth ?? 0;
+        if (at < entry.depth) {
+          entry.depth = at;
+          changed = true;
+        }
+        for (const name of names) entry.names.add(name);
+        if (direct !== undefined) entry.packages.add(packageOf(edge.to));
+        else {
+          for (const each of via?.packages ?? []) entry.packages.add(each);
+          entry.inner.add(edge.to);
+        }
+        if (entry.names.size + entry.packages.size + entry.inner.size !== before) changed = true;
+      }
+    }
+  }
+  /** A barrel and every barrel it forwards the slice's names through. */
+  const chainOf = (start: Iterable<string>): string[] => {
+    const found = new Set<string>();
+    const queue = [...start];
+    while (queue.length > 0) {
+      const barrel = queue.pop() as string;
+      if (found.has(barrel)) continue;
+      found.add(barrel);
+      queue.push(...(barrels.get(barrel)?.inner ?? []));
+    }
+    return [...found].sort(compare);
+  };
+  /**
+   * Every test that runs the slice's code: one importing a file of it at
+   * runtime, or one of the slice's packages importing a barrel above it
+   * for a name the barrel forwards from it. `own` is whether it tests the
+   * slice's package rather than another's.
+   */
+  const exercising = new Map<string, { through: Set<string>; own: boolean }>();
+  /** Tests that also reach a file the slice holds neither way. */
+  const strays = new Set<string>();
   /**
    * Whether a test's runtime import of a file the slice does not hold is
    * one the test brings along: a file of its own package, or of a test
@@ -478,72 +705,50 @@ export function reach(
     !isTestPath(file) &&
     !keptOut(file) &&
     (packageOf(file) === packageOf(test) || isTestSupportPath(file));
-  if (options.tests === true && dropped.size === 0) {
-    // A barrel outside the slice that re-exports from inside it, with the
-    // names it forwards from there and the depth of the nearest. A test
-    // that takes one of those names through the barrel exercises the
-    // slice, so it comes along, and the barrel with it: at the depth of
-    // what it forwards, as a re-export is, its other re-exports cut.
-    const barrels = new Map<
-      string,
-      { depth: number; names: Set<string>; packages: Set<string> }
-    >();
-    for (const [file, outs] of outgoing) {
-      if (depthOf.has(file) || isTestPath(file) || isPrivate(file)) continue;
-      for (const { link, edge } of outs) {
-        if (link.forwards === null || link.typeOnly) continue;
-        const depth = depthOf.get(edge.to);
-        if (depth === undefined) continue;
-        const entry = barrels.get(file) ?? {
-          depth,
-          names: new Set<string>(),
-          packages: new Set<string>(),
-        };
-        entry.depth = Math.min(entry.depth, depth);
-        entry.packages.add(packageOf(edge.to));
-        if (link.forwards === EVERYTHING)
-          for (const name of exported(edge.to).names) entry.names.add(name);
-        else for (const [, as] of link.forwards) entry.names.add(as);
-        barrels.set(file, entry);
-      }
-    }
-    /**
-     * Each test outside the slice that imports it, with the barrels it goes
-     * through. A test of the slice is one of its own package: another
-     * package's test that imports the slice (through a followed workspace
-     * package, say) tests that package, and would bring that package's
-     * files along as its helpers.
-     */
-    const candidates = new Map<string, Set<string>>();
-    /** Tests that also reach a file the slice holds neither way. */
-    const strays = new Set<string>();
-    for (const file of files) {
-      if (depthOf.has(file) || !isTestPath(file) || isPrivate(file)) continue;
-      const own = packageOf(file);
-      for (const { link, edge } of outgoing.get(file) ?? []) {
-        if (
-          !depthOf.has(edge.to) &&
-          !barrels.has(edge.to) &&
-          (link.typeOnly || !helperOf(file, edge.to))
-        )
-          strays.add(file);
-        if (link.relation !== "imports" || link.typeOnly) continue;
-        const through = barrels.get(edge.to);
-        if (depthOf.has(edge.to)) {
-          if (packageOf(edge.to) === own)
-            candidates.set(file, candidates.get(file) ?? new Set());
-        } else if (
-          through !== undefined &&
-          through.packages.has(own) &&
-          (link.names === null || link.names.some((name) => through.names.has(name)))
-        ) {
-          const set = candidates.get(file) ?? new Set<string>();
-          set.add(edge.to);
-          candidates.set(file, set);
+  for (const file of files) {
+    if (code.has(file) || !isTestPath(file) || isPrivate(file)) continue;
+    const mine = packageOf(file);
+    for (const { link, edge } of outgoing.get(file) ?? []) {
+      if (
+        !code.has(edge.to) &&
+        !barrels.has(edge.to) &&
+        (link.typeOnly || !helperOf(file, edge.to))
+      )
+        strays.add(file);
+      if (link.relation !== "imports" || link.typeOnly) continue;
+      const through = barrels.get(edge.to);
+      const entry = exercising.get(file) ?? { through: new Set<string>(), own: false };
+      if (code.has(edge.to)) {
+        if (packageOf(edge.to) === mine) entry.own = true;
+        exercising.set(file, entry);
+      } else if (
+        through !== undefined &&
+        codePackages.has(mine) &&
+        (link.names === null || link.names.some((name) => through.names.has(name)))
+      ) {
+        if (through.packages.has(mine)) {
+          entry.own = true;
+          entry.through.add(edge.to);
         }
+        exercising.set(file, entry);
       }
     }
-    for (const [file, through] of [...candidates].sort(([a], [b]) => compare(a, b))) {
+  }
+  const tests: string[] = [];
+  const helpers: string[] = [];
+  const untestable = new Set<string>();
+  const globalsTests: string[] = [];
+  /** Tests left on a runner a slice cannot run, not on what they read. */
+  const noRunner = new Set<string>();
+  const runnerOf =
+    options.runnerOf ?? ((_file: string, specifiers: readonly string[]) => testRunnerOf(specifiers));
+  if (options.tests === true && dropped.size === 0) {
+    for (const [file, { through, own }] of [...exercising].sort(([a], [b]) => compare(a, b))) {
+      // A test of the slice is one of its own package: another package's
+      // test that imports the slice (through a followed workspace package,
+      // say) tests that package, and would bring that package's files
+      // along as its helpers.
+      if (!own) continue;
       // A test is left behind when it runs on neither runner, or reads a
       // path or an unresolved module no slice can carry. A computed import
       // is not such a read when the slice holds everything else the test
@@ -554,8 +759,13 @@ export function reach(
       // import of a file outside the slice (a `typeof import` of a root
       // script, say) still leaves the test behind: that file is not cut.
       const reads = dependencyEdges.get(file) ?? [];
+      const runner = runnerOf(file, packagesOf.get(file) ?? []);
+      if (runner === null) {
+        untestable.add(file);
+        noRunner.add(file);
+        continue;
+      }
       if (
-        testRunnerOf(packagesOf.get(file) ?? []) === null ||
         reads.some(
           (dependency) =>
             dependency.status !== "external" && dependency.status !== "dynamic",
@@ -565,26 +775,27 @@ export function reach(
         untestable.add(file);
         continue;
       }
-      const entering = [...through].filter((barrel) => !depthOf.has(barrel)).sort(compare);
+      const entering = chainOf(through).filter((barrel) => !depthOf.has(barrel));
       if (depthOf.size + entering.length >= maxFiles) {
         dropped.add(file);
         continue;
       }
-      for (const barrel of entering) depthOf.set(barrel, barrels.get(barrel)?.depth ?? 0);
+      for (const barrel of entering) place(barrel, barrels.get(barrel)?.depth ?? 0, "barrel");
       const nearest = Math.min(
         ...(outgoing.get(file) ?? [])
           .map(({ edge }) => depthOf.get(edge.to))
           .filter((value): value is number => value !== undefined),
       );
-      depthOf.set(file, nearest + 1);
+      place(file, nearest + 1, "test");
       tests.push(file);
+      if (runner === "vitest-globals") globalsTests.push(file);
       // The test's own helpers, and theirs, while the budget lasts: a fake
       // the test imports is copied, not stubbed, or the test fails on the
       // stub before any change is made.
       let frontier = [file];
-      let depth = nearest + 1;
+      let at = nearest + 1;
       while (frontier.length > 0) {
-        depth += 1;
+        at += 1;
         const next: string[] = [];
         for (const from of frontier)
           for (const { link, edge } of outgoing.get(from) ?? []) {
@@ -594,19 +805,37 @@ export function reach(
               dropped.add(edge.to);
               continue;
             }
-            depthOf.set(edge.to, depth);
+            place(edge.to, at, "helper");
             helpers.push(edge.to);
             next.push(edge.to);
           }
         frontier = next.sort(compare);
       }
     }
-    closePackage();
+    closePackage("test-code");
+  }
+  /** The tests of the slice's code the folder does not carry, and why. */
+  const testsLeft: SliceTestLeft[] = [];
+  for (const [file, { own }] of [...exercising].sort(([a], [b]) => compare(a, b))) {
+    if (depthOf.has(file)) continue;
+    testsLeft.push({
+      file,
+      reason: !own
+        ? "other-package"
+        : options.tests !== true
+          ? "not-asked"
+          : noRunner.has(file)
+            ? "runner"
+            : untestable.has(file)
+              ? "unreadable"
+              : "budget",
+    });
   }
   // Pure code the slice runs, copied rather than mocked, while the budget
   // lasts. A module comes with its runtime closure outside the slice, or
   // not at all: one impure module in it (a driver, an environment read, a
-  // private file) leaves the whole of it a stub, as before.
+  // private file) leaves the whole of it a stub, as before. A barrel in the
+  // slice brings only the modules that supply the names asked of it.
   const pure: string[] = [];
   const pureOptions = options.pure;
   if (pureOptions !== undefined && dropped.size === 0) {
@@ -673,18 +902,21 @@ export function reach(
     };
     let frontier = [...depthOf.keys()].sort(compare);
     while (frontier.length > 0) {
+      const demand = demands();
       const next: string[] = [];
       for (const file of frontier) {
-        const depth = (depthOf.get(file) ?? 0) + 1;
+        const at = (depthOf.get(file) ?? 0) + 1;
         for (const { link, edge } of outgoing.get(file) ?? []) {
           if (link.relation !== "imports" || link.typeOnly) continue;
           if (depthOf.has(edge.to) || isTestPath(edge.to) || isPrivate(edge.to)) continue;
-          const closure = closureOf(edge.to, link.names);
+          const names = carried(demand, file, link, edge.to);
+          if (names === false) continue;
+          const closure = closureOf(edge.to, names);
           // Past the budget the module stays a stub: nothing is dropped
           // for code the walk did not need.
           if (closure === null || depthOf.size + closure.length > maxFiles) continue;
           for (const each of closure) {
-            depthOf.set(each, depth);
+            place(each, at, "pure");
             pure.push(each);
             next.push(each);
           }
@@ -731,5 +963,11 @@ export function reach(
     privateFiles: [...privateFiles].sort(compare),
     pure: pure.sort(compare),
     untestable: [...untestable].sort(compare),
+    testsLeft,
+    globalsTests: globalsTests.sort(compare),
+    barrels: [...barrels.keys()].sort(compare),
+    originOf: Object.fromEntries(
+      included.map((file) => [file, originOf.get(file) ?? "walk"] as const),
+    ),
   };
 }

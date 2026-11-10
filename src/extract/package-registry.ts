@@ -330,3 +330,72 @@ export function packageRegistries(
     return shown === null ? null : { source: "public", evidence: shown };
   };
 }
+
+/**
+ * The integrity each `pnpm-lock.yaml` entry with no tarball URL records,
+ * by package name and version. Such an entry came from whatever registry
+ * the developer's configuration named, so on its own it shows nothing;
+ * its `sha512-` integrity, equal to the one the public registry publishes
+ * for the same version, shows it is the public package byte for byte (see
+ * `publicByIntegrity`).
+ */
+export function lockIntegrities(root: string): Map<string, Map<string, string>> {
+  const found = new Map<string, Map<string, string>>();
+  const text = readText(join(root, "pnpm-lock.yaml"));
+  if (text === null) return found;
+  let inPackages = false;
+  let key: { name: string; version: string } | null = null;
+  for (const line of text.split(/\r?\n/)) {
+    if (line.trim() === "" || line.trimStart().startsWith("#")) continue;
+    if (!/^\s/.test(line)) {
+      inPackages = /^packages:\s*$/.test(line);
+      key = null;
+      continue;
+    }
+    if (!inPackages) continue;
+    const descriptor = /^ {2}(\S.*):\s*$/.exec(line)?.[1];
+    if (descriptor !== undefined) {
+      const bare = unquote(descriptor).replace(/^\//, "").replace(/\(.*$/, "").replace(/_.*$/, "");
+      const name = descriptorName(bare);
+      const version = bare.slice(name.length + 1);
+      key = version === "" ? null : { name, version };
+      continue;
+    }
+    if (key === null || /\btarball:/.test(line)) continue;
+    const integrity = /^\s+resolution:\s*\{.*\bintegrity:\s*([^,}\s]+)/.exec(line)?.[1];
+    if (integrity === undefined) continue;
+    const versions = found.get(key.name) ?? new Map<string, string>();
+    versions.set(key.version, unquote(integrity));
+    found.set(key.name, versions);
+  }
+  return found;
+}
+
+/**
+ * Whether every version of `name` the lockfile records has the integrity
+ * the public registry publishes for it: then the repository installs the
+ * public package, whatever registry served it. One mismatch, or a version
+ * the registry does not have, and it shows nothing.
+ */
+export async function publicByIntegrity(
+  name: string,
+  versions: ReadonlyMap<string, string>,
+  signal: AbortSignal,
+): Promise<boolean> {
+  if (versions.size === 0) return false;
+  const path = name.startsWith("@") ? name.replace("/", "%2f") : encodeURIComponent(name);
+  for (const [version, integrity] of versions) {
+    try {
+      const response = await fetch(`https://registry.npmjs.org/${path}/${encodeURIComponent(version)}`, {
+        signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
+        headers: { accept: "application/json" },
+      });
+      if (!response.ok) return false;
+      const body = (await response.json()) as { dist?: { integrity?: unknown } };
+      if (body.dist?.integrity !== integrity) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}

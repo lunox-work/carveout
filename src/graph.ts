@@ -246,6 +246,9 @@ export function walkGraph(
     aliases.set(key, [...(aliases.get(key) ?? []), name]);
   }
   const searched = new Set<string>();
+  // Searched in the slice's packages alone: a barrel that later joins the
+  // slice is searched again, everywhere, as an included file.
+  const searchedBarrels = new Set<string>();
   const read = new Set<string>();
   // Files already handed to the builder. One it does not read (a file
   // under an ignored folder such as `build/`) never joins `read`, and
@@ -296,6 +299,34 @@ export function walkGraph(
       );
       for (const file of scripts)
         if (!read.has(file) && pattern.test(readFileSync(join(absoluteRoot, file), "utf8")))
+          wanted.add(file);
+    }
+    // A barrel above the slice is imported by the tests of it and by the
+    // barrels above it, which need not spell any slice file's name
+    // (`../src/index.js`): its own name is searched for too, in the slice's
+    // packages, where `reach` looks for a barrel of a barrel and its tests.
+    const barrelNeedles = new Set<string>();
+    for (const file of walk.barrels) {
+      if (searchedBarrels.has(file)) continue;
+      searchedBarrels.add(file);
+      for (const needle of needlesOf(file, aliases)) barrelNeedles.add(needle);
+    }
+    if (barrelNeedles.size > 0) {
+      const packageOf = reachOptions.packageOf ?? (() => "");
+      const own = new Set(walk.included.map(packageOf));
+      const pattern = new RegExp(
+        [...barrelNeedles]
+          .map((needle) => needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+          .concat(["(['\"`])(?:\\.\\.?/)*\\.\\.?/?\\1"])
+          .join("|"),
+        "i",
+      );
+      for (const file of scripts)
+        if (
+          !read.has(file) &&
+          own.has(packageOf(file)) &&
+          pattern.test(readFileSync(join(absoluteRoot, file), "utf8"))
+        )
           wanted.add(file);
     }
     const fresh = [...wanted].filter(

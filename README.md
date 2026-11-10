@@ -41,8 +41,10 @@ billing-slice/
   carveout/tests/            an interface test: every export outside code imports
   carveout/surface/          those exports' declarations at the cut, and the type
                              check npm test holds them to
-  BOUNDARY.md                an index: the modules the slice imports from outside
-                             and the exports outside code takes from it
+  BOUNDARY.md                an index: the tests that run the slice's code (in the
+                             folder, and left behind with why), the modules it
+                             imports from outside, and the exports outside code
+                             takes from it
   carveout.json              the cut: hashes, cuts, packages, rewrites, blockers
   package.json, tsconfig.json, package-lock.json, carveout.env
 ```
@@ -106,8 +108,13 @@ slice starts from its locked versions. `--offline` skips both.
 - **The whole package**, with `--whole-package`: every file of the entry
   points' package the imports reach comes along at any depth, so the cut
   falls at package and service boundaries, and a sibling module is copied
-  rather than stubbed. Imports into other packages still stop at the
+  rather than stubbed. A barrel's re-exports come only when they supply a
+  name the slice asks of it. Imports into other packages still stop at the
   depth.
+- **Barrel chains.** A test that takes a slice name through barrels
+  (`src/index.ts` → `pricing/index.ts` → `pricing/weight.ts`) is a test of
+  the slice: `--with-tests` brings it and the whole chain, each barrel cut
+  to what it forwards from the slice.
 - **A test's helpers.** A test brought along by `--with-tests` brings what
   it imports at runtime from its own package, or from a test folder
   anywhere (`test/`, `__mocks__/`, `fixtures/`): a fake copied is a test
@@ -130,15 +137,15 @@ are found by name first, and the compiler confirms each one.
 
 ## Commands
 
-| Command                                  | Does                                                                                                                                                                                                |
-| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `carveout plan <entry>...`               | Lists the files, cuts, importers, packages, environment and blockers. Writes nothing.                                                                                                               |
-| `carveout cut <entry>... --out <dir>`    | Writes the folder. Exits 2 if it was written with blockers; writes nothing if it would carry a credential.                                                                                          |
-| `carveout check <dir>`                   | Runs `npm ci`, `npm run build` and `npm test` in a scratch copy; records the tests that fail on the mocks. `--isolated` for a folder that came back.                                                |
-| `carveout status <dir>`                  | Says whether a cut now would write the same folder, and names what changed. Exits 4 if stale.                                                                                                       |
-| `carveout patch <dir>`                   | Prints the edits as a patch for the repository (`--output <file>`), with full blob ids for `git apply --3way`. Runs none of the folder's code; keeps out what the hand-off policy refuses (exit 6). |
-| `carveout merge <dir> --into <checkout>` | Patches, applies with `--3way` in the checkout you name, and runs `--verify <cmd>` there with a scratch HOME and only the `--verify-env` variables. Applies nothing on a refusal (exit 6).          |
-| `carveout apply <dir> <patch>`           | Brings a patch for the repository into the folder, imports rewritten; `--stubs` adds the stubs it needs. A module the patch adds past the cut's reach joins the folder as an entry, with its tests. |
+| Command                                  | Does                                                                                                                                                                                                           |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `carveout plan <entry>...`               | Lists the files, cuts, importers, packages, environment and blockers; the lines the cut shows, by why each file is there; every test that runs the code, in the folder or left behind and why. Writes nothing. |
+| `carveout cut <entry>... --out <dir>`    | Writes the folder. Exits 2 if it was written with blockers; writes nothing if it would carry a credential.                                                                                                     |
+| `carveout check <dir>`                   | Runs `npm ci`, `npm run build` and `npm test` in a scratch copy; records the tests that fail on the mocks. `--isolated` for a folder that came back.                                                           |
+| `carveout status <dir>`                  | Says whether a cut now would write the same folder, and names what changed. Exits 4 if stale.                                                                                                                  |
+| `carveout patch <dir>`                   | Prints the edits as a patch for the repository (`--output <file>`), with full blob ids for `git apply --3way`. Runs none of the folder's code; keeps out what the hand-off policy refuses (exit 6).            |
+| `carveout merge <dir> --into <checkout>` | Patches, applies with `--3way` in the checkout you name, and runs `--verify <cmd>` there with a scratch HOME and only the `--verify-env` variables. Applies nothing on a refusal (exit 6).                     |
+| `carveout apply <dir> <patch>`           | Brings a patch for the repository into the folder, imports rewritten; `--stubs` adds the stubs it needs. A module the patch adds past the cut's reach joins the folder as an entry, with its tests.            |
 
 Options for `plan` and `cut`:
 
@@ -147,7 +154,8 @@ Options for `plan` and `cut`:
 - `--max-files N` (default 40)
 - `--with-tests`, which also brings the tests outside the slice that import
   it (`*.test.*`, `*.spec.*`, `__tests__/`) and run on `node:test` or
-  Vitest, directly or through a barrel outside the slice that re-exports
+  Vitest (imported, or its globals in a package that depends on Vitest and
+  not Jest), directly or through barrels outside the slice that re-export
   from it; such a barrel comes along, its other re-exports cut, and so do
   the test's own helpers. `npm test` in the folder runs them. Without a
   lockfile Vitest is mocked like any package; cut with `--install vitest`.
@@ -244,7 +252,10 @@ What carveout holds to:
   new files in other packages (a cut module's folder among them);
   protected paths (CI workflows, hooks, `.vscode`, `.devcontainer`,
   `package.json`, lockfiles, `.npmrc`, `.env*`, Dockerfiles, Makefiles,
-  `*.sh`, `CODEOWNERS`, `carveout.config.json`); and deleted tests.
+  `*.sh`, `CODEOWNERS`, `carveout.config.json`); deleted tests; and edited
+  tests that remove or rewrite an assertion or skip a test (an expected
+  value changed may be the change itself, or a test bent to pass: the
+  maintainer reads it).
   `--allow <path|glob>` lets a reviewed one through. `merge` applies
   nothing while any is refused.
 - **Running what came back.** The contributor's tests are code. Run them
@@ -255,6 +266,11 @@ What carveout holds to:
 
 What it does not promise:
 
+- **What a pass in the folder covers is stated.** `plan`, `cut` and
+  BOUNDARY.md name every test that runs the slice's code and stays in the
+  repository, and why (not asked for, another package's, Jest, the file
+  limit). When none is in the folder, a pass means the code builds and
+  keeps its exports, nothing more.
 - **Passing in the slice is a pre-check, not the merge gate.** The slice's
   tests run against mocks of everything it cuts. A test that needs a cut
   module's real behaviour fails at the slice's baseline and is not counted,
@@ -294,6 +310,12 @@ files) the median walk takes 2.3 s against 13.7 s for the whole graph. A
 slice whose files have common names can read most of the repository, and
 then takes as long.
 
+On n8n (pnpm, catalogs, Vitest globals), a one-module slice installs,
+builds and passes `check`, where it once stopped at the install on a
+`catalog:` pin; with `--with-tests` it carries five Vitest tests, and its
+build then fails on limits named below (an `override` of a mocked base
+class, `never[]` under the relaxed `noImplicitAny`).
+
 ## Experiments
 
 `experiments/` holds four pre-registered experiments and their data
@@ -319,7 +341,14 @@ then takes as long.
   does not hide it.
 - **Lockfiles.** Peers and locked versions are read from an npm
   `package-lock.json`. pnpm and Yarn repositories fall back to the versions
-  in their package.json files.
+  in their package.json files; a `catalog:` pin takes the catalog's
+  version (`pnpm-workspace.yaml`, or `catalog(s)` in the root
+  package.json). A pnpm lock entry with no tarball URL shows a package is
+  public only when its integrity equals the public registry's for that
+  version (checked online; offline it is mocked). Such folders resolve
+  peers as pnpm and Yarn do (`legacy-peer-deps`).
+- **Test runners.** `node:test` and Vitest. A Jest test is named as left
+  behind, never run.
 - **Folders named like build output.** Files under `build/`, `dist/`,
   `vendor/` and `third_party/` are not parsed: a source folder named
   `build` is copied when reached, but its own imports are not followed.
@@ -372,4 +401,5 @@ What to tell them, accurately:
 - `carveout check` passing means the folder installs, builds, loads every
   export outside code uses and keeps their types. It tests the slice's
   behaviour only when the cut was made with `--with-tests`, and then only
-  as far as those tests go.
+  as far as those tests go: read the plan's `Tests:` line and report it,
+  and the tests it lists as left behind.

@@ -40,6 +40,7 @@ import {
   isTestPath,
   testRunnerOf,
 } from "../slice/reach.js";
+import { GLOBAL_CALL_SOURCE, usesTestGlobals } from "./runner.js";
 import { scanSecrets, secretBlockers } from "./secrets.js";
 import { moduleSpecifiers, rewriteSpecifiers } from "../specifiers.js";
 
@@ -850,10 +851,11 @@ export function projectCompilerOptions(
 /** `tsconfig.json` for a generated project. */
 export function tsconfigFor(
   options: Readonly<Record<string, unknown>> | undefined,
+  types: readonly string[] = [],
 ) {
   return `${JSON.stringify(
     {
-      compilerOptions: projectCompilerOptions(options),
+      compilerOptions: { ...projectCompilerOptions(options), types: [...types] },
       include: ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"],
       // The surface check has its own config, which `npm test` compiles.
       exclude: ["node_modules", MOCKS_DIR, SURFACE_DIR],
@@ -963,7 +965,7 @@ function interfaceTests(
  * after the cut runs too. Each goes to the runner it imports; Node runs the
  * compiled `.js`, Vitest the source.
  */
-function testRunnerScript(coverage: CoverageGate | undefined): string {
+function testRunnerScript(coverage: CoverageGate | undefined, globals = false): string {
   // The gate covers the package's compiled sources the folder holds: a
   // \`.js\` beside its \`.ts\`, never a stub's mock or a test.
   const gate =
@@ -1024,6 +1026,13 @@ function testRunnerScript(coverage: CoverageGate | undefined): string {
     "      const text = readFileSync(path, \"utf8\");",
     "      if (/['\"]node:test['\"]/.test(text)) node.push(path.replace(/\\.tsx?$/, \".js\").replace(/\\.mts$/, \".mjs\").replace(/\\.cts$/, \".cjs\"));",
     "      else if (/['\"]vitest(\\/[^'\"]*)?['\"]/.test(text)) vitest.push(path);",
+    ...(globals
+      ? [
+          // The package runs Vitest with its globals: a test importing no
+          // runner that calls them is Vitest's.
+          `      else if (${GLOBAL_CALL_SOURCE}.test(text)) vitest.push(path);`,
+        ]
+      : []),
     "    }",
     "  }",
     "};",
@@ -1153,7 +1162,7 @@ function testRunnerScript(coverage: CoverageGate | undefined): string {
     "}",
     "if (vitest.length > 0) {",
     '  const bin = join("node_modules", ".bin", "vitest");',
-    "  if (existsSync(bin)) run(bin, [\"run\", ...vitest]);",
+    `  if (existsSync(bin)) run(bin, ["run", ${globals ? '"--globals", ' : ""}...vitest]);`,
     "  else",
     "    process.stderr.write(`vitest is not installed, so ${vitest.length} Vitest test file(s) did not run.\\n`);",
     "}",
@@ -1582,21 +1591,27 @@ export function generateProject(input: ProjectInput): GeneratedProject {
     public: true,
   });
   const vitestTests: string[] = [];
-  if (input.manifest.params.tests)
-    for (const source of input.sources) {
-      if (!isScript(source.path) || !isTestPath(source.originalPath)) continue;
-      const runner = testRunnerOf(
-        moduleSpecifiers(source.path, source.text).map((item) => item.specifier),
-      );
-      if (runner === "vitest") vitestTests.push(source.path);
-      else if (runner === null) continue;
-      tests.push(source.path);
-    }
   // A mocked Vitest runs nothing; say so rather than fail the check on it.
   const vitestInstalled = input.dependencies.some(
     (dependency) =>
       dependency.name === "vitest" && dependency.resolution === "approved-package",
   );
+  const vitestDeclared = input.dependencies.some((dependency) => dependency.name === "vitest");
+  /** Tests on Vitest's globals: they import no runner (see `testRunnerResolver`). */
+  let globals = false;
+  if (input.manifest.params.tests)
+    for (const source of input.sources) {
+      if (!isScript(source.path) || !isTestPath(source.originalPath)) continue;
+      const specifiers = moduleSpecifiers(source.path, source.text).map((item) => item.specifier);
+      let runner: string | null = testRunnerOf(specifiers);
+      if (runner === null && vitestDeclared && usesTestGlobals(source.text)) {
+        runner = "vitest";
+        globals = true;
+      }
+      if (runner === "vitest") vitestTests.push(source.path);
+      else if (runner === null) continue;
+      tests.push(source.path);
+    }
   if (vitestTests.length > 0 && !vitestInstalled) {
     blockers.push({
       code: "test_runner_mocked",
@@ -1609,7 +1624,7 @@ export function generateProject(input: ProjectInput): GeneratedProject {
     add({ path: file.path, text: file.text, class: "harness", public: true });
   add({
     path: TEST_RUNNER_PATH,
-    text: testRunnerScript(input.coverage),
+    text: testRunnerScript(input.coverage, globals && vitestInstalled),
     class: "harness",
     public: true,
   });
@@ -1644,10 +1659,13 @@ export function generateProject(input: ProjectInput): GeneratedProject {
   });
   add({
     path: "tsconfig.json",
-    text: tsconfigFor({
-      ...input.compilerOptions,
-      ...(input.keepsImplicitAny === true ? {} : UNTYPED_PACKAGE_OPTIONS),
-    }),
+    text: tsconfigFor(
+      {
+        ...input.compilerOptions,
+        ...(input.keepsImplicitAny === true ? {} : UNTYPED_PACKAGE_OPTIONS),
+      },
+      globals && vitestInstalled ? ["vitest/globals"] : [],
+    ),
     class: "config",
     public: true,
   });

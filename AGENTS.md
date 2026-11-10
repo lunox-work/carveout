@@ -46,4 +46,5 @@ What to tell them, accurately:
 - `carveout check` passing means the folder installs, builds, loads every
   export outside code uses and keeps their types. It tests the slice's
   behaviour only when the cut was made with `--with-tests`, and then only
-  as far as those tests go.
+  as far as those tests go: read the plan's `Tests:` line and report it,
+  and the tests it lists as left behind.

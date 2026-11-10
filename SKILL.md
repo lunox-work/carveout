@@ -42,7 +42,14 @@ It reads the import graph and runs nothing. It prints:
 - the packages it imports, with the repository's own packages marked;
 - the services and environment variables it reads;
 - its blockers: an import that resolves to no file, a dynamic import of a
-  computed name, a credentials file.
+  computed name, a credentials file;
+- `Shows`: the lines the cut copies, by why (entry points, depth, whole
+  package, pure code, tests and what they bring). Show it to the person
+  before a public cut: it is what the contributor reads;
+- `Tests:`: whether any test in the folder runs the code, and every test
+  that does and stays in the repository, with why (not asked for, another
+  package's, Jest, reads what no slice carries, the file limit). With none
+  in the folder, a pass means it builds and keeps its exports.
 
 The defaults are depth 3 and 40 files. Choose the budget with the person:
 
@@ -62,9 +69,10 @@ data.
 
 `--with-tests` also brings the test files outside the slice that import it
 (`*.test.*`, `*.spec.*`, `__tests__/`), when they run on `node:test` or
-Vitest. A test that reaches a slice module through a barrel outside the
-slice counts; the barrel comes along at the depth of what it forwards, its
-other re-exports cut. Each test brings its own helpers too: what it imports
+Vitest (imported, or its globals in a package on Vitest and not Jest). A
+test that reaches a slice module through barrels outside the slice, a chain
+of them included, counts; each barrel comes along at the depth of what it
+forwards, its other re-exports cut. Each test brings its own helpers too: what it imports
 at runtime from its package, or from a test folder anywhere, so a fake is
 copied rather than stubbed (a stubbed fake fails the test before any
 change). The plan lists them, and lists as left behind the tests on other
@@ -287,7 +295,8 @@ It leaves out, and names:
   the packages the slice holds files of; a protected path (CI workflows,
   hooks, `.vscode`, `.devcontainer`, `package.json`, lockfiles, `.npmrc`,
   `.env*`, Dockerfiles, Makefiles, `*.sh`, `CODEOWNERS`,
-  `carveout.config.json`); a deleted test. Show the person the list;
+  `carveout.config.json`); a deleted test; an edited test that removes or
+  rewrites an assertion or skips a test. Show the person the list;
   `--allow <path|glob>` carries one they reviewed.
 
 `patch` runs none of the folder's code and takes nothing in it on trust: a
@@ -349,4 +358,8 @@ gives back the slice's part of the change.
   `import.meta.glob` of modules finds nothing.
 - **Lockfiles.** Peers and `--install` versions are read from an npm
   `package-lock.json`. With pnpm or Yarn, versions come from the
-  package.json files.
+  package.json files, a `catalog:` pin from the workspace's catalog; a pnpm
+  entry with no tarball URL counts as public when its integrity matches the
+  public registry's (online cuts).
+- **Test runners.** `node:test` and Vitest; a Jest test is left behind and
+  named.

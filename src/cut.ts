@@ -27,11 +27,15 @@ import {
   reach,
   sliceReadiness,
 } from "./core.js";
+import { catalogResolver } from "./project/catalog.js";
+import { testRunnerResolver } from "./project/runner.js";
 import type {
   BoundaryContract,
   BoundaryModule,
   CompilationResult,
   CutEdge,
+  PackageRegistry,
+  ReachResult,
   IncludedFile,
   SliceBlocker,
   SliceExternals,
@@ -45,7 +49,11 @@ import {
   workspaceModuleResolver,
   workspacePackages,
 } from "./extract/compiler-config.js";
-import { packageRegistries } from "./extract/package-registry.js";
+import {
+  lockIntegrities,
+  packageRegistries,
+  publicByIntegrity,
+} from "./extract/package-registry.js";
 import { workspaceImportersOf } from "./graph.js";
 import { packageFolder } from "./imports.js";
 import {
@@ -103,7 +111,21 @@ async function readSource(root: string, path: string): Promise<string | null> {
   return readFile(absolute, "utf8").catch(() => null);
 }
 
-/** The version a package.json nearest the importing file pins, if any. */
+const catalogs = new Map<string, (name: string, version: string) => string>();
+/** The repository's `catalog:` resolver, read once per root. */
+function catalogOf(root: string): (name: string, version: string) => string {
+  let resolver = catalogs.get(root);
+  if (resolver === undefined) {
+    resolver = catalogResolver(root);
+    catalogs.set(root, resolver);
+  }
+  return resolver;
+}
+
+/**
+ * The version a package.json nearest the importing file pins, if any; a
+ * `catalog:` pin as the workspace's catalog gives it.
+ */
 async function pinnedVersion(
   root: string,
   from: string,
@@ -139,7 +161,8 @@ async function pinnedVersion(
       cache.set(path, declared);
     }
     const version = declared?.[name];
-    if (version !== undefined) return { version, declaredIn: path };
+    if (version !== undefined)
+      return { version: catalogOf(root)(name, version), declaredIn: path };
     if (dir === "") return { version: null, declaredIn: null };
   }
 }
@@ -281,6 +304,8 @@ export interface SliceAnalysis {
    * folder can hold its code to it; false when the source has it off.
    */
   readonly keepsImplicitAny: boolean;
+  /** The walk the slice was cut from. */
+  readonly walk: ReachResult;
 }
 
 /**
@@ -322,6 +347,7 @@ export async function analyseSlice(input: {
   const reached = reach(graph, params.entryPoints, params.budget, {
     tests: params.tests,
     packageOf: packageFolder(input.sourceDir),
+    runnerOf: testRunnerResolver(input.sourceDir, packageFolder(input.sourceDir)),
     ...(params.wholePackage === true ? { wholePackage: true } : {}),
     ...(isPrivate === null ? {} : { isPrivate }),
     ...(params.copyPure === true
@@ -433,6 +459,13 @@ export async function analyseSlice(input: {
               : `${dependency.specifier ?? ""} does not resolve to a repository file.`,
       });
   }
+  // A test on Vitest's globals imports no runner; the folder needs it all
+  // the same, pinned as the test's package pins it.
+  if (walk.globalsTests.length > 0) {
+    const files = packageFiles.get("vitest") ?? new Set<string>();
+    for (const test of walk.globalsTests) files.add(test);
+    packageFiles.set("vitest", files);
+  }
   // A file read by path must be there itself; a stub at its path is not it.
   for (const edge of walk.cuts.outbound)
     if (edge.relation === "reads" && !copied(edge.to))
@@ -461,7 +494,34 @@ export async function analyseSlice(input: {
   let internalImports = walk.internal;
   const versions = new Map<string, Record<string, string> | null>();
   // And a package from another registry is not the public one of its name.
-  const registryOf = packageRegistries(input.sourceDir);
+  const lockedRegistry = packageRegistries(input.sourceDir);
+  // A pnpm lock entry with no URL vouches for nothing alone; its integrity,
+  // matched against the public registry's for the same version, does. Only
+  // online: an offline cut asks no registry anything.
+  const integrities =
+    input.packageTypes === undefined ? new Map<string, Map<string, string>>() : lockIntegrities(input.sourceDir);
+  const verified = new Map<string, PackageRegistry | null>();
+  /** Checks, once each, the packages nothing else shows the registry of. */
+  const verify = async (names: Iterable<string>) => {
+    const pending = [...new Set(names)].filter(
+      (name) => !verified.has(name) && lockedRegistry(name) === null && integrities.has(name),
+    );
+    for (let at = 0; at < pending.length; at += 8)
+      await Promise.all(
+        pending.slice(at, at + 8).map(async (name) => {
+          const ok = await publicByIntegrity(name, integrities.get(name) ?? new Map(), input.signal);
+          verified.set(
+            name,
+            ok ? { source: "public", evidence: "pnpm-lock.yaml, its integrity the public registry's" } : null,
+          );
+        }),
+      );
+  };
+  const registryOf = (name: string): PackageRegistry | null =>
+    lockedRegistry(name) ?? verified.get(name) ?? null;
+  /** The packages a set of imports names, with their `@types`. */
+  const withTypes = (files: ReadonlyMap<string, ReadonlySet<string>>) =>
+    namesOf(files).flatMap((name) => [name, typesPackageOf(name)]);
   const namesOf = (files: ReadonlyMap<string, ReadonlySet<string>>) =>
     [...new Set([...files.keys()].map(packageNameOf))].sort(compare);
   const importerOf = (
@@ -580,7 +640,8 @@ export async function analyseSlice(input: {
     const requests =
       input.packageTypes === undefined
         ? []
-        : await typeRequests(withPackages(boundary.packages));
+        : (await verify(withTypes(withPackages(boundary.packages))),
+          await typeRequests(withPackages(boundary.packages)));
     if (input.packageTypes !== undefined && requests.length > 0) {
       const fetched = await input.packageTypes(requests, input.signal);
       if ("failed" in fetched)
@@ -789,6 +850,7 @@ export async function analyseSlice(input: {
       detail: "Signature extraction exists for TypeScript and JavaScript only.",
     });
   }
+  await verify(namesOf(packageFiles));
   const { required: packages, unpinned } = await requiredPackages(packageFiles);
   blockers.push(...unpinned);
   for (const path of versions.keys())
@@ -887,5 +949,6 @@ export async function analyseSlice(input: {
     surface,
     ready: readiness.ready,
     keepsImplicitAny,
+    walk,
   };
 }

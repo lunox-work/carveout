@@ -45,8 +45,15 @@ import {
   type SliceBudget,
   type SliceManifest,
   type SliceExternals,
+  type SliceExposure,
+  type SliceTestLeft,
+  exposureOf,
+  renderTestsMarkdown,
+  testsVerdict,
 } from "./core.js";
 import { analyseSlice } from "./cut.js";
+import { catalogResolver } from "./project/catalog.js";
+import { testRunnerResolver } from "./project/runner.js";
 import {
   nearestCompilerOptions,
   workspacePackages,
@@ -312,6 +319,8 @@ export interface Plan {
   readonly followWorkspaces: boolean;
   readonly copyPure: boolean;
   readonly private: readonly string[];
+  /** The files and lines the cut would copy, by why each is there. */
+  readonly exposure: SliceExposure;
 }
 
 /** The walk's options for a settled request. */
@@ -327,6 +336,7 @@ function walkOptions(
 ) {
   return {
     tests: request.tests === true,
+    runnerOf: testRunnerResolver(repo, packageFolder(resolve(repo))),
     ...(request.wholePackage ? { wholePackage: true } : {}),
     ...(request.followWorkspaces ? { followWorkspaces: true } : {}),
     ...(request.copyPure ? { pure: pureRulesFor(repo) } : {}),
@@ -352,12 +362,12 @@ export function planSlice(request: SliceRequest): Plan {
   const budget = request.budget ?? SLICE_BUDGET_DEFAULTS;
   const entryPoints = entriesOf(request);
   const { built, walk } = walkGraph(repo, entryPoints, budget, walkOptions(settled, repo));
-  const externals = detectExternals(
-    walk.included.map((path) => ({
-      path,
-      text: readFileSync(join(repo, path), "utf8"),
-    })),
-  );
+  const texts = walk.included.map((path) => ({
+    path,
+    text: readFileSync(join(repo, path), "utf8"),
+  }));
+  const externals = detectExternals(texts);
+  const textOf = new Map(texts.map(({ path, text }) => [path, text]));
   const workspaces = workspacePackages(repo);
   const packages = new Set<string>();
   for (const dependency of walk.dependencies)
@@ -393,6 +403,7 @@ export function planSlice(request: SliceRequest): Plan {
     followWorkspaces: settled.followWorkspaces,
     copyPure: settled.copyPure,
     private: settled.private,
+    exposure: exposureOf(walk, (path) => textOf.get(path) ?? null),
   };
 }
 
@@ -497,6 +508,18 @@ export interface CarveoutRecord {
    * and package configuration, workspace manifests and lockfiles.
    */
   readonly inputs: readonly { path: string; sha256: string | null }[];
+  /**
+   * The tests that run the slice's code: those in the folder, and those
+   * left in the repository with the reason (a public cut names each by its
+   * package). Absent in records made before the account.
+   */
+  readonly tests?: {
+    readonly verdict: string;
+    readonly carried: readonly string[];
+    readonly left: readonly SliceTestLeft[];
+  };
+  /** What the folder shows of the repository; see `exposureOf`. */
+  readonly exposure?: SliceExposure;
 }
 
 export interface CutResult {
@@ -678,7 +701,7 @@ export function repositoryVersion(
       ) as Record<string, Record<string, unknown> | undefined>;
       for (const key of ["devDependencies", "dependencies"]) {
         const version = manifest[key]?.[name];
-        if (typeof version === "string") return version;
+        if (typeof version === "string") return catalogResolver(repo)(name, version);
       }
     } catch {
       // No package.json here.
@@ -801,6 +824,11 @@ export async function computeCut(
       return `${pkg === "" ? "" : `${pkg}/`}(outside the slice)`;
     };
   })();
+  // The tests left in the repository, named as the folder may name them.
+  const testsLeft = analysis.walk.testsLeft.map(({ file, reason }) => ({
+    file: settled.public ? outsideName(file) : file,
+    reason,
+  }));
   const manifest: SliceManifest = settled.public
     ? {
         ...analysis.manifest,
@@ -1067,12 +1095,25 @@ export async function computeCut(
     Object.fromEntries(
       Object.entries(record).sort(([a], [b]) => compare(a, b)),
     );
+  // A repository on pnpm or Yarn installs a peer range that does not
+  // match as a warning; npm refuses the whole tree. The folder resolves as
+  // the repository's own manager does (E8g: n8n's vitest-mock-extended asks
+  // TypeScript 6 of a repository on 7). An npm repository stays strict.
+  const peerLenient =
+    !existsSync(join(repo, "package-lock.json")) &&
+    !existsSync(join(repo, "npm-shrinkwrap.json")) &&
+    (existsSync(join(repo, "pnpm-lock.yaml")) || existsSync(join(repo, "yarn.lock")));
   const projectFiles = project.files.map((file) => {
+    if (file.path === ".npmrc" && peerLenient)
+      return { ...file, text: `${file.text}legacy-peer-deps=true\n` };
     if (file.path === "tsconfig.json" && nodeTypes !== null) {
       const config = JSON.parse(file.text) as {
         compilerOptions: Record<string, unknown>;
       };
-      config.compilerOptions["types"] = ["node"];
+      const types = config.compilerOptions["types"];
+      config.compilerOptions["types"] = [
+        ...new Set(["node", ...(Array.isArray(types) ? (types as string[]) : [])]),
+      ];
       return { ...file, text: `${JSON.stringify(config, null, 2)}\n` };
     }
     if (
@@ -1100,7 +1141,12 @@ export async function computeCut(
   const extra: GeneratedFile[] = [
     {
       path: BOUNDARY_PATH,
-      text: renderBoundaryMarkdown(contract, manifest),
+      // What the folder's tests can say comes before what it stubs: a pass
+      // here is worth what the tests in it run.
+      text: renderBoundaryMarkdown(contract, manifest).replace(
+        "## Stubbed modules",
+        `${renderTestsMarkdown({ tests: analysis.walk.tests, testsLeft }, (path) => path).join("\n")}\n## Stubbed modules`,
+      ),
       class: "config",
       public: true,
     },
@@ -1220,6 +1266,18 @@ export async function computeCut(
         ...(settled.public ? { public: true } : {}),
       },
       inputs: resolutionInputs(repo, manifest.requiredBuildInputs.configs),
+      tests: {
+        verdict: testsVerdict(analysis.walk),
+        carried: analysis.walk.tests,
+        left: testsLeft,
+      },
+      exposure: exposureOf(analysis.walk, (path) => {
+        try {
+          return readFileSync(join(repo, path), "utf8");
+        } catch {
+          return null;
+        }
+      }),
     },
   };
 }
