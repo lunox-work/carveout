@@ -39,6 +39,8 @@ billing-slice/
   carveout/packages/stripe/  a mock package for a service SDK
   carveout/mock.js           the mock runtime: recordedCalls(), mockImplementation()
   carveout/tests/            an interface test: every export outside code imports
+  carveout/surface/          those exports' declarations at the cut, and the type
+                             check npm test holds them to
   BOUNDARY.md                an index: the modules the slice imports from outside
                              and the exports outside code takes from it
   carveout.json              the cut: hashes, cuts, packages, rewrites, blockers
@@ -70,6 +72,13 @@ billing-slice/
   When the package's own test sets coverage thresholds, `npm test` holds
   the source files you add to them, and fails, as the package's script
   does, on a file you add that no test loads (`assert-all-covered`).
+- **The public surface.** Every export code outside the slice imports
+  must stay exported (the interface test) and keep its type: `npm test`
+  type-checks `carveout/surface/check.ts`, which holds each such value to
+  its type at the cut and each such type to its shape both ways, and
+  names the export whose type changed. Enums and classes with private
+  members are not checked; a check that fails before any edit is not
+  counted.
 - **Credentials.** A credentials file is never copied. A credential found
   in anything the cut would write, a `--copy` folder or the resolved
   lockfile included, stops the cut: nothing is written.
@@ -339,6 +348,7 @@ What to tell them, accurately:
   out CI, hook, manifest and lockfile files, new files in other packages
   and deleted tests), and let the repository's CI judge the change: a pass
   in the slice is a pass against mocks.
-- `carveout check` passing means the folder installs, builds and loads every
-  export outside code uses. It tests the slice's behaviour only when the cut
-  was made with `--with-tests`, and then only as far as those tests go.
+- `carveout check` passing means the folder installs, builds, loads every
+  export outside code uses and keeps their types. It tests the slice's
+  behaviour only when the cut was made with `--with-tests`, and then only
+  as far as those tests go.

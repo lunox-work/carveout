@@ -104,7 +104,9 @@ What the folder holds:
 - For each cut module: a `.d.ts` stub of what the slice uses, extracted with
   the compiler, beside a `.js` recording mock.
 - `package.json` and `tsconfig.json`.
-- `carveout/`: the mock runtime, the asset loader and an interface test.
+- `carveout/`: the mock runtime, the asset loader, an interface test, and
+  `surface/`: the declarations of every export outside code uses, as they
+  were at the cut, with the type check `npm test` holds them to.
 - `BOUNDARY.md`, an index of the stubbed modules and the public surface
   (the declarations are in the stubs), `carveout.json` and `carveout.env`.
 - With `--copy <dir>`, the folder's files beside the slice: what the code
@@ -176,7 +178,9 @@ carveout check <folder> [--isolated]
 It runs `npm ci`, `npm run build` and `npm test` in a scratch copy of the
 folder, and exits 0 only when all three pass. The interface test imports
 every module that outside code imports from the slice, with the mocks in
-place. With `--with-tests`, `npm test` then runs the slice's own tests: the
+place, and `npm test` type-checks `carveout/surface/check.ts`: an export
+outside code uses whose type changed fails as `<module> keeps the type of
+<name>`, with the compiler's message. With `--with-tests`, `npm test` then runs the slice's own tests: the
 `node:test` ones with Node, the Vitest ones with `vitest run`. If Vitest
 was mocked (no lockfile), the cut reports `test_runner_mocked`; cut again
 with `--install vitest`. When a

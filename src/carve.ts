@@ -902,6 +902,7 @@ export async function computeCut(
     contract,
     sources,
     stubs,
+    surface: analysis.surface,
     dependencies: scope.dependencies,
     knownSpecifiers: NODE_BUILTINS,
     packageModules: packageModules(uses, (specifier) =>

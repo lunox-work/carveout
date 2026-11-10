@@ -218,6 +218,43 @@ test("the folder builds and its tests pass on its own", () => {
   assert.match(output, /# fail 0\n/);
 });
 
+test("the public surface's types are checked, and a changed signature names its export", () => {
+  const check = readFileSync(join(cut.out, "carveout/surface/check.ts"), "utf8");
+  assert.match(check, /apps\/shop\/src\/cart\.ts \| total \| value$/m);
+  assert.match(check, /apps\/shop\/src\/cart\.ts \| Line \| type$/m);
+  // The folder's own build leaves the check to npm test.
+  assert.match(readFileSync(join(cut.out, "tsconfig.json"), "utf8"), /"carveout\/surface"/);
+  const surface = () => {
+    try {
+      execFileSync(process.execPath, [TSC, "-p", "carveout/surface/tsconfig.json", "--pretty", "false"], {
+        cwd: cut.out,
+        stdio: "pipe",
+      });
+      return "";
+    } catch (error) {
+      return String((error as { stdout?: Buffer }).stdout ?? error);
+    }
+  };
+  assert.equal(surface(), "");
+  const cart = join(cut.out, "apps/shop/src/cart.ts");
+  const before = readFileSync(cart, "utf8");
+  try {
+    writeFileSync(
+      cart,
+      before.replace(
+        "export function total(lines: readonly Line[], currency: Currency): string {",
+        "export function total(lines: readonly Line[], currency: Currency, rounding: number): string {\n  void rounding;",
+      ),
+    );
+    const errors = surface();
+    const at = /check\.ts\((\d+),\d+\): error TS2322/.exec(errors);
+    assert.ok(at !== null, errors);
+    assert.match(check.split("\n")[Number(at[1]) - 1] ?? "", /\| total \| value$/);
+  } finally {
+    writeFileSync(cart, before);
+  }
+});
+
 test("status is current until the repository changes what a cut writes", async () => {
   const fresh = await cutSlice({
     repo,

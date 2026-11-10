@@ -40,6 +40,7 @@ What to tell them, accurately:
   out CI, hook, manifest and lockfile files, new files in other packages
   and deleted tests), and let the repository's CI judge the change: a pass
   in the slice is a pass against mocks.
-- `carveout check` passing means the folder installs, builds and loads every
-  export outside code uses. It tests the slice's behaviour only when the cut
-  was made with `--with-tests`, and then only as far as those tests go.
+- `carveout check` passing means the folder installs, builds, loads every
+  export outside code uses and keeps their types. It tests the slice's
+  behaviour only when the cut was made with `--with-tests`, and then only
+  as far as those tests go.

@@ -4,6 +4,7 @@ import {
   relativeSpecifier,
 } from "../core.js";
 import { loadConfig, type LoadedConfig } from "./compiler-config.js";
+import { surfaceFiles, type SurfaceFile } from "./surface.js";
 export {
   declarationPath as declarationPathFor,
   packageNameOf,
@@ -1139,6 +1140,11 @@ export interface TypeScriptBoundary {
     readonly internal: readonly CutEdge[];
     readonly modules: ReadonlyMap<string, string>;
   };
+  /**
+   * The public surface's declarations and the check `npm test` holds them
+   * to (`carveout/surface/`); empty when there is nothing to check.
+   */
+  readonly surface: readonly SurfaceFile[];
 }
 
 export interface TypeScriptBoundaryInput {
@@ -1250,6 +1256,7 @@ export function extractTypeScriptBoundary(
       packages: new Map(),
       compilerOptions: config.options,
       workspace: { outbound: [], internal: [], modules: new Map() },
+      surface: [],
     };
   }
   const isRelativeSpecifier = (specifier: string) =>
@@ -1612,6 +1619,23 @@ export function extractTypeScriptBoundary(
       stubPath: null,
     });
   }
+  // The surface's types, for the check `npm test` runs; a failure to
+  // relocate a declaration leaves the slice with the interface test alone.
+  let surfaceCheck: SurfaceFile[] = [];
+  try {
+    surfaceCheck = surfaceFiles({
+      program,
+      surface: new Map(
+        [...surface].map(([module, request]) => [module, request.names]),
+      ),
+      included,
+      stubbed: new Set([...stubs.values()].map((stub) => stub.module)),
+      resolve: resolveSpecifier,
+      abs,
+    });
+  } catch {
+    surfaceCheck = [];
+  }
   const dedupe = (list: SliceBlocker[]) => {
     const seen = new Set<string>();
     return list.filter((blocker) => {
@@ -1639,5 +1663,6 @@ export function extractTypeScriptBoundary(
       internal: workspaceEdges.internal,
       modules: workspaceModules,
     },
+    surface: surfaceCheck,
   };
 }

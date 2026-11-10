@@ -272,6 +272,8 @@ export interface SliceAnalysis {
   readonly contract: BoundaryContract;
   readonly contractJson: string;
   readonly stubs: readonly { path: string; module: string; text: string }[];
+  /** The public surface's declarations and check; see `surfaceFiles`. */
+  readonly surface: readonly { path: string; text: string }[];
   readonly ready: boolean;
   /**
    * Whether the slice compiles with the source's noImplicitAny, so the
@@ -433,6 +435,7 @@ export async function analyseSlice(input: {
   let outbound: BoundaryModule[];
   let inbound: BoundaryModule[];
   let stubs: readonly { path: string; module: string; text: string }[] = [];
+  let surface: readonly { path: string; text: string }[] = [];
   let configs: string[] = [];
   let keepsImplicitAny = false;
   let compilation: CompilationResult = {
@@ -595,6 +598,7 @@ export async function analyseSlice(input: {
     outbound = [...boundary.outbound];
     inbound = [...boundary.inbound];
     stubs = boundary.stubs;
+    surface = boundary.surface;
     configs = [...boundary.configs];
     blockers.push(...boundary.blockers);
     cuts = {
@@ -868,6 +872,7 @@ export async function analyseSlice(input: {
     contract,
     contractJson,
     stubs,
+    surface,
     ready: readiness.ready,
     keepsImplicitAny,
   };
