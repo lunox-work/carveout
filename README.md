@@ -337,7 +337,10 @@ What carveout holds to:
   out even when the walk reaches it, `--copy-pure` included. `--copy-pure`
   copies more of the repository (the pure code the slice runs) so the
   contributor's tests run against it rather than against mocks: leave it
-  off, or mark that code private, where it must stay closed.
+  off, or mark that code private, where it must stay closed. `plan` and
+  `cut` list the source copied from outside the entry points by folder,
+  with its lines, tests not counted: each folder there is a `--private`
+  decision to make before the folder is sent.
 - **The folder that comes back.** Nothing in it is trusted. `patch` and
   `apply` refuse a `carveout.json` that names a path outside the folder or
   a `.git` path, or lists as the slice's a file the repository does not

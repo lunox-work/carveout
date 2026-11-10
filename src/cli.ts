@@ -23,6 +23,7 @@ import {
   SLICE_BUDGET_DEFAULTS,
   TEST_LEFT_REASON,
   renderExposure,
+  renderOutside,
   testsVerdict,
   type DependencyChoice,
 } from "./core.js";
@@ -271,6 +272,7 @@ async function main(argv: readonly string[]) {
           "",
           `Shows ${renderExposure(plan.exposure)}`,
           "",
+          ...(renderOutside(plan.exposure).length === 0 ? [] : [...renderOutside(plan.exposure), ""]),
           "Included:",
           list(
             plan.walk.included.map(
@@ -432,6 +434,9 @@ async function main(argv: readonly string[]) {
             `${record.manifest.meta.includedFiles} files copied, ${record.manifest.meta.outboundCuts} cut imports, stub coverage ${record.manifest.meta.stubCoverage}${record.lockfile ? "" : ", no lockfile"}.`,
             ...(record.exposure === undefined ? [] : [`Shows ${renderExposure(record.exposure)}`]),
             ...(record.tests === undefined ? [] : [`Tests: ${record.tests.verdict}`]),
+            ...(record.exposure === undefined || renderOutside(record.exposure).length === 0
+              ? []
+              : ["", ...renderOutside(record.exposure)]),
             "",
             "Mocked:",
             list(mocked),

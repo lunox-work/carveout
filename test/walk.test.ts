@@ -15,6 +15,7 @@ import { undoRewrites } from "../src/carve.js";
 import { specifiersOf } from "../src/imports.js";
 import { serviceOf } from "../src/slice/externals.js";
 import { reach } from "../src/slice/reach.js";
+import { exposureOf, renderOutside } from "../src/slice/report.js";
 import { testRunnerResolver } from "../src/project/runner.js";
 
 const roots: string[] = [];
@@ -259,6 +260,38 @@ test("when the budget cannot hold every test, the tests of the entry points' own
   // With room for both, both come, in path order.
   const roomy = walk(files, ["lib/a.ts"], { maxFiles: 40, maxDepth: 1 }, { tests: true });
   assert.deepEqual(roomy.tests, ["lib/0b.test.ts", "lib/z.test.ts"]);
+});
+
+test("the source a slice shows from outside its entry points is counted by folder", () => {
+  const texts: Record<string, string> = {
+    "pkg/src/pricing/spec.ts": "a\nb\n",
+    "pkg/src/slice/reach.ts": "a\nb\nc\n",
+    "pkg/src/slice/graph.ts": "a\n",
+    "pkg/src/index.ts": "export * from './pricing/spec.js';\n",
+    "pkg/test/spec.test.ts": "a\nb\nc\nd\n",
+  };
+  const exposure = exposureOf(
+    {
+      included: Object.keys(texts).sort(),
+      originOf: {
+        "pkg/src/pricing/spec.ts": "entry",
+        "pkg/src/slice/reach.ts": "package",
+        "pkg/src/slice/graph.ts": "pure",
+        "pkg/src/index.ts": "barrel",
+        "pkg/test/spec.test.ts": "test",
+      },
+    },
+    (path) => texts[path] ?? null,
+  );
+  // The entry points and the tests are not counted; the rest is, most lines first.
+  assert.deepEqual(exposure.outside, [
+    { folder: "pkg/src/slice", files: 2, lines: 4 },
+    { folder: "pkg/src", files: 1, lines: 1 },
+  ]);
+  assert.match(renderOutside(exposure)[0] ?? "", /^Source from outside the entry points, 5 lines/);
+  assert.equal(renderOutside(exposure)[1], "  pkg/src/slice  2 files, 4 lines");
+  // A record written before the count, or a slice of only its entry points, prints nothing.
+  assert.deepEqual(renderOutside({ files: 1, lines: 2, byOrigin: [] }), []);
 });
 
 test("the files a full budget leaves out are named", () => {

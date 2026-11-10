@@ -83,6 +83,9 @@ It reads the import graph and runs nothing. It prints:
 - `Shows`: the lines the cut copies, by why (entry points, depth, whole
   package, pure code, tests and what they bring). Show it to the person
   before a public cut: it is what the contributor reads;
+- `Source from outside the entry points`: that code by folder, with its
+  lines, tests not counted. Ask the person about each folder before a
+  public cut, and add `--private <path>` for any that must stay closed;
 - `Tests:`: whether any test in the folder runs the code, and every test
   that does and stays in the repository, with why (not asked for, another
   package's, Jest, reads what no slice carries, the file limit). With none

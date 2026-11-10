@@ -9,7 +9,8 @@
  * change one of them would catch passes in the folder unseen.
  */
 
-import type { ReachResult, SliceOrigin, SliceTestLeft } from "./reach.js";
+import { posix } from "node:path";
+import { isTestPath, type ReachResult, type SliceOrigin, type SliceTestLeft } from "./reach.js";
 
 export interface SliceExposure {
   readonly files: number;
@@ -17,6 +18,17 @@ export interface SliceExposure {
   /** By origin, in `ORIGIN_ORDER`, origins with no file left out. */
   readonly byOrigin: readonly {
     readonly origin: SliceOrigin;
+    readonly files: number;
+    readonly lines: number;
+  }[];
+  /**
+   * The source the folder copies from outside the entry points, tests left
+   * out, by folder, most lines first: what the contributor reads beyond
+   * the part handed to them, and what `--private` would keep out. Absent
+   * from a record written before it was counted.
+   */
+  readonly outside?: readonly {
+    readonly folder: string;
     readonly files: number;
     readonly lines: number;
   }[];
@@ -50,6 +62,7 @@ export function exposureOf(
   read: (path: string) => string | null,
 ): SliceExposure {
   const totals = new Map<SliceOrigin, { files: number; lines: number }>();
+  const folders = new Map<string, { files: number; lines: number }>();
   let lines = 0;
   for (const path of walk.included) {
     const origin = walk.originOf[path] ?? "walk";
@@ -60,6 +73,13 @@ export function exposureOf(
     total.files += 1;
     total.lines += count;
     totals.set(origin, total);
+    if (origin !== "entry" && !isTestPath(path)) {
+      const folder = posix.dirname(path);
+      const here = folders.get(folder) ?? { files: 0, lines: 0 };
+      here.files += 1;
+      here.lines += count;
+      folders.set(folder, here);
+    }
   }
   return {
     files: walk.included.length,
@@ -68,6 +88,9 @@ export function exposureOf(
       const total = totals.get(origin);
       return total === undefined ? [] : [{ origin, ...total }];
     }),
+    outside: [...folders]
+      .map(([folder, total]) => ({ folder, ...total }))
+      .sort((a, b) => b.lines - a.lines || (a.folder < b.folder ? -1 : a.folder > b.folder ? 1 : 0)),
   };
 }
 
@@ -78,6 +101,24 @@ export function renderExposure(exposure: SliceExposure): string {
   return `${number(exposure.files)} files, ${number(exposure.lines)} lines: ${exposure.byOrigin
     .map(({ origin, files, lines }) => `${number(files)} ${ORIGIN_LABEL[origin]} (${number(lines)} lines)`)
     .join(", ")}.`;
+}
+
+/**
+ * The source copied from outside the entry points, by folder, as lines for
+ * `plan` and `cut`; nothing when there is none.
+ */
+export function renderOutside(exposure: SliceExposure): string[] {
+  const outside = exposure.outside ?? [];
+  if (outside.length === 0) return [];
+  const lines = outside.reduce((sum, folder) => sum + folder.lines, 0);
+  const width = Math.max(...outside.map(({ folder }) => folder.length));
+  return [
+    `Source from outside the entry points, ${number(lines)} lines the contributor reads (tests not counted; keep a folder out with --private <path>):`,
+    ...outside.map(
+      ({ folder, files, lines: count }) =>
+        `  ${folder.padEnd(width)}  ${number(files)} file${files === 1 ? "" : "s"}, ${number(count)} lines`,
+    ),
+  ];
 }
 
 export const TEST_LEFT_REASON: Readonly<Record<SliceTestLeft["reason"], string>> = {
