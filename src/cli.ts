@@ -669,7 +669,8 @@ async function main(argv: readonly string[]) {
         ];
         process.stdout.write(lines.join("\n"));
       }
-      if (!record.ready || verdict.handoff !== "ready") process.exitCode = 2;
+      // Acceptance tests that pass before the work would accept anything.
+      if (!record.ready || verdict.handoff !== "ready" || vacuous === true) process.exitCode = 2;
       return;
     }
 
