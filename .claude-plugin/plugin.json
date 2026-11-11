@@ -1,5 +1,6 @@
 {
   "name": "carveout",
+  "displayName": "carveout",
   "version": "0.1.1",
   "description": "Hand one part of a closed TypeScript repository to an outside contractor as a slice that installs, builds and tests on its own, and take a checked patch back. Also checks a change made in the repository: what it reaches, the tests to run, and weakened tests or config edits.",
   "author": {
@@ -8,6 +9,8 @@
   },
   "homepage": "https://github.com/lunox-work/carveout#readme",
   "repository": "https://github.com/lunox-work/carveout",
+  "documentationUrl": "https://github.com/lunox-work/carveout/blob/main/docs/REFERENCE.md",
+  "supportUrl": "https://github.com/lunox-work/carveout/issues",
   "license": "MIT",
   "keywords": [
     "contractor",
