@@ -17,7 +17,7 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
 import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -40,6 +40,7 @@ import {
 } from "./core.js";
 import { symbolDiff } from "./status.js";
 import { trustedRepo } from "./policy.js";
+import { sandboxRun, type SandboxSpec } from "./sandbox.js";
 import { folderView, saveRecord, trustedCut } from "./receipt.js";
 import { exactToFolder, fromFolder, looseLeaks, toFolder, wordsToFolder, type FolderPseudonyms } from "./pseudonyms/index.js";
 import { workspacePackages } from "./extract/compiler-config.js";
@@ -561,7 +562,7 @@ async function neededStubs(
 }
 
 export interface MergeStep {
-  readonly step: "patch" | "apply" | "verify";
+  readonly step: "patch" | "apply" | "setup" | "verify";
   readonly ok: boolean;
   readonly output: string;
 }
@@ -570,6 +571,45 @@ export interface Merge {
   readonly patch: Patch;
   readonly steps: readonly MergeStep[];
   readonly ok: boolean;
+}
+
+/**
+ * The checkout's tracked and unignored files, copied to `to`: what a
+ * sandboxed verify mounts. A symbolic link is copied as a link, which in the
+ * container reaches nothing outside the copy.
+ */
+function copyCheckout(from: string, to: string): void {
+  const listed = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
+    cwd: from,
+    maxBuffer: 256 * 1024 * 1024,
+  }).toString("utf8");
+  for (const path of new Set(listed.split("\0"))) {
+    if (path === "") continue;
+    const source = join(from, path);
+    let stat;
+    try {
+      stat = lstatSync(source);
+    } catch {
+      continue; // Listed, deleted from the working tree.
+    }
+    const target = join(to, path);
+    mkdirSync(dirname(target), { recursive: true });
+    if (stat.isSymbolicLink()) symlinkSync(readlinkSync(source), target);
+    else if (stat.isFile()) copyFileSync(source, target);
+  }
+}
+
+/** The install a lockfile names, lifecycle scripts off; null with no package.json. */
+export function installCommand(root: string): string | null {
+  if (existsSync(join(root, "package-lock.json")) || existsSync(join(root, "npm-shrinkwrap.json")))
+    return "npm ci --ignore-scripts --no-audit --no-fund";
+  if (existsSync(join(root, "pnpm-lock.yaml"))) return "corepack pnpm install --frozen-lockfile --ignore-scripts";
+  if (existsSync(join(root, "yarn.lock")))
+    return existsSync(join(root, ".yarnrc.yml"))
+      ? "corepack yarn install --immutable --mode=skip-build"
+      : "corepack yarn install --frozen-lockfile --ignore-scripts";
+  if (existsSync(join(root, "package.json"))) return "npm install --ignore-scripts --no-audit --no-fund";
+  return null;
 }
 
 /**
@@ -592,6 +632,15 @@ export async function mergeProject(
     readonly receipt?: string;
     /** No receipt: judge the folder by its own record. */
     readonly noReceipt?: boolean;
+    /**
+     * Verify in a container (`sandbox.ts`) on a copy of the checkout as the
+     * patch left it (tracked and unignored files: no `node_modules`, no
+     * ignored `.env`): `verifySetup` (else an install the lockfile names,
+     * scripts off) with a network, then `verify` with none.
+     */
+    readonly sandbox?: SandboxSpec;
+    /** The install before a sandboxed verify, run with a network; else one the lockfile names, scripts off. */
+    readonly verifySetup?: string;
   },
 ): Promise<Merge> {
   const into = resolve(options.into);
@@ -650,17 +699,42 @@ export async function mergeProject(
         const value = process.env[name];
         if (value !== undefined) env[name] = value;
       }
-      const verify = spawnSync("sh", ["-c", options.verify], {
-        cwd: into,
-        encoding: "utf8",
-        maxBuffer: 256 * 1024 * 1024,
-        env,
-      });
-      steps.push({
-        step: "verify",
-        ok: verify.status === 0,
-        output: `${verify.stdout ?? ""}${verify.stderr ?? ""}`.slice(-20_000),
-      });
+      if (options.sandbox !== undefined) {
+        // A copy of the checkout as the patch left it, so nothing of this
+        // machine but that copy is mounted: tracked and unignored files.
+        const work = join(scratch, "checkout");
+        copyCheckout(into, work);
+        const setupCommand = options.verifySetup ?? installCommand(work);
+        if (setupCommand !== null) {
+          const setup = await sandboxRun(options.sandbox, work, ["sh", "-c", setupCommand], { network: true, limitMs: 20 * 60_000 });
+          steps.push({
+            step: "setup",
+            ok: setup.status === 0,
+            output: `${setupCommand}\n${setup.stdout}${setup.stderr}`.slice(-20_000),
+          });
+          if (setup.status !== 0) return { patch, steps, ok: false };
+        }
+        const passed: Record<string, string> = {};
+        for (const [key, value] of Object.entries(env)) if (key !== "HOME" && key !== "PATH") passed[key] = value;
+        const verify = await sandboxRun(options.sandbox, work, ["sh", "-c", options.verify], { env: passed, network: false, limitMs: 30 * 60_000 });
+        steps.push({
+          step: "verify",
+          ok: verify.status === 0,
+          output: `${verify.stdout}${verify.stderr}`.slice(-20_000),
+        });
+      } else {
+        const verify = spawnSync("sh", ["-c", options.verify], {
+          cwd: into,
+          encoding: "utf8",
+          maxBuffer: 256 * 1024 * 1024,
+          env,
+        });
+        steps.push({
+          step: "verify",
+          ok: verify.status === 0,
+          output: `${verify.stdout ?? ""}${verify.stderr ?? ""}`.slice(-20_000),
+        });
+      }
     }
   } finally {
     await rm(scratch, { recursive: true, force: true });

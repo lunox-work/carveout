@@ -85,6 +85,7 @@ import {
 import { moduleSpecifiers, parseSource } from "./specifiers.js";
 import { scanSecrets, secretBlockers } from "./project/secrets.js";
 import { checkRecordPaths, handoffPolicy, trustedRepo, type Refusal } from "./policy.js";
+import { sandboxRun, type SandboxSpec } from "./sandbox.js";
 import { configuredFolders, liveCandidates, type Readiness } from "./readiness.js";
 import {
   exactToFolder,
@@ -2710,6 +2711,20 @@ function folderEdited(dir: string, record: CarveoutRecord): boolean {
   );
 }
 
+/**
+ * Whether a folder holds someone else's work: edited since the cut, by the
+ * receipt's hashes. With no receipt it is taken as edited: the folder's own
+ * record came back with it and cannot vouch that it is not.
+ */
+export function folderCameBack(dir: string, options: { readonly receipt?: string; readonly noReceipt?: boolean } = {}): boolean {
+  const trusted = trustedCut(dir, options.receipt, { optional: true, ...(options.noReceipt === true ? { noReceipt: true } : {}) });
+  if (trusted.receipt === null) return true;
+  const record = folderView(trusted.receipt);
+  // A record from before the cut's own files were hashed: no telling.
+  if (record.copied === undefined) return true;
+  return folderEdited(resolve(dir), record);
+}
+
 /** The package names the slice's files spell as specifiers, at the cut's commit (or as the checkout holds them). */
 export function sliceSpecifierPackages(record: CarveoutRecord, repo: string | null | undefined): string[] {
   if (repo === null || repo === undefined || !existsSync(repo)) return [];
@@ -2823,6 +2838,18 @@ export async function checkProject(
      * would carry.
      */
     readonly held?: readonly string[];
+    /**
+     * With `held`: when a file patch keeps out would run as the folder
+     * holds it (neither a test-side file put back nor an added file taken
+     * out), run nothing and say which.
+     */
+    readonly refuseHeld?: boolean;
+    /**
+     * Run every step in a container (`sandbox.ts`): only the scratch copy
+     * mounted, the network only for an install with scripts off. For a
+     * folder that came back.
+     */
+    readonly sandbox?: SandboxSpec;
   } = {},
 ): Promise<readonly CheckStep[]> {
   // The receipt's record and baseline when there is one: a folder that
@@ -2922,8 +2949,12 @@ export async function checkProject(
   const installFlags = [
     "--no-audit",
     "--no-fund",
-    ...(options.isolated === true ? ["--ignore-scripts"] : []),
+    ...(options.isolated === true || options.sandbox !== undefined ? ["--ignore-scripts"] : []),
   ];
+  // The one step with a network: npm reads a project .npmrc, which could
+  // point it elsewhere or set its options; the cut writes none.
+  if (options.sandbox !== undefined && work !== source && !record.generated.some((file) => file.path === ".npmrc"))
+    await rm(join(work, ".npmrc"), { force: true });
   const run = [
     record.lockfile || existsSync(join(work, "package-lock.json"))
       ? ["npm", "ci", ...installFlags]
@@ -2955,22 +2986,41 @@ export async function checkProject(
   const baselineEdited = chosen.edited.length > 0 ? chosen.edited : undefined;
   // The owner's acceptance tests, in the check's copy only.
   const acceptedAt: string[] = [];
-  if (options.accept !== undefined && options.accept.length > 0) {
+  const table = trusted.receipt?.pseudonyms;
+  // What patch keeps out does not run: a test, a helper or a setup file the
+  // folder edited is put back as the cut wrote it, a file it added is taken
+  // out. Any other (a slice file that gained reach, say) would run as the
+  // folder holds it: with `refuseHeld`, nothing runs at all.
+  if (options.held !== undefined && options.held.length > 0) {
     if (work === source)
-      return [{ command: "accept", ok: false, output: "Acceptance tests run in a copy of the folder, never in it: check without --in-place." }];
-    const table = trusted.receipt?.pseudonyms;
-    // What patch keeps out does not reach the acceptance run: a test, a
-    // helper or a setup file the folder edited is put back as the cut wrote
-    // it, a file it added is taken out.
+      return [{ command: "policy", ok: false, output: "What patch keeps out is put back in a copy of the folder, never in it: check without --in-place." }];
     const cutPaths = new Set([...record.manifest.included.map((file) => file.path), ...record.generated.map((file) => file.path)]);
-    for (const path of options.held ?? []) {
+    const asHeld: string[] = [];
+    for (const path of options.held) {
       const folderPath = table === undefined ? path : (exactToFolder(table, path, "")?.path ?? toFolder(table, path, "").path);
       const original = trusted.receipt?.testText?.[folderPath];
       if (original !== undefined) {
         await mkdir(dirname(join(work, folderPath)), { recursive: true });
         await writeFile(join(work, folderPath), original);
       } else if (!cutPaths.has(folderPath)) await rm(join(work, folderPath), { force: true });
+      else if (existsSync(join(work, folderPath))) asHeld.push(path);
     }
+    if (asHeld.length > 0 && options.refuseHeld === true) {
+      if (scratch !== null) await rm(scratch, { recursive: true, force: true });
+      return [
+        {
+          command: "policy",
+          ok: false,
+          output: `patch keeps out ${asHeld.length} file(s) that would run as the folder holds them, so nothing of the folder ran:\n${asHeld
+            .map((path) => `  ${path}`)
+            .join("\n")}\nRead them (carveout patch names why), then check again with --allow <path> for each you accept.`,
+        },
+      ];
+    }
+  }
+  if (options.accept !== undefined && options.accept.length > 0) {
+    if (work === source)
+      return [{ command: "accept", ok: false, output: "Acceptance tests run in a copy of the folder, never in it: check without --in-place." }];
     for (const test of options.accept) {
       const folder = table === undefined ? { path: test.path, text: test.text } : exactToFolder(table, test.path, test.text);
       if (folder === null)
@@ -3015,6 +3065,13 @@ export async function checkProject(
   // no file pattern, twin or name the baseline holds can pass it unseen;
   // and on the build, before the folder's own tests run any of its code in
   // the copy, so nothing it writes there stands in for them.
+  /** Runs a command of the folder's in its copy: in the container with no network when sandboxed, else here. */
+  const runFolder = (argv: readonly string[], runEnv: Record<string, string>) => {
+    const [executable = "true", ...args] = argv;
+    return options.sandbox === undefined
+      ? runGroup(executable, args, work, runEnv)
+      : sandboxRun(options.sandbox, work, argv, { cwd: work, env: env, network: false });
+  };
   const accept = async () => {
     // A child's environment is the one given, whole: PATH finds node for
     // a runner's `#!/usr/bin/env node`, as every other step has it.
@@ -3041,7 +3098,7 @@ export async function checkProject(
           lines.push(`FAIL ${path}: it runs on Vitest, which the folder does not install (cut again with --install vitest)`);
           continue;
         }
-        const result = await runGroup(bin, ["run", "--config", "vitest.config.mjs", "--reporter=json", `--outputFile.json=${report}`, path], work, acceptEnv);
+        const result = await runFolder([bin, "run", "--config", "vitest.config.mjs", "--reporter=json", `--outputFile.json=${report}`, path], acceptEnv);
         output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
         try {
           const json = JSON.parse(readFileSync(report, "utf8")) as { testResults?: { assertionResults?: { status?: string }[]; status?: string }[] };
@@ -3057,10 +3114,8 @@ export async function checkProject(
         }
       } else {
         const compiled = path.replace(/\.tsx?$/, ".js").replace(/\.mts$/, ".mjs").replace(/\.cts$/, ".cjs");
-        const result = await runGroup(
-          process.execPath,
-          [`--env-file=${ENV_FILE}`, `--import=./${ASSETS_LOADER_PATH}`, "--test", "--test-reporter=tap", "--test-reporter-destination=stdout", compiled],
-          work,
+        const result = await runFolder(
+          [process.execPath, `--env-file=${ENV_FILE}`, `--import=./${ASSETS_LOADER_PATH}`, "--test", "--test-reporter=tap", "--test-reporter-destination=stdout", compiled],
           acceptEnv,
         );
         output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
@@ -3087,11 +3142,24 @@ export async function checkProject(
   for (const argv of run) {
     const [executable = "npm", ...args] = argv;
     try {
-      const output = await command(executable, args, {
-        cwd: work,
-        signal: AbortSignal.timeout(10 * 60_000),
-        env,
-      });
+      const output =
+        options.sandbox === undefined
+          ? await command(executable, args, {
+              cwd: work,
+              signal: AbortSignal.timeout(10 * 60_000),
+              env,
+            })
+          : await sandboxRun(options.sandbox, work, argv, {
+              cwd: work,
+              env,
+              // Only the install reaches the registry, with scripts off.
+              network: argv[1] === "ci" || argv[1] === "install",
+            }).then((result) => {
+              if (result.status === 0) return result.stdout;
+              throw new Error(
+                `${argv.join(" ")} exited ${result.status ?? "on a signal"} in the sandbox:\n${`${result.stdout.trim()}\n${result.stderr.trim()}`.trim().split("\n").slice(-40).join("\n")}`,
+              );
+            });
       steps.push({ command: argv.join(" "), ok: true, output });
       if (argv[1] === "run" && argv[2] === "build" && acceptedAt.length > 0)
         // Its own failure, never the build's.

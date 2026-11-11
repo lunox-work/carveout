@@ -72,6 +72,12 @@ What to tell them, accurately:
   tests and new files are code beside the closed repository, and a branch
   pushed there gets CI's secrets and network), then let the repository's
   CI judge the change: a pass in the slice is a pass against mocks.
+- `carveout check` and `merge --verify` run a folder that came back only
+  after the hand-off policy has read it, and only in a container (Docker)
+  that mounts nothing of the machine but a copy, with no network but for an
+  install with scripts off. When the container cannot run, they run
+  nothing; `--no-sandbox` runs the folder's code as the person, with their
+  files and network: say so before passing it.
 - For a job long enough that the repository moves, `carveout refresh`
   brings its commits into the folder, merged into the work (an overlap is
   named, never overwritten), and a patch after it carries the work alone;

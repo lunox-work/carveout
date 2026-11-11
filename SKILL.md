@@ -44,7 +44,7 @@ the repository, at a fixed scope:
 carveout handoff <entry>... --task task.md --out ../job   # cut, check, verdict
 # send ../job without node_modules; keep the receipt the command names
 carveout patch ../job-returned --output change.patch      # runs none of its code
-carveout check ../job-returned --isolated --accept test/acceptance.test.ts  # the owner's hidden tests
+carveout check ../job-returned --accept test/acceptance.test.ts  # the owner's hidden tests, in a container
 git switch -c contrib/job && git apply --3way change.patch  # then CI decides
 ```
 
@@ -273,7 +273,7 @@ The rest of the cut's behaviour:
 ## 3. Check
 
 ```sh
-carveout check <folder> [--isolated]
+carveout check <folder> [--accept <test>...] [--allow <path>]... [--no-sandbox]
 ```
 
 It runs `npm ci`, `npm run build` and `npm test` in a scratch copy of the
@@ -287,11 +287,18 @@ was mocked (no lockfile), the cut reports `test_runner_mocked`; cut again
 with `--install vitest`. When a
 package is missing at runtime, the check says which `--install` to cut again
 with. Report the result to the person as it is. A failed step is not "mostly
-working". `--isolated`, for a folder that came back from someone else,
-gives it a scratch HOME and npm cache and no install scripts; it is not a
-sandbox, so run an untrusted folder's tests in a container with no
-secrets and no network instead. A branch pushed to the repository is not
-that: its CI has the repository's secrets and network.
+working". A folder that came back from someone else (edited since the
+cut, or with no receipt) is read by the hand-off policy first: the test
+side of what `patch` keeps out is put back as the cut wrote it, what the
+folder added is taken out, and any other file it keeps out stops the check
+(exit 6) until `--allow` names it, after you have read it. Then every step
+runs in a container (Docker; `CARVEOUT_CONTAINER` for another) that mounts
+only the check's copy, with no network but for `npm ci` with scripts off.
+When the container cannot run, check runs nothing: tell the person, and
+pass `--no-sandbox` only when they agree to run the folder's code as
+themselves, with their files and network. A branch pushed to the
+repository is not a sandbox either: its CI has the repository's secrets and
+network.
 
 `npm test` in a checked folder reports in short: in full only the failures
 that are not the baseline's (node:test's and Vitest's alike), with the
@@ -455,8 +462,12 @@ carveout apply <folder> upstream.patch [--stubs] [--repo <checkout>]
 `merge` runs `patch`, then `git apply --3way` in the checkout you name,
 then the verify command at its root. It reports each step, and exits 2 when
 one fails, 6 (applying nothing) when the hand-off policy refuses a path.
-The verify command gets a scratch HOME and only the variables named with
-`--verify-env`. It never picks a checkout itself. Name a clean clone, or
+The verify command runs in a container on a copy of the checkout as the
+patch left it (tracked and unignored files), after the install its
+lockfile names with scripts off (`--verify-setup <cmd>` for another, with
+a network), with no network and only the variables named with
+`--verify-env`. When the container cannot run, nothing is applied;
+`--no-sandbox` runs it at the checkout's root as the person. It never picks a checkout itself. Name a clean clone, or
 the person's own checkout only when they ask.
 
 When the repository moves during the job, `carveout refresh <folder>`

@@ -1,7 +1,7 @@
 <!doctype html>
 <!-- Source of assets/hero.png; render with `PLAYWRIGHT=<dir with node_modules/playwright> node assets/src/render.mjs`.
      "11%": experiments/results/hero-exposure.json (8 sandbox-factory slices, median, with the hand-off's flags --whole-package --with-tests --copy-pure; 0.7% for a default cut).
-     "0 lines": carveout patch reads the returned folder and runs none of it. The held list is the patch policy. -->
+     "0 lines": carveout patch reads the returned folder and runs none of it; check and merge --verify run it only in a container with no network. The held list is the patch policy. -->
 <html>
 <head>
 <meta charset="utf-8">
@@ -52,7 +52,7 @@ h1 span { color: var(--muted); }
 
 <section class="scene" id="hero">
   <div class="mark">carveout</div>
-  <h1>Zero-trust handoff for your codebase. <span>They see one folder. None of their code runs until you've read it.</span></h1>
+  <h1>Zero-trust handoff for your codebase. <span>They see one folder. Until you've read it, their code runs only in a sealed container.</span></h1>
   <div class="cols">
     <div class="col">
       <div class="stat">
@@ -66,7 +66,7 @@ h1 span { color: var(--muted); }
       <div class="stat">
         <div class="label">What runs</div>
         <div class="num">0<small>lines</small></div>
-        <div class="of">of their code, before<br>you read the patch</div>
+        <div class="of">of their code run on<br>your machine</div>
       </div>
       <ul class="held" id="held"></ul>
     </div>

@@ -11,11 +11,13 @@
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { defaultSandbox, sandboxUnavailable, type SandboxSpec } from "./sandbox.js";
 import {
   CARVEOUT_VERSION,
   carveoutHome,
   checkProject,
   cutSlice,
+  folderCameBack,
   patchProject,
   planSlice,
   readRecord,
@@ -84,10 +86,17 @@ const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript r
       renames the folder back. --keep-names writes it in the repository's
       names; a name left in the folder is a blocker either way.
 
-  carveout check <dir> [--in-place] [--isolated] [--accept <test>...] [--receipt <file>] [--json]
-      npm ci, npm run build and npm test in a scratch copy of <dir>. --isolated,
-      for a folder that came back from someone else: a scratch HOME and npm
-      cache and no install scripts (not a sandbox).
+  carveout check <dir> [--in-place] [--isolated] [--accept <test>...] [--allow <path>]...
+                 [--no-sandbox] [--sandbox-image <image>] [--receipt <file>] [--json]
+      npm ci, npm run build and npm test in a scratch copy of <dir>. A folder
+      that came back (edited since the cut, or with no receipt to say it is
+      not) is read by the hand-off policy first: what patch keeps out of the
+      test side is put back as the cut wrote it, what the folder added is taken
+      out, and any other file it keeps out stops the check (exit 6) until
+      --allow names it. Then every step runs in a container with only the
+      copy mounted and no network but for npm ci (scripts off); --no-sandbox
+      runs it here as you. --isolated: a scratch HOME and npm cache and no
+      install scripts, and the same as a folder that came back.
 
   carveout status <dir> [--repo <checkout>] [--receipt <file>] [--json]
       Whether <dir> still matches the repository, and what changed if not.
@@ -116,10 +125,15 @@ const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript r
       that needs a module the slice cut. A public folder keeps its names.
 
   carveout merge <dir> --into <checkout> [--verify <command>] [--verify-env <name>]...
+                 [--verify-setup <command>] [--no-sandbox] [--sandbox-image <image>]
                  [--allow <path>]... [--receipt <file>] [--json]
-      patch, then git apply --3way in <checkout>, then <command> at its root,
-      with a scratch HOME and only the environment variables named. Applies
-      nothing while the hand-off policy keeps a file out.
+      patch, then git apply --3way in <checkout>, then <command> in a
+      container on a copy of the checkout (tracked and unignored files): the
+      install the lockfile names (or --verify-setup), scripts off, with a
+      network; then <command> with none, and only the environment variables
+      named. --no-sandbox runs it at the checkout's root as you. Applies
+      nothing while the hand-off policy keeps a file out, or when the
+      container cannot run.
 
   carveout gate  [--repo <dir>] [--base <ref>] [--scope <path>]... [--allow <path>]...
                  [--hook] [--json]
@@ -301,9 +315,12 @@ async function main(argv: readonly string[]) {
       into: { type: "string" },
       verify: { type: "string" },
       "verify-env": { type: "string", multiple: true },
+      "verify-setup": { type: "string" },
       allow: { type: "string", multiple: true },
       public: { type: "boolean" },
       isolated: { type: "boolean" },
+      sandbox: { type: "boolean" },
+      "sandbox-image": { type: "string" },
       base: { type: "string" },
       scope: { type: "string", multiple: true },
       hook: { type: "boolean" },
@@ -867,27 +884,52 @@ async function main(argv: readonly string[]) {
           if (unseen.length !== (held.receipt.unseen ?? []).length) writeReceipt(held.receiptPath, { ...held.receipt, unseen });
         }
       }
-      // What patch keeps out never reaches the acceptance run (a weakened
-      // helper the acceptance tests import, say): read first, without
+      // A folder that came back holds someone else's code: the hand-off
+      // policy reads it first, and it runs only in a container.
+      const cameBack = folderCameBack(dir, receiptOption);
+      const returned = cameBack || accept.length > 0 || values.isolated === true;
+      // What patch keeps out never runs (a weakened helper the acceptance
+      // tests import, a new test that reads the disk): read first, without
       // running anything of the folder's.
-      const heldBack =
-        accept.length === 0
-          ? []
-          : await patchProject(dir, { ...(values.repo === undefined ? {} : { repo: resolve(values.repo) }), ...receiptOption })
-              .then((patch) => patch.refused.map((refusal) => refusal.path))
-              // Unread, nothing would be held back: the folder's own
-              // helpers would run under the owner's tests.
-              .catch((error: unknown) =>
-                fail(
-                  `check --accept first reads what the folder's patch holds back, and could not: ${error instanceof Error ? error.message : String(error)}`,
-                ),
-              );
+      const heldBack = !returned
+        ? []
+        : await patchProject(dir, {
+            ...(values.repo === undefined ? {} : { repo: resolve(values.repo) }),
+            ...(values.allow === undefined ? {} : { allow: values.allow }),
+            ...receiptOption,
+          })
+            .then((patch) => patch.refused.map((refusal) => refusal.path))
+            // Unread, nothing would be held back: the folder's own code
+            // would run unread.
+            .catch((error: unknown) =>
+              fail(
+                `check reads what the patch of a folder that came back holds back before running any of it, and could not (run it at the repository's root, or pass --repo): ${error instanceof Error ? error.message : String(error)}`,
+              ),
+            );
+      let sandbox: SandboxSpec | undefined;
+      if (values.sandbox === true || (values.sandbox !== false && returned)) {
+        sandbox = defaultSandbox(values["sandbox-image"]);
+        const why = sandboxUnavailable(sandbox);
+        if (why !== null)
+          fail(
+            `A folder that came back runs only in a container, with no network but for the install and nothing of this machine's mounted but its copy; ${why} Or pass --no-sandbox to run its code as you, with your files and network.`,
+          );
+      }
       const steps = await checkProject(dir, {
         ...(values["in-place"] === true ? { inPlace: true } : {}),
         ...(values.isolated === true ? { isolated: true } : {}),
-        ...(accept.length === 0 ? {} : { accept, held: heldBack }),
+        ...(accept.length === 0 ? {} : { accept }),
+        ...(returned ? { held: heldBack, refuseHeld: true } : {}),
+        ...(sandbox === undefined ? {} : { sandbox }),
         ...receiptOption,
       });
+      const refusedStep = steps.find((step) => step.command === "policy");
+      if (refusedStep !== undefined) {
+        if (values.json === true) print({ ok: false, handoff: "failed", policy: refusedStep.output, steps });
+        else process.stderr.write(`carveout: ${refusedStep.output}\n`);
+        process.exitCode = 6;
+        return;
+      }
       const own = steps.filter((step) => step.command !== "accept");
       const ok = own.length === 3 && own.every((step) => step.ok);
       const acceptStep = steps.find((step) => step.command === "accept");
@@ -937,6 +979,12 @@ async function main(argv: readonly string[]) {
           process.stdout.write(
             `The folder's carveout/baseline.json names ${baselineEdited.length} test(s) the receipt's baseline does not; they were counted:\n${list(baselineEdited)}\n`,
           );
+        if (sandbox !== undefined)
+          process.stdout.write(
+            `Ran in a container (${sandbox.runtime}, ${sandbox.image}): only the check's copy mounted, no network but for the install (scripts off).${heldBack.length === 0 ? "" : ` patch keeps ${heldBack.length} file(s) out (${heldBack.join(", ")}): the tests, helpers and setup files among them ran as the cut wrote them, and none the folder added.`}\n`,
+          );
+        else if (cameBack)
+          process.stdout.write("Ran on this machine, as you (--no-sandbox): the folder's code had your files and network.\n");
         for (const step of steps) {
           process.stdout.write(`${step.ok ? "ok  " : "FAIL"} ${step.command}\n`);
           if (!step.ok || step.baseline !== undefined)
@@ -993,7 +1041,7 @@ async function main(argv: readonly string[]) {
                   acceptStep === undefined
                     ? `The owner's ${accept.length} acceptance test file(s) did not run: the folder did not install or build (above).`
                     : acceptStep.ok
-                      ? `The owner's ${accept.length} acceptance test file(s) ran on their own, in the check's copy, and pass.${heldBack.length === 0 ? "" : ` patch keeps ${heldBack.length} file(s) out (${heldBack.join(", ")}): the run had the tests, helpers and setup files among them as the cut wrote them and none the folder added; any other ran as the folder holds it.`}`
+                      ? `The owner's ${accept.length} acceptance test file(s) ran on their own, in the check's copy, and pass.${heldBack.length === 0 ? "" : ` patch keeps ${heldBack.length} file(s) out (${heldBack.join(", ")}): the run had the tests, helpers and setup files among them as the cut wrote them and none the folder added.`}`
                       : `The owner's acceptance tests do not pass on the folder that came back:\n${acceptStep.output}`,
                 ]),
           ].join("\n")}\n`,
@@ -1264,12 +1312,25 @@ async function main(argv: readonly string[]) {
       if (dir === undefined) fail("merge needs the folder a cut wrote.");
       if (values.into === undefined)
         fail("merge needs --into <checkout>: the checkout to apply the edits in.");
+      // The verify command runs the folder's code: in a container unless
+      // told otherwise, checked before anything is applied.
+      let verifySandbox: SandboxSpec | undefined;
+      if (values.verify !== undefined && values.sandbox !== false) {
+        verifySandbox = defaultSandbox(values["sandbox-image"]);
+        const why = sandboxUnavailable(verifySandbox);
+        if (why !== null)
+          fail(
+            `merge --verify runs the folder's code only in a container, on a copy of the checkout with no network but for the install; nothing was applied. ${why} Or pass --no-sandbox to run it in the checkout as you, with your files and network.`,
+          );
+      }
       const merge = await mergeProject(dir, {
         into: values.into,
         ...(values.verify === undefined ? {} : { verify: values.verify }),
         ...(values.repo === undefined ? {} : { repo }),
         ...(values.allow === undefined ? {} : { allow: values.allow }),
         ...(values["verify-env"] === undefined ? {} : { verifyEnv: values["verify-env"] }),
+        ...(verifySandbox === undefined ? {} : { sandbox: verifySandbox }),
+        ...(values["verify-setup"] === undefined ? {} : { verifySetup: values["verify-setup"] }),
         ...receiptOption,
       });
       if (values.json === true) print(merge);
