@@ -44,8 +44,14 @@ the repository, at a fixed scope:
 carveout handoff <entry>... --task task.md --out ../job   # cut, check, verdict
 # send ../job without node_modules; keep the receipt the command names
 carveout patch ../job-returned --output change.patch      # runs none of its code
+carveout check ../job-returned --isolated --accept test/acceptance.test.ts  # the owner's hidden tests
 git switch -c contrib/job && git apply --3way change.patch  # then CI decides
 ```
+
+`check --accept` runs the owner's acceptance tests, kept in the repository
+and never sent, with the returned folder's tests, in a copy: it runs the
+folder's code, so read the patch first, and run it in a container with no
+secrets when the folder's author is not trusted.
 
 `handoff` exits 0 only when the folder is ready: its tests pass before
 any edit. Otherwise report the verdict as it is: tests that fail on the
