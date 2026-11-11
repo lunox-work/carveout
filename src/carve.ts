@@ -2993,7 +2993,11 @@ export async function checkProject(
         env,
       });
       steps.push({ command: argv.join(" "), ok: true, output });
-      if (argv[1] === "run" && argv[2] === "build" && acceptedAt.length > 0) await accept();
+      if (argv[1] === "run" && argv[2] === "build" && acceptedAt.length > 0)
+        // Its own failure, never the build's.
+        await accept().catch((error: unknown) => {
+          steps.push({ command: "accept", ok: false, output: error instanceof Error ? error.message : String(error) });
+        });
     } catch (error) {
       const output = error instanceof Error ? error.message : String(error);
       const baseline =
