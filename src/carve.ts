@@ -2039,12 +2039,14 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
       ...textExtras.map((path) => ({ path, text: extraText.get(path) ?? "" })),
     ];
     if (receipt !== null && request.pseudonyms !== false && vocabulary.length > 0) {
+      const sliceFiles = new Set([...computed.manifest.included.map((file) => file.path), ...extras]);
       const result = pseudonymize({
         files: texts,
         binaries: binaryPaths,
         vocabulary,
         owner: config.pseudonyms ?? [],
         kept: keptPackages,
+        readBack: (path) => sliceFiles.has(path),
         ...(request.earlierPseudonyms === undefined ? {} : { earlier: request.earlierPseudonyms }),
       });
       if (!result.ok)
@@ -2744,7 +2746,13 @@ export interface PatchOptions {
  * made from, as from a folder cut in those names. Two files that would
  * land on one path are refused, never merged.
  */
-async function unaliasFolder(root: string, table: FolderPseudonyms, record: CarveoutRecord): Promise<string> {
+async function unaliasFolder(
+  root: string,
+  table: FolderPseudonyms,
+  record: CarveoutRecord,
+  /** A package the repository knows: a renamed specifier that names one goes back. */
+  repositoryPackage: (name: string) => boolean = () => false,
+): Promise<string> {
   const scratch = mkdtempSync(join(tmpdir(), "carveout-names-"));
   const folder = join(scratch, "folder");
   const from = new Map<string, string>();
@@ -2764,7 +2772,7 @@ async function unaliasFolder(root: string, table: FolderPseudonyms, record: Carv
     if (path === RECORD_PATH) continue;
     const bytes = readFileSync(join(root, path));
     const binary = isBinaryPath(path) || !isTextContent(bytes);
-    const back = fromFolder(table, path, binary ? "" : bytes.toString("utf8"), (name) => own.has(name));
+    const back = fromFolder(table, path, binary ? "" : bytes.toString("utf8"), (name) => own.has(name), repositoryPackage);
     const earlier = from.get(back.path);
     if (earlier !== undefined) {
       await rm(scratch, { recursive: true, force: true });
@@ -2901,7 +2909,21 @@ export async function patchProject(
   // that copy, in the repository's names.
   const table = trusted.receipt?.pseudonyms;
   if (table !== undefined && options.unaliased !== true) {
-    const folder = await unaliasFolder(root, table, trusted.receipt?.record ?? trusted.record);
+    const named = trusted.receipt?.record ?? trusted.record;
+    // The packages the repository knows: its workspaces', and those the
+    // cut found the slice depends on.
+    let workspaceNames: string[] = [];
+    try {
+      workspaceNames = [...workspacePackages(trustedRepo({ ...named, repo: named.repo ?? trusted.receipt?.repo ?? null }, options.repo)).keys()];
+    } catch {
+      // No checkout to read: the record's own names alone.
+    }
+    const known = new Set([
+      ...workspaceNames,
+      ...named.dependencies.map((dependency) => dependency.name),
+      ...named.manifest.requiredBuildInputs.packages.map((item) => item.name),
+    ]);
+    const folder = await unaliasFolder(root, table, named, (name) => known.has(name));
     try {
       return await patchProject(folder, {
         ...options,

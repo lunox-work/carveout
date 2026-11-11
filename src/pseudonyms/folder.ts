@@ -336,6 +336,12 @@ export function pseudonymize(input: {
   readonly kept: readonly string[];
   /** An earlier cut's pseudonyms, whose placeholders are kept where they fit. */
   readonly earlier?: FolderPseudonyms;
+  /**
+   * The files a patch will read back (the slice's own): each must come
+   * back through `fromFolder` byte for byte, as `patch` reads it, or a
+   * patch of a folder no one edited would carry a change.
+   */
+  readonly readBack?: (path: string) => boolean;
 }): Pseudonymized {
   const masked: AliasedFile[] = [
     ...input.files.map((file) => ({ path: file.path, text: maskKept(file.text, input.kept) })),
@@ -369,14 +375,45 @@ export function pseudonymize(input: {
     [...files.values()].map((file) => ({ path: file.path, text: maskKept(file.text, input.kept) })),
     input.vocabulary,
   );
+  const table: FolderPseudonyms = {
+    rules,
+    kept: [...input.kept],
+    vocabulary: [...input.vocabulary],
+    words: [...chosen].map(([term, placeholder]) => ({ term, placeholder })).sort((a, b) => (a.term < b.term ? -1 : 1)),
+  };
+  if (input.readBack !== undefined) {
+    // The folder's own mock packages, by their folder names, as patch finds them.
+    const own = new Set(
+      [...files.values()].flatMap((file) => {
+        const match = /^carveout\/packages\/((?:@[^/]+\/)?[^/]+)\//.exec(file.path);
+        return match?.[1] === undefined ? [] : [match[1]];
+      }),
+    );
+    // The packages the slice's own files import, which the repository knows.
+    const imported = new Set(
+      input.files.flatMap((file) =>
+        [...file.text.matchAll(SPECIFIER)].flatMap((match) => {
+          const specifier = match[3] ?? "";
+          if (specifier.startsWith(".") || specifier.startsWith("/")) return [];
+          return [specifier.startsWith("@") ? specifier.split("/").slice(0, 2).join("/") : (specifier.split("/")[0] ?? specifier)];
+        }),
+      ),
+    );
+    const problems = input.files
+      .filter((file) => input.readBack?.(file.path) === true)
+      .flatMap((file) => {
+        const folder = files.get(file.path);
+        if (folder === undefined) return [];
+        const back = fromFolder(table, folder.path, folder.text, (name) => own.has(name), (name) => imported.has(name));
+        return back.path === file.path && back.text === file.text
+          ? []
+          : [`round_trip ${file.path}: read back from the folder's names, it would not be the repository's byte for byte`];
+      });
+    if (problems.length > 0) return { ok: false, problems };
+  }
   return {
     ok: true,
-    table: {
-      rules,
-      kept: [...input.kept],
-      vocabulary: [...input.vocabulary],
-      words: [...chosen].map(([term, placeholder]) => ({ term, placeholder })).sort((a, b) => (a.term < b.term ? -1 : 1)),
-    },
+    table,
     files,
     pathOf: (path) => renamed.get(path) ?? renameFile({ path, text: "" }, rules).path,
     leaks,
@@ -448,10 +485,11 @@ export function exactToFolder(
   path: string,
   text: string,
   ownPackage: (name: string) => boolean = () => false,
+  repositoryPackage: (name: string) => boolean = () => false,
 ): { readonly path: string; readonly text: string } | null {
   const ruled = toFolder(table, path, text);
   const worded = { path: wordsToFolder(table, ruled.path), text: wordsToFolder(table, ruled.text) };
-  const back = (folder: { path: string; text: string }) => fromFolder(table, folder.path, folder.text, ownPackage);
+  const back = (folder: { path: string; text: string }) => fromFolder(table, folder.path, folder.text, ownPackage, repositoryPackage);
   const exact = (folder: { path: string; text: string }) => {
     const restored = back(folder);
     return restored.path === path && restored.text === text;
@@ -497,16 +535,33 @@ export function fromFolder(
   path: string,
   text: string,
   ownPackage: (name: string) => boolean = () => false,
+  /**
+   * A package the repository knows (a workspace package, a dependency it
+   * declares): a specifier the table's rules take back to one is the
+   * repository's own name the cut renamed (in an import, in a test's
+   * data), and goes back with the rest.
+   */
+  repositoryPackage: (name: string) => boolean = () => false,
 ): AliasedFile {
   const shielded: string[] = [];
+  const inverted = invertAliasRules(table.rules);
   const masked = maskKept(text, table.kept).replace(SPECIFIER, (whole, lead: string, quote: string, specifier: string) => {
     if (specifier.startsWith(".") || specifier.startsWith("/")) return whole;
     const name = specifier.startsWith("@") ? specifier.split("/").slice(0, 2).join("/") : (specifier.split("/")[0] ?? specifier);
     if (ownPackage(name)) return whole;
+    // A name the table's rules take back to a package the repository knows
+    // is the repository's own, renamed by the cut: it goes back. Any other
+    // (a package the holder imports by its own name, `zorvex-client`) is
+    // kept from the table and the words alike.
+    const quoted = `${quote}${specifier}${quote}`;
+    const viaRules = renameFile({ path, text: quoted }, inverted).text;
+    const restored = viaRules.startsWith(quote) && viaRules.endsWith(quote) ? viaRules.slice(1, -1) : specifier;
+    const restoredName = restored.startsWith("@") ? restored.split("/").slice(0, 2).join("/") : (restored.split("/")[0] ?? restored);
+    if (restored !== specifier && repositoryPackage(restoredName)) return whole;
     shielded.push(specifier);
     return `${lead}${quote}${SHIELD_OPEN}${shielded.length - 1}${SHIELD_CLOSE}${quote}`;
   });
-  const out = renameFile({ path, text: masked }, invertAliasRules(table.rules));
+  const out = renameFile({ path, text: masked }, inverted);
   const restored = restoreWords(out.text, table.words).replace(
     new RegExp(`${SHIELD_OPEN}(\\d+)${SHIELD_CLOSE}`, "g"),
     (whole, index: string) => shielded[Number(index)] ?? whole,

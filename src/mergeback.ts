@@ -41,6 +41,7 @@ import { symbolDiff } from "./status.js";
 import { trustedRepo } from "./policy.js";
 import { folderView, saveRecord, trustedCut } from "./receipt.js";
 import { exactToFolder, fromFolder, looseLeaks, toFolder, wordsToFolder, type FolderPseudonyms } from "./pseudonyms/index.js";
+import { workspacePackages } from "./extract/compiler-config.js";
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const sha256 = (data: string | Buffer) =>
@@ -144,9 +145,15 @@ export async function applyPatch(
   let trusted = trustedCut(root, options.receipt, options.noReceipt === true ? { noReceipt: true } : {});
   // A public folder in pseudonyms takes the change in its own names: each
   // file at its folder path, its text renamed by the receipt's table.
-  const names = namesOf(trusted.receipt?.pseudonyms, ownPackagesOf(root));
   const record = trusted.record;
   const source = trustedRepo(record, options.repo);
+  // The packages the repository knows, as patch reads them back.
+  const known = new Set([
+    ...workspacePackages(source).keys(),
+    ...record.dependencies.map((dependency) => dependency.name),
+    ...record.manifest.requiredBuildInputs.packages.map((item) => item.name),
+  ]);
+  const names = namesOf(trusted.receipt?.pseudonyms, ownPackagesOf(root), (name) => known.has(name));
   checkRecordFiles(record, source);
   const commit = record.manifest.sourceCommitSha;
   if (commit === null)
@@ -428,17 +435,21 @@ function ownPackagesOf(root: string): (name: string) => boolean {
 }
 
 /** The folder's names for a cut in pseudonyms (its table), or the repository's own. */
-function namesOf(table: FolderPseudonyms | undefined, own: (name: string) => boolean = () => false): Names {
+function namesOf(
+  table: FolderPseudonyms | undefined,
+  own: (name: string) => boolean = () => false,
+  known: (name: string) => boolean = () => false,
+): Names {
   if (table === undefined)
     return { path: (path) => path, text: (_path, text) => text, exact: (_path, text) => text, back: (_path, text) => text };
   // The table's rules, then a placeholder for each term they did not reach:
   // a file the repository added since the cut, or a line it wrote, spells
   // a term where no rule of the cut's matches.
   return {
-    path: (path) => exactToFolder(table, path, "", own)?.path ?? toFolder(table, path, "").path,
+    path: (path) => exactToFolder(table, path, "", own, known)?.path ?? toFolder(table, path, "").path,
     text: (path, text) => wordsToFolder(table, toFolder(table, path, text).text),
-    exact: (path, text) => exactToFolder(table, path, text, own)?.text ?? null,
-    back: (path, text) => fromFolder(table, path, text, own).text,
+    exact: (path, text) => exactToFolder(table, path, text, own, known)?.text ?? null,
+    back: (path, text) => fromFolder(table, path, text, own, known).text,
   };
 }
 

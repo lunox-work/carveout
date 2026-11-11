@@ -389,3 +389,33 @@ test("apply and refresh bring no credential into the folder, as a cut of the sam
   await assert.rejects(refreshProject(cut.out), /Nothing applied: the change would bring a credential/);
   assert.doesNotMatch(readFileSync(join(cut.out, "apps/shop/src/tax.ts"), "utf8"), new RegExp(key));
 });
+
+test("a renamed package name inside a file's own text data reads back, so a patch of an unedited folder is empty", async () => {
+  const { patchProject } = await import("../src/carve.js");
+  const data = join(scratch, "data-repo");
+  cpSync(FIXTURE, data, { recursive: true });
+  // A scope long enough to be a name the folder hides.
+  for (const file of ["package.json", "apps/shop/package.json", "packages/money/package.json", "apps/shop/src/cart.ts", "apps/shop/src/checkout.ts"])
+    if (existsSync(join(data, file))) writeFileSync(join(data, file), readFileSync(join(data, file), "utf8").replaceAll("@fx/", "@acmecorp/"));
+  // The repository's own package name, inside a string a test or a doc holds.
+  writeFileSync(
+    join(data, "apps/shop/src/sample.ts"),
+    "export const SAMPLE = 'import { format } from \"@acmecorp/money\";\\nimport { tax } from \"@acmecorp/money/tax\";\\n';\nexport const OTHER = \"from '@acmecorp/money'\";\n",
+  );
+  git(data, ["init", "-q"]);
+  git(data, ["add", "-A"]);
+  git(data, ["commit", "-q", "-m", "fixture"]);
+  const cut = await cutSlice({
+    repo: data,
+    out: join(scratch, "data-slice"),
+    entryPoints: ["apps/shop/src/sample.ts", ENTRY],
+    budget: { maxFiles: 40, maxDepth: 1 },
+    offline: true,
+    public: true,
+    names: ["acmecorp"],
+  });
+  assert.doesNotMatch(readFileSync(join(cut.out, "apps/shop/src/sample.ts"), "utf8"), /acmecorp/);
+  const patch = await patchProject(cut.out);
+  assert.deepEqual(patch.refused, []);
+  assert.equal(patch.diff, "");
+});
