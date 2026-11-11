@@ -20,7 +20,8 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import ts from "typescript";
-import { computeCut, readRecord, type CarveoutRecord } from "./carve.js";
+import { computeCut, type CarveoutRecord } from "./carve.js";
+import { trustedCut } from "./receipt.js";
 import { trustedRepo } from "./policy.js";
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -112,10 +113,14 @@ const stubOf = (path: string) =>
 
 export async function statusProject(
   dir: string,
-  options: { readonly repo?: string } = {},
+  options: {
+    readonly repo?: string;
+    /** The cut's receipt file; else the one `CARVEOUT_HOME` keeps for its id. */
+    readonly receipt?: string;
+  } = {},
 ): Promise<Status> {
   const root = resolve(dir);
-  const record: CarveoutRecord = readRecord(root);
+  const record: CarveoutRecord = trustedCut(root, options.receipt).record;
   const repo = trustedRepo(record, options.repo);
   const request = record.request;
   let fresh;

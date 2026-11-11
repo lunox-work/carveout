@@ -22,11 +22,9 @@ import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
-  RECORD_PATH,
   checkRecordFiles,
   computeCut,
   patchProject,
-  readRecord,
   type CarveoutRecord,
   type ComputedCut,
   type Patch,
@@ -39,6 +37,7 @@ import {
 } from "./core.js";
 import { symbolDiff } from "./status.js";
 import { trustedRepo } from "./policy.js";
+import { saveRecord, trustedCut } from "./receipt.js";
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const sha256 = (data: string | Buffer) =>
@@ -90,10 +89,13 @@ export async function applyPatch(
     readonly log?: (line: string) => void;
     /** The repository's checkout; else the one the record names. */
     readonly repo?: string;
+    /** The cut's receipt file; else the one `CARVEOUT_HOME` keeps for its id. */
+    readonly receipt?: string;
   } = {},
 ): Promise<Applied> {
   const root = resolve(dir);
-  const record = readRecord(root);
+  let trusted = trustedCut(root, options.receipt);
+  const record = trusted.record;
   const source = trustedRepo(record, options.repo);
   checkRecordFiles(record, source);
   const commit = record.manifest.sourceCommitSha;
@@ -211,9 +213,11 @@ export async function applyPatch(
       }
       (included.has(path) || status === "M" ? changed : added).push(path);
     }
-    const stubs = await neededStubs(root, record, cuts, options.stubs === true);
+    const stubs = await neededStubs(root, record, cuts, options.stubs === true, (updated) => {
+      trusted = saveRecord(root, trusted, updated);
+    });
     if (grown.length > 0) {
-      const current = readRecord(root);
+      const current = trusted.record;
       const updated: CarveoutRecord = {
         ...current,
         manifest: {
@@ -224,7 +228,7 @@ export async function applyPatch(
           compare(`${a.file}\n${a.from}`, `${b.file}\n${b.from}`),
         ),
       };
-      await writeFile(join(root, RECORD_PATH), `${JSON.stringify(updated, null, 2)}\n`);
+      trusted = saveRecord(root, trusted, updated);
     }
     return { changed, added, deleted, outside, stubs };
   } finally {
@@ -245,6 +249,7 @@ async function neededStubs(
   record: CarveoutRecord,
   cuts: readonly ComputedCut[],
   write: boolean,
+  save: (updated: CarveoutRecord) => void,
 ): Promise<Applied["stubs"]> {
   const generated = new Map(record.generated.map((file) => [file.path, file.sha256]));
   const wanted = new Map<string, string>();
@@ -282,7 +287,7 @@ async function neededStubs(
         .map(([path, hash]) => ({ path, sha256: hash }))
         .sort((a, b) => compare(a.path, b.path)),
     };
-    await writeFile(join(root, RECORD_PATH), `${JSON.stringify(updated, null, 2)}\n`);
+    save(updated);
   }
   return found;
 }
@@ -315,6 +320,8 @@ export async function mergeProject(
     readonly allow?: readonly string[];
     /** Environment variables the verify command is given, by name. */
     readonly verifyEnv?: readonly string[];
+    /** The cut's receipt file; else the one `CARVEOUT_HOME` keeps for its id. */
+    readonly receipt?: string;
   },
 ): Promise<Merge> {
   const into = resolve(options.into);
@@ -323,6 +330,7 @@ export async function mergeProject(
   const patch = await patchProject(dir, {
     repo: options.repo ?? into,
     ...(options.allow === undefined ? {} : { allow: options.allow }),
+    ...(options.receipt === undefined ? {} : { receipt: options.receipt }),
   });
   const steps: MergeStep[] = [];
   // Nothing is applied while the policy keeps a path out: the maintainer

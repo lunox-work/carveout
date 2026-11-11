@@ -117,12 +117,22 @@ What carveout holds to:
   `cut` list the source copied from outside the entry points by folder,
   with its lines, tests not counted: each folder there is a `--private`
   decision to make before the folder is sent.
-- **The folder that comes back.** Nothing in it is trusted. `patch` and
-  `apply` refuse a `carveout.json` that names a path outside the folder or
-  a `.git` path, or lists as the slice's a file the repository does not
-  hold at those bytes, and work against the checkout given with `--repo`
-  (or the current directory), which must hold the cut's commit. `patch`
-  runs none of the folder's code.
+- **The folder that comes back.** Nothing in it is trusted. `cut` writes
+  the maintainer's receipt outside the folder
+  (`~/.carveout/receipts/<cut id>.json`, or `--receipt <file>`): the record
+  as the cut made it, and the baseline the first `check` recorded. `patch`,
+  `status`, `apply`, `merge` and `check` judge the folder by it, so an
+  edited `carveout.json` cannot widen what a patch may carry, and a test
+  added to `carveout/baseline.json` is counted (`check` names it). A
+  public folder's own record then leaves out what names the repository
+  beyond the slice: the commit, the specifiers the cut rewrote (workspace
+  package names, path aliases), the hashes of other files, the private
+  paths. Without a receipt (`--no-receipt`, or another machine), `patch`
+  and `apply` refuse a `carveout.json` that names a path outside the
+  folder or a `.git` path, or lists as the slice's a file the repository
+  does not hold at those bytes, and work against the checkout given with
+  `--repo` (or the current directory), which must hold the cut's commit.
+  `patch` runs none of the folder's code.
 - **The hand-off policy.** The patch carries edits to the slice's files and
   new files in the slice's packages. It leaves out, names, and exits 6 on:
   new files in other packages (a cut module's folder among them);
@@ -375,9 +385,12 @@ KINDS)[number]`) keeps its name-like strings (`"github"`, `"draft"`):
 
 Options for `patch`, `status`, `apply` and `merge`: `--repo <checkout>`,
 the repository to work against (it must hold the cut's commit; `merge`
-uses `--into`). For `patch` and `merge`: `--allow <path|glob>`, which lets
-a path the hand-off policy refuses through. For `merge`: `--verify-env
-<name>`, an environment variable the verify command is given.
+uses `--into`), and `--receipt <file>` (also for `check`) when the cut's
+receipt is not where `CARVEOUT_HOME` keeps it. For `patch` and `merge`:
+`--allow <path|glob>`, which lets a path the hand-off policy refuses
+through. For `merge`: `--verify-env <name>`, an environment variable the
+verify command is given. For `cut`: `--receipt <file>` writes the receipt
+there, `--no-receipt` writes none.
 
 Exit codes: 0 done, 1 refused or failed, 2 written with blockers (`cut`)
 or a step failed (`check`, `merge`, `impact --run`; `gate --hook` on a

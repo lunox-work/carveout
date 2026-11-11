@@ -26,6 +26,7 @@ import { filterDeclaration } from "../src/extract/typescript.js";
 import { walkGraph } from "../src/graph.js";
 import { extensionStyles, restoreImports } from "../src/imports.js";
 import { applyPatch, mergeProject } from "../src/mergeback.js";
+import { receiptPathFor } from "../src/receipt.js";
 import { statusProject } from "../src/status.js";
 
 const FIXTURE = resolve(import.meta.dirname, "../../test/fixtures/shop");
@@ -40,7 +41,7 @@ const git = (cwd: string, args: string[]) =>
     stdio: ["ignore", "pipe", "pipe"],
   }).toString("utf8");
 
-const cut = async (name: string, options: { public?: boolean } = {}) =>
+const cut = async (name: string, options: { public?: boolean; receipt?: string | false } = {}) =>
   (
     await cutSlice({
       repo,
@@ -182,12 +183,33 @@ test("a public cut names neither the checkout nor the files outside that import 
   assert.doesNotMatch(readFileSync(join(out, "package.json"), "utf8"), /"name": "repo-/);
   // Made again as a public cut, the folder is what it was.
   assert.equal((await statusProject(out, { repo })).current, true);
-  // The maintainer names the repository; nothing in the folder does.
-  await assert.rejects(patchProject(out), /does not name its repository/);
+  // The folder's record keeps out what names the repository beyond the
+  // slice: the commit, the specifiers the cut rewrote (a workspace
+  // package's name, a path alias), the hashes of the repository's files.
+  const text = readFileSync(join(out, "carveout.json"), "utf8");
+  assert.equal(record.publicScrubbed, true);
+  assert.equal(record.manifest.sourceCommitSha, null);
+  assert.deepEqual(record.importRewrites, []);
+  assert.deepEqual(record.inputs, []);
+  assert.doesNotMatch(text, /@fx\/money|"@\/tax"/);
+  // The maintainer's receipt names the checkout and holds the rest.
   const edited = join(out, "apps/shop/src/tax.ts");
   writeFileSync(edited, readFileSync(edited, "utf8").replace("0.1", "0.2"));
-  const patch = await patchProject(out, { repo });
+  const patch = await patchProject(out);
+  assert.equal(patch.recordFrom, "receipt");
   assert.deepEqual(patch.changed, ["apps/shop/src/tax.ts"]);
+  // Without it, the folder cannot be patched; with it named, it can.
+  const receipt = receiptPathFor(record.cutId);
+  const moved = join(scratch, "public-receipt.json");
+  cpSync(receipt, moved);
+  rmSync(receipt);
+  await assert.rejects(patchProject(out, { repo }), /its receipt holds them/);
+  assert.deepEqual((await patchProject(out, { repo, receipt: moved })).changed, ["apps/shop/src/tax.ts"]);
+  // A public cut with no receipt keeps the names in its record, and the
+  // maintainer names the repository; nothing in the folder does.
+  const bare = await cut("public-bare", { public: true, receipt: false });
+  assert.equal(JSON.parse(readFileSync(join(bare, "carveout.json"), "utf8")).publicScrubbed, undefined);
+  await assert.rejects(patchProject(bare), /does not name its repository/);
 });
 
 test("a patch keeps out protected paths, new files outside the slice's packages, deleted tests and code that reaches out", async () => {
@@ -248,7 +270,8 @@ test("a patch keeps out protected paths, new files outside the slice's packages,
 });
 
 test("a record that names a path outside the folder, or another repository, is refused", async () => {
-  const out = await cut("tampered");
+  // Without a receipt the folder's own record is all there is, checked.
+  const out = await cut("tampered", { receipt: false });
   const victim = join(scratch, "victim.txt");
   writeFileSync(victim, "keep me\n");
   const path = join(out, "carveout.json");
@@ -280,7 +303,7 @@ test("a record that names a path outside the folder, or another repository, is r
 });
 
 test("a record that lists a cut module or another file as the slice's is refused", async () => {
-  const out = await cut("forged");
+  const out = await cut("forged", { receipt: false });
   const path = join(out, "carveout.json");
   const record = JSON.parse(readFileSync(path, "utf8"));
   const forge = (file: string) =>
@@ -314,6 +337,39 @@ test("a record that lists a cut module or another file as the slice's is refused
     cpSync(join(repo, "apps/shop/src/checkout.ts"), join(out, "apps/shop/src/checkout.ts"));
   const patch = await patchProject(out);
   assert.deepEqual(patch.refused, []);
+});
+
+test("with a receipt, the folder's own record is not what a patch is judged by", async () => {
+  const out = await cut("receipted");
+  const path = join(out, "carveout.json");
+  const record = JSON.parse(readFileSync(path, "utf8"));
+  // A cut module listed as the slice's, to carry an edit of it back.
+  writeFileSync(
+    path,
+    JSON.stringify({
+      ...record,
+      manifest: {
+        ...record.manifest,
+        included: [
+          ...record.manifest.included,
+          { path: "packages/money/src/index.ts", blobId: "", sha256: "0".repeat(64), mode: "100644", sizeBytes: 1, depth: 0, operations: ["edit"] },
+        ],
+      },
+    }),
+  );
+  write(join(out, "packages/money/src/index.ts"), "export const format = () => 'x';\n");
+  const patch = await patchProject(out);
+  assert.equal(patch.recordFrom, "receipt");
+  assert.equal(patch.diff, "");
+  // A receipt of another cut is refused.
+  const other = await cutSlice({
+    repo,
+    out: join(scratch, "other"),
+    entryPoints: [ENTRY],
+    budget: { maxFiles: 40, maxDepth: 1 },
+    offline: true,
+  });
+  await assert.rejects(patchProject(out, { receipt: other.receipt ?? "" }), /is the receipt of cut/);
 });
 
 test("merge runs the verify command with only the environment it is given", async () => {
