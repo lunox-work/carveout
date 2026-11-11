@@ -450,6 +450,16 @@ export function runtimeKindOf(
   }
   return "unknown";
 }
+/**
+ * Whether `runtimeKindOf` read a symbol's kind off the import it is
+ * exported again from, which says nothing of what it is: a mock may export
+ * it (harmless for a type), a test must not assert it.
+ */
+export function guessedFromImport(symbol: BoundarySymbol): boolean {
+  if (symbol.kind === "enum" || VALUE_KINDS.includes(symbol.kind) || TYPE_KINDS.includes(symbol.kind)) return false;
+  return /^import\s/.test(symbol.declaration?.trim() ?? "");
+}
+
 // Module specifiers are read from the syntax tree (`../specifiers.ts`);
 // this pattern finds only the named bindings of an import, for the mock
 // packages' exports.
@@ -1077,11 +1087,13 @@ function interfaceTests(
     const path = aliasedOf(module.module);
     if (path === null) continue;
     // Only what is known to exist at runtime; a name whose kind the
-    // extractor could not tell is not asserted.
+    // extractor could not tell is not asserted, nor one it guessed from the
+    // import the module exports it again from (an interface imported
+    // without `type` and exported again is gone from the emitted code).
     const values = module.symbols
       .filter((symbol) => {
         const kind = runtimeKindOf(symbol);
-        return kind === "value" || kind === "enum";
+        return (kind === "value" || kind === "enum") && !guessedFromImport(symbol);
       })
       .map((symbol) => symbol.name);
     if (values.length === 0) continue;

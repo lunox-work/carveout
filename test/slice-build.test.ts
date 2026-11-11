@@ -263,3 +263,13 @@ test("an alias or a bundler's module that starts with ~ is no package", async ()
   assert.equal(isPackageName("@scope/pkg-name"), true);
   assert.equal(isPackageName("a".repeat(215)), false);
 });
+
+test("a name the interface test cannot know is a value (imported without `type` and exported again) is not asserted", async () => {
+  const { guessedFromImport, runtimeKindOf } = await import("../src/project/project.js");
+  const reexported = { name: "Item", kind: "unknown", declaration: 'import { total, Item } from "./cart.js";' };
+  // A mock may export it; harmless for an interface.
+  assert.equal(runtimeKindOf(reexported), "value");
+  assert.equal(guessedFromImport(reexported), true);
+  assert.equal(guessedFromImport({ name: "total", kind: "function", declaration: "export function total(): number;" }), false);
+  assert.equal(guessedFromImport({ name: "LIMIT", kind: "unknown", declaration: "export const LIMIT = 3;" }), false);
+});
