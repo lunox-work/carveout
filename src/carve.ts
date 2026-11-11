@@ -68,6 +68,7 @@ import { npmPackageTypes, typesPackageOf } from "./extract/package-types.js";
 import { NODE_BUILTINS, isNodeBuiltin } from "./extract/typescript.js";
 import { walkGraph } from "./graph.js";
 import { ENVIRONMENT_PACKAGES, fileEnvironments, vitestSettings, type VitestSettings } from "./project/vitest-config.js";
+import { packageRegistries } from "./extract/package-registry.js";
 import {
   extensionStyles,
   packageFolder,
@@ -1397,8 +1398,11 @@ export async function computeCut(
     for (const name of packagesTypingLines(file.path, readFileSync(join(repo, file.path), "utf8"), lines, candidate))
       if (!typedBy.has(name)) typedBy.set(name, file.path);
   }
+  // Never one from a private registry: installing it is what the cut
+  // refuses (the folder's npm reads the public one), so it stays mocked.
+  const registry = packageRegistries(repo);
   for (const [name, file] of [...typedBy].sort(([a], [b]) => compare(a, b)))
-    if (choices[name] === undefined && repositoryVersion(repo, name, [file]) !== null) {
+    if (choices[name] === undefined && registry(name)?.source !== "private" && repositoryVersion(repo, name, [file]) !== null) {
       choices[name] = "approved-package";
       log(`Installs ${name}: ${file} does not compile with it mocked; its types are the code's.`);
     }

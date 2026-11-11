@@ -18,6 +18,7 @@
  * specifiers.
  */
 
+import { createHash } from "node:crypto";
 import ts from "typescript";
 import { vitestConfigText, type VitestSettings } from "./vitest-config.js";
 import type {
@@ -1700,6 +1701,18 @@ export function generateProject(input: ProjectInput): GeneratedProject {
   // Packages: approved ones install; mocked ones are local packages.
   const namedImports = scanNamedImports(input.sources);
   const virtualModules: Record<string, string> = {};
+  // A virtual module's folder is its name made a path; two that make one
+  // (`@/api`, `#api`) each take a short hash of their own name too.
+  const folderName = (name: string) => name.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "module";
+  const virtualNames = input.dependencies
+    .filter((dependency) => dependency.kind === "package" && dependency.resolution === "runtime-mock" && !isPackageName(dependency.name))
+    .map((dependency) => dependency.name);
+  const taken = new Map<string, number>();
+  for (const name of virtualNames) taken.set(folderName(name), (taken.get(folderName(name)) ?? 0) + 1);
+  const virtualFolderOf = (name: string) =>
+    (taken.get(folderName(name)) ?? 0) > 1
+      ? `${folderName(name)}-${createHash("sha256").update(name).digest("hex").slice(0, 6)}`
+      : folderName(name);
   const mockedPackages: string[] = [];
   const installedPackages: { name: string; version: string }[] = [];
   const dependencies: Record<string, string> = {};
@@ -1722,7 +1735,7 @@ export function generateProject(input: ProjectInput): GeneratedProject {
       // resolved nowhere) is mocked in the folder and found by its name:
       // TypeScript through `paths`, Node through the loader's map.
       const virtual = !isPackageName(name);
-      const dir = virtual ? `${VIRTUAL_DIR}/${name.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "")}` : `${MOCKS_DIR}/${name}`;
+      const dir = virtual ? `${VIRTUAL_DIR}/${virtualFolderOf(name)}` : `${MOCKS_DIR}/${name}`;
       if (virtual) virtualModules[name] = dir;
       else {
         mockedPackages.push(name);

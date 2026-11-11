@@ -248,6 +248,9 @@ async function main(argv: readonly string[]) {
   const { values, positionals } = parseArgs({
     args: [...rest],
     allowPositionals: true,
+    // `--no-whole-package`, `--no-copy-pure`, `--no-public`: handoff's
+    // defaults turned off by name.
+    allowNegative: true,
     options: {
       repo: { type: "string" },
       out: { type: "string" },
@@ -530,7 +533,7 @@ async function main(argv: readonly string[]) {
         budget,
         choices: dependencyChoices(),
         ...(values.live === undefined ? {} : { live: values.live }),
-        tests: true,
+        tests: values["with-tests"] ?? true,
         wholePackage: values["whole-package"] ?? config.wholePackage ?? true,
         copyPure: values["copy-pure"] ?? config.copyPure ?? true,
         ...(values["follow-workspaces"] === true ? { followWorkspaces: true } : {}),

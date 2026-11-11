@@ -306,3 +306,23 @@ test("a name the interface test cannot know is a value (imported without `type` 
   assert.equal(guessedFromImport({ name: "total", kind: "function", declaration: "export function total(): number;" }), false);
   assert.equal(guessedFromImport({ name: "LIMIT", kind: "unknown", declaration: "export const LIMIT = 3;" }), false);
 });
+
+test("two modules that are no package and make one folder name each get their own", async () => {
+  const repo = join(scratch, "virtual-pair");
+  cpSync(FIXTURE, repo, { recursive: true });
+  write(repo, {
+    "apps/shop/src/pair.ts": 'import a from "virtual:api";\nimport b from "#virtual-api";\n\nexport const pair = (): string => String(a) + String(b);\n',
+    "apps/shop/src/pair.d.ts": "",
+    "apps/shop/src/virtual.d.ts": 'declare module "virtual:api" {\n  const a: unknown;\n  export default a;\n}\ndeclare module "#virtual-api" {\n  const b: unknown;\n  export default b;\n}\n',
+  });
+  rmSync(join(repo, "apps/shop/src/pair.d.ts"));
+  const git = (args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, stdio: "ignore" });
+  git(["init", "-q"]);
+  git(["add", "-A"]);
+  git(["commit", "-q", "-m", "fixture"]);
+  const cut = await cutSlice({ repo, out: join(scratch, "virtual-pair-slice"), entryPoints: ["apps/shop/src/pair.ts"], budget: { maxFiles: 40, maxDepth: 1 }, offline: true });
+  const map = JSON.parse(readFileSync(join(cut.out, "carveout/virtual/map.json"), "utf8")) as Record<string, string>;
+  assert.deepEqual(Object.keys(map).sort(), ["#virtual-api", "virtual:api"]);
+  assert.notEqual(map["virtual:api"], map["#virtual-api"]);
+  assert.deepEqual(cut.record.blockers.filter((blocker) => blocker.code === "path_conflict"), []);
+});
