@@ -508,3 +508,20 @@ test("an unedited public folder patches to nothing though a comment names a rena
   assert.equal(patch.diff, "");
   assert.deepEqual(patch.refused, []);
 });
+
+test("after refresh, an import the repository added reads back as it wrote it", async () => {
+  const { refreshProject } = await import("../src/mergeback.js");
+  const { patchProject } = await import("../src/carve.js");
+  const moving = join(scratch, "moving-rewrites");
+  git(scratch, ["clone", "-q", repo, moving]);
+  const cut = await cutSlice({ repo: moving, out: join(scratch, "refresh-rewrites"), entryPoints: ["apps/shop/src/checkout.ts"], budget: { maxFiles: 40, maxDepth: 2 }, offline: true });
+  const tax = join(cut.out, "apps/shop/src/tax.ts");
+  writeFileSync(tax, `${readFileSync(tax, "utf8")}// the contributor's note\n`);
+  const checkout = join(moving, "apps/shop/src/checkout.ts");
+  writeFileSync(checkout, `import { TAX_RATE } from "./tax";\n${readFileSync(checkout, "utf8")}export const rate = TAX_RATE;\n`);
+  git(moving, ["commit", "-qam", "upstream: an import"]);
+  const refreshed = await refreshProject(cut.out);
+  assert.ok(refreshed !== null && refreshed.applied.changed.includes("apps/shop/src/checkout.ts"), JSON.stringify(refreshed?.applied));
+  const patch = await patchProject(cut.out, { repo: moving });
+  assert.deepEqual(patch.changed, ["apps/shop/src/tax.ts"], patch.diff);
+});

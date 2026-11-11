@@ -289,6 +289,8 @@ export async function applyPatch(
     const wrote: string[] = [];
     /** Each slice file written, by repository path, as the cut writes it (the folder's edits aside). */
     const newly = new Map<string, { folderPath: string; sha256: string; folderSha256: string }>();
+    /** The import rewrites of the cut that wrote each file. */
+    const rewrittenBy = new Map<string, ImportRewrite[]>();
     for (const [path, status] of [...touched.entries()].sort(([a], [b]) => compare(a, b))) {
       if (status === "D") {
         if (included.has(path)) {
@@ -368,6 +370,8 @@ export async function applyPatch(
             })()
           : { folderPath, sha256: sha256(text), folderSha256: sha256(names.exact(path, text) ?? "") };
       newly.set(path, clean);
+      // The imports the cut that wrote it rewrote, which a patch undoes.
+      rewrittenBy.set(path, cut.record.importRewrites.filter((rewrite) => rewrite.file === path));
       options.written?.set(path, clean);
       if (!included.has(path) && status === "M") {
         // A repository file the slice did not hold: it joins the slice at
@@ -389,7 +393,16 @@ export async function applyPatch(
     // edits to it, and merges into them or leaves them, never over them.
     const copiedNow = new Set((trusted.record.copied ?? []).map((file) => file.path));
     const fresh = trusted.record.copied === undefined ? [] : [...newly.entries()].filter(([path]) => !copiedNow.has(path));
-    if (grown.length > 0 || fresh.length > 0 || rewrites.length > 0) {
+    // A file written takes the rewrites of the cut that wrote it, in place of
+    // the ones its earlier text had (an import the change added, rewritten).
+    const rewritesNow = [
+      ...trusted.record.importRewrites.filter((rewrite) => !rewrittenBy.has(rewrite.file)),
+      ...[...rewrittenBy.values()].flat(),
+    ].sort((a, b) => compare(`${a.file}\n${a.from}`, `${b.file}\n${b.from}`));
+    const rewritesMoved =
+      JSON.stringify(rewritesNow) !==
+      JSON.stringify([...trusted.record.importRewrites].sort((a, b) => compare(`${a.file}\n${a.from}`, `${b.file}\n${b.from}`)));
+    if (grown.length > 0 || fresh.length > 0 || rewritesMoved) {
       const current = trusted.record;
       const updated: CarveoutRecord = {
         ...current,
@@ -397,9 +410,11 @@ export async function applyPatch(
           ...current.manifest,
           included: [...current.manifest.included, ...grown].sort((a, b) => compare(a.path, b.path)),
         },
-        importRewrites: [...current.importRewrites, ...rewrites].sort((a, b) =>
-          compare(`${a.file}\n${a.from}`, `${b.file}\n${b.from}`),
-        ),
+        importRewrites: [
+          ...current.importRewrites.filter((rewrite) => !rewrittenBy.has(rewrite.file)),
+          ...[...rewrittenBy.values()].flat(),
+          ...rewrites.filter((rewrite) => !rewrittenBy.has(rewrite.file)),
+        ].sort((a, b) => compare(`${a.file}\n${a.from}`, `${b.file}\n${b.from}`)),
         ...(current.copied === undefined
           ? {}
           : {
