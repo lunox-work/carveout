@@ -955,7 +955,7 @@ async function main(argv: readonly string[]) {
               ? []
               : [
                   acceptStep === undefined
-                    ? `The owner's ${accept.length} acceptance test file(s) did not run: the folder's own steps failed first.`
+                    ? `The owner's ${accept.length} acceptance test file(s) did not run: the folder did not install or build (above).`
                     : acceptStep.ok
                       ? `The owner's ${accept.length} acceptance test file(s) ran on their own, in the check's copy, and pass.${heldBack.length === 0 ? "" : ` patch keeps ${heldBack.length} file(s) out (${heldBack.join(", ")}): the run had the tests, helpers and setup files among them as the cut wrote them and none the folder added; any other ran as the folder holds it.`}`
                       : `The owner's acceptance tests do not pass on the folder that came back:\n${acceptStep.output}`,
