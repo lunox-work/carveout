@@ -414,6 +414,13 @@ The verify command gets a scratch HOME and only the variables named with
 `--verify-env`. It never picks a checkout itself. Name a clean clone, or
 the person's own checkout only when they ask.
 
+When the work turns out to need a module the slice cut, do not hand over a
+second folder from scratch: `carveout widen <folder> --entry <path>...`
+cuts it again with those entries, every other bound as it was, carries the
+work so far into the new folder (it is taken as a patch first, so a file
+the policy holds stops it), and keeps a public folder's names where they
+still fit. `check` the new folder, then hand it over in place of the old.
+
 ## 8. Someone outside the repository
 
 A public cut writes the folder in pseudonyms: the names the repository
