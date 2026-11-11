@@ -839,7 +839,13 @@ async function main(argv: readonly string[]) {
           ? []
           : await patchProject(dir, { ...(values.repo === undefined ? {} : { repo: resolve(values.repo) }), ...receiptOption })
               .then((patch) => patch.refused.map((refusal) => refusal.path))
-              .catch(() => []);
+              // Unread, nothing would be held back: the folder's own
+              // helpers would run under the owner's tests.
+              .catch((error: unknown) =>
+                fail(
+                  `check --accept first reads what the folder's patch holds back, and could not: ${error instanceof Error ? error.message : String(error)}`,
+                ),
+              );
       const steps = await checkProject(dir, {
         ...(values["in-place"] === true ? { inPlace: true } : {}),
         ...(values.isolated === true ? { isolated: true } : {}),
