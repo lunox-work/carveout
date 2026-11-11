@@ -138,6 +138,10 @@ export function renderSliceAgents(input: {
   readonly coverage?: CoverageGate;
   /** The runner the package's own tests run on, by its test script. */
   readonly runner?: "vitest" | "node:test";
+  /** The Prettier the repository formats with, at the version it locks, and the folder's copy of its settings, if any. */
+  readonly prettier?: { readonly version: string; readonly config: string | null };
+  /** Whether the package has a lint script, which the folder cannot run. */
+  readonly lint?: boolean;
 }): string {
   const tests =
     input.testsInFolder === 0
@@ -170,6 +174,11 @@ export function renderSliceAgents(input: {
       ? []
       : [
           `- New tests go where the repository's test script finds them: \`${input.testsAt}\`. A test elsewhere runs here but never in the repository, and covers nothing there.`,
+        ]),
+    ...(input.prettier === undefined
+      ? []
+      : [
+          `- The repository formats with Prettier ${input.prettier.version}, ${input.prettier.config === null ? "at its defaults" : `with the settings in \`${input.prettier.config}\``}: check what you change with \`npx prettier@${input.prettier.version} --check <files>\`.${input.lint === true ? " Its lint script does not run here; the repository's CI runs it." : ""}`,
         ]),
     ...(input.coverage === undefined
       ? []
@@ -1714,7 +1723,20 @@ export async function computeCut(
     log(`Types installed: ${typesPackages.map((types) => types.name).join(", ")}.`);
   if (peers.length > 0)
     log(`Also installed: ${peers.map((peer) => peer.name).join(", ")}.`);
+  // The formatter the repository's code is held to, when it is Prettier
+  // with settings a file states (not a script, which may load plugins).
+  const prettierVersion = lockedVersion(repo, "prettier");
+  const prettierConfig = (() => {
+    if (prettierVersion === null) return null;
+    for (const dir of [...new Set([packageDir ?? "", ""])])
+      for (const name of [".prettierrc", ".prettierrc.json", ".prettierrc.yaml", ".prettierrc.yml", ".prettierrc.json5"]) {
+        const at = join(repo, dir, name);
+        if (existsSync(at) && statSync(at).isFile()) return { name, text: readFileSync(at, "utf8") };
+      }
+    return null;
+  })();
   const extra: GeneratedFile[] = [
+    ...(prettierConfig === null ? [] : [{ path: prettierConfig.name, text: prettierConfig.text, class: "config" as const, public: true }]),
     {
       path: SLICE_AGENTS_PATH,
       text: renderSliceAgents({
@@ -1725,6 +1747,8 @@ export async function computeCut(
         ...(testsAt === undefined ? {} : { testsAt }),
         ...(coverage === null ? {} : { coverage }),
         ...(testRunner === null ? {} : { runner: testRunner }),
+        ...(prettierVersion === null ? {} : { prettier: { version: prettierVersion, config: prettierConfig?.name ?? null } }),
+        ...(packageChecks(repo, packageDir).includes("lint") ? { lint: true } : {}),
       }),
       class: "config",
       public: true,

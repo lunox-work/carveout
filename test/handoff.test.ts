@@ -528,3 +528,19 @@ test("TASK.md names the package's check scripts, never their commands, and a cre
   );
   assert.equal(existsSync(join(scratch, "scripted-secret")), false);
 });
+
+test("an agent is told the repository's formatter, at its locked version, and that the lint script does not run here", () => {
+  const agents = renderSliceAgents({
+    entryPoints: ["src/lib/utils.ts"],
+    testsInFolder: 0,
+    testsLeft: 0,
+    runner: "vitest",
+    prettier: { version: "3.9.10", config: ".prettierrc" },
+    lint: true,
+  });
+  assert.match(agents, /tests run on Vitest: write new ones with it/);
+  assert.match(agents, /formats with Prettier 3\.9\.10, with the settings in `\.prettierrc`: check what you change with `npx prettier@3\.9\.10 --check <files>`\. Its lint script does not run here/);
+  const plain = renderSliceAgents({ entryPoints: ["a.ts"], testsInFolder: 0, testsLeft: 0, prettier: { version: "3.9.10", config: null } });
+  assert.match(plain, /at its defaults/);
+  assert.doesNotMatch(plain, /lint script/);
+});
