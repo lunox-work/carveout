@@ -285,7 +285,10 @@ export function resolveScope(input: ScopeInput): ScopeRecord {
  * module of its own, never as a package.
  */
 export function isPackageName(name: string): boolean {
-  return /^(@[a-z0-9~][a-z0-9._~-]*\/)?[a-z0-9~][a-z0-9._~-]*$/i.test(name);
+  // npm's rule, but a leading `~`: `~/lib/errors` is the common alias for a
+  // source folder, and `~icons/…` a bundler's virtual module, never a
+  // package anyone installs.
+  return name.length <= 214 && /^(@[a-z0-9-][a-z0-9._~-]*\/)?[a-z0-9-][a-z0-9._~-]*$/i.test(name);
 }
 
 export function packageNameOf(specifier: string): string {

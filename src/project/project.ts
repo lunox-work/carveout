@@ -1951,11 +1951,18 @@ export function generateProject(input: ProjectInput): GeneratedProject {
     .map((file) => runtimePath(file.path))
     .filter((path) => !files.has(path))
     .sort(compare);
+  // The folder's own `.js` files, which `*.js` would hide from a git
+  // clone of it: a stub's runtime mock beside its declaration, a source
+  // the repository writes in JavaScript.
+  const kept = [...files.values()]
+    .filter((file) => /\.[cm]?js$/.test(file.path) && !file.path.startsWith(`${HARNESS_DIR}/`) && file.path !== "vitest.config.mjs")
+    .map((file) => `!${file.path}`)
+    .sort(compare);
   add({
     path: ".gitignore",
     // The build's output for any source, a new one's too, and the test
     // run's record: none of it goes back.
-    text: `${["node_modules/", "*.js", "!carveout/**/*.js", "!vitest.config.mjs", "*.tsbuildinfo", LAST_RUN_PATH, VITEST_REPORT_PATH, ...emitted].join("\n")}\n`,
+    text: `${["node_modules/", "*.js", "!carveout/**/*.js", "!vitest.config.mjs", ...kept, "*.tsbuildinfo", LAST_RUN_PATH, VITEST_REPORT_PATH, ...emitted].join("\n")}\n`,
     class: "config",
     public: true,
   });

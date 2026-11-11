@@ -209,3 +209,31 @@ test("a module that is no package (a Vite virtual module) is mocked in the folde
   assert.equal(run.status, 0, run.stderr);
   assert.match(run.stdout, /function|object/);
 });
+
+test("a git clone of a folder keeps the stubs' runtime mocks the build output's ignore would hide", async () => {
+  const repo = join(scratch, "ignored");
+  cpSync(FIXTURE, repo, { recursive: true });
+  const git = (cwd: string, args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, encoding: "utf8" });
+  git(repo, ["init", "-q"]);
+  git(repo, ["add", "-A"]);
+  git(repo, ["commit", "-q", "-m", "fixture"]);
+  const cut = await cutSlice({ repo, out: join(scratch, "ignored-slice"), entryPoints: ["apps/shop/src/cart.ts"], budget: { maxFiles: 40, maxDepth: 1 }, offline: true });
+  const mocks = cut.record.generated.map((file) => file.path).filter((path) => /\.[cm]?js$/.test(path) && !path.startsWith("carveout/"));
+  assert.ok(mocks.length > 0, JSON.stringify(cut.record.generated.map((file) => file.path)));
+  git(cut.out, ["init", "-q"]);
+  git(cut.out, ["add", "-A"]);
+  const tracked = new Set(git(cut.out, ["ls-files"]).split("\n"));
+  for (const path of mocks) assert.ok(tracked.has(path), `${path} is ignored`);
+  // The build's output still is not.
+  writeFileSync(join(cut.out, "apps/shop/src/cart.js"), "export {};\n");
+  assert.equal(git(cut.out, ["status", "--porcelain", "--", "apps/shop/src/cart.js"]), "");
+});
+
+test("an alias or a bundler's module that starts with ~ is no package", async () => {
+  const { isPackageName } = await import("../src/project/provenance.js");
+  assert.equal(isPackageName("~"), false);
+  assert.equal(isPackageName("~icons"), false);
+  assert.equal(isPackageName("lodash"), true);
+  assert.equal(isPackageName("@scope/pkg-name"), true);
+  assert.equal(isPackageName("a".repeat(215)), false);
+});
