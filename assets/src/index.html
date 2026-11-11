@@ -1,0 +1,86 @@
+<!doctype html>
+<!-- Source of assets/hero.png; render with `PLAYWRIGHT=<dir with node_modules/playwright> node assets/src/render.mjs`.
+     "0.7%": experiments/results/hero-exposure.json (8 sandbox-factory slices, default cut, median; widest flags 11%).
+     "0 lines": carveout patch reads the returned folder and runs none of it. The held list is the patch policy. -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+@font-face { font-family: Mono; src: url(fonts/dm-mono-latin-400-normal.woff2); font-weight: 400; }
+@font-face { font-family: Mono; src: url(fonts/dm-mono-latin-500-normal.woff2); font-weight: 500; }
+@font-face { font-family: Sans; src: url(fonts/dm-sans-latin-400-normal.woff2); font-weight: 400; }
+@font-face { font-family: Sans; src: url(fonts/dm-sans-latin-500-normal.woff2); font-weight: 500; }
+@font-face { font-family: Display; src: url(fonts/space-grotesk-latin-600-normal.woff2); font-weight: 600; }
+:root {
+  --bg: #09090b;
+  --line: rgb(255 255 255 / 0.08);
+  --text: #fafafa;
+  --muted: #71717a;
+  --cell: #1f1f23;
+  --seen: #22c55e;
+  --held: #f43f5e;
+}
+* { box-sizing: border-box; margin: 0; }
+body { background: #000; }
+.scene { width: 1280px; height: 640px; background: var(--bg); color: var(--text); font-family: Sans; padding: 44px 64px; position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; }
+.scene::before { content: ""; position: absolute; inset: 0; background: radial-gradient(ellipse 60% 50% at 50% 0%, rgb(255 255 255 / 0.06), transparent); }
+.scene > * { position: relative; }
+.mark { font-family: Mono; font-size: 16px; color: var(--text); font-weight: 500; letter-spacing: 0.02em; }
+h1 { font-family: Display; font-weight: 600; letter-spacing: -0.03em; font-size: 40px; line-height: 1.15; max-width: 1060px; }
+h1 span { color: var(--muted); }
+.cols { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.col { display: flex; justify-content: space-between; align-items: center; padding: 30px 40px; gap: 24px; }
+.col:first-child { padding-left: 0; }
+.col:last-child { padding-right: 0; }
+.col + .col { border-left: 1px solid var(--line); }
+.stat { display: flex; flex-direction: column; gap: 14px; }
+.label { font-family: Mono; font-size: 14px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
+.num { font-family: Display; font-weight: 600; letter-spacing: -0.04em; line-height: 0.9; font-size: 104px; }
+.num small { color: var(--muted); font-size: 0.4em; letter-spacing: -0.02em; margin-left: 8px; }
+.of { font-family: Mono; font-size: 15px; color: var(--muted); line-height: 1.5; }
+.seen { color: var(--seen); }
+.repo { display: grid; grid-template-columns: repeat(40, 6px); gap: 2px; }
+.repo u { width: 6px; height: 6px; border-radius: 1.5px; background: var(--cell); }
+.repo u.s { background: var(--seen); box-shadow: 0 0 10px rgb(34 197 94 / 0.7); }
+.held { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 13px; font-family: Mono; font-size: 15px; color: var(--text); }
+.held li { display: flex; align-items: center; gap: 12px; white-space: nowrap; }
+.held svg { width: 16px; height: 16px; flex: none; color: var(--held); }
+.foot { font-family: Mono; font-size: 14px; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<section class="scene" id="hero">
+  <div class="mark">carveout</div>
+  <h1>Zero-trust handoff for your codebase. <span>They see one folder. None of their code runs until you've read it.</span></h1>
+  <div class="cols">
+    <div class="col">
+      <div class="stat">
+        <div class="label">What they see</div>
+        <div class="num seen">0.7%</div>
+        <div class="of">of the repository's<br>source, as written</div>
+      </div>
+      <div class="repo" id="repo"></div>
+    </div>
+    <div class="col">
+      <div class="stat">
+        <div class="label">What runs</div>
+        <div class="num">0<small>lines</small></div>
+        <div class="of">of their code, before<br>you read the patch</div>
+      </div>
+      <ul class="held" id="held"></ul>
+    </div>
+  </div>
+  <div class="foot">sandbox-factory · 245k lines of TypeScript · median of 8 slices · what the folder imports arrives as type declarations only</div>
+</section>
+
+<script>
+// 1,000 cells, each ~245 lines of the repository; 7 lit = the 0.7% median, clustered like one folder.
+const lit = new Set([453, 454, 455, 456, 493, 494, 495]);
+document.getElementById("repo").innerHTML = Array.from({ length: 1000 }, (_, i) => `<u class="${lit.has(i) ? "s" : ""}"></u>`).join("");
+const x = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
+const held = ["CI and hook files", "manifests, lockfiles", "deleted or weakened tests", "new network or disk access", "files outside the slice"];
+document.getElementById("held").innerHTML = held.map((h) => `<li>${x}${h}</li>`).join("");
+</script>
+</body>
+</html>

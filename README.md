@@ -1,4 +1,38 @@
-# carveout
+<h1 align="center">carveout</h1>
+
+<p align="center">
+  <strong>Zero-trust handoff for your codebase.</strong><br>
+  They see one folder. None of their code runs until you've read it.
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/carveout"><img src="https://img.shields.io/npm/v/carveout?style=flat-square&label=npm" alt="npm version"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT license"></a>
+  <a href="SKILL.md"><img src="https://img.shields.io/badge/Claude_Code-skill-D97757?style=flat-square" alt="Claude Code skill"></a>
+  <a href="#limits"><img src="https://img.shields.io/badge/TypeScript-repositories-3178C6?style=flat-square" alt="TypeScript repositories"></a>
+</p>
+
+<p align="center">
+  <img src="assets/hero.png" width="100%" alt="Zero-trust handoff for your codebase. A contractor sees 0.7% of the repository's source (median of 8 slices of a 245k-line TypeScript repository), and 0 lines of their code run before you read the patch: CI and hook files, manifests, lockfiles, deleted or weakened tests, new network or disk access and files outside the slice are kept out.">
+</p>
+
+<table>
+<tr>
+<td align="center" width="25%"><h3>under 1%</h3>of the repository<br>is what they see<br><sub>median 0.7% of 245k lines</sub></td>
+<td align="center" width="25%"><h3>0 lines</h3>of their code run<br>to make the patch<br><sub>it is read, never executed</sub></td>
+<td align="center" width="25%"><h3>52 of 52</h3>returned patches<br>applied to the repository<br><sub>real commits, sliced and merged back</sub></td>
+<td align="center" width="25%"><h3>89%</h3>still apply after<br>the repository moved on<br><sub>every one typechecks</sub></td>
+</tr>
+</table>
+
+<p align="center">
+  <a href="#handing-a-slice-to-a-contractor">Handoff</a> •
+  <a href="#commands">Commands</a> •
+  <a href="#also-checking-a-change-in-the-repository">Impact and gate</a> •
+  <a href="#experiments">Experiments</a> •
+  <a href="#limits">Limits</a> •
+  <a href="experiments/RESULTS.md">RESULTS.md</a>
+</p>
 
 Hand one part of a closed TypeScript repository to an outside contractor,
 and take their work back, without showing them the rest.
@@ -450,6 +484,11 @@ class, `never[]` under the relaxed `noImplicitAny`).
 `experiments/` holds the pre-registered experiments and their data
 ([RESULTS.md](experiments/RESULTS.md)).
 
+- **What a slice shows.** Over the eight sandbox-factory slices in
+  `slices.json`, a default cut copies a median of 0.7% of the repository's
+  245k lines of TypeScript as source (0.03 to 2.4%); with
+  `--whole-package --with-tests --copy-pure`, 11% (0.3 to 24%)
+  ([hero-exposure.mjs](experiments/hero-exposure.mjs)).
 - **Agents in a slice (Phases 5 to 8).** An agent given a slice instead of
   the repository did not get cheaper or better: it read 17 to 24% more
   input, passed hidden tests 5 to 10 points less often, and a weaker model
