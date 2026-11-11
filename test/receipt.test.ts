@@ -424,3 +424,25 @@ test("a renamed package name inside a file's own text data reads back, so a patc
   assert.deepEqual(patch.refused, []);
   assert.equal(patch.diff, "");
 });
+
+test("a refresh with an overlap moves the files it wrote, and a patch carries none of their commits", async () => {
+  const { refreshProject } = await import("../src/mergeback.js");
+  const { patchProject } = await import("../src/carve.js");
+  const moving = join(scratch, "moving-partial");
+  git(scratch, ["clone", "-q", repo, moving]);
+  const cut = await cutSlice({ repo: moving, out: join(scratch, "refresh-partial"), entryPoints: [ENTRY], budget: { maxFiles: 40, maxDepth: 1 }, offline: true });
+  const held = join(cut.out, ENTRY);
+  writeFileSync(held, readFileSync(held, "utf8").replace("export function subtotal", "export function subtotalMine"));
+  const cart = join(moving, ENTRY);
+  writeFileSync(cart, readFileSync(cart, "utf8").replace("export function subtotal", "export function subtotalTheirs"));
+  const tax = join(moving, "apps/shop/src/tax.ts");
+  writeFileSync(tax, readFileSync(tax, "utf8").replace("0.1", "0.2"));
+  git(moving, ["commit", "-qam", "upstream: overlap and a clean change"]);
+  const refreshed = await refreshProject(cut.out);
+  assert.ok(refreshed !== null);
+  assert.deepEqual(refreshed.applied.conflicts, [ENTRY]);
+  assert.ok(refreshed.applied.changed.includes("apps/shop/src/tax.ts"));
+  const patch = await patchProject(cut.out, { repo: moving });
+  assert.ok(patch.changed.includes(ENTRY));
+  assert.doesNotMatch(patch.diff, /apps\/shop\/src\/tax\.ts|0\.2/, patch.diff);
+});

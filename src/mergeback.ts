@@ -759,10 +759,13 @@ export async function refreshProject(
   });
   // The repository holds these commits: the folder's base moves to them, so
   // a patch of it carries the contributor's work alone, not the commits it
-  // was brought (and `git apply` takes it at the new HEAD). Not past an
-  // overlap, nor past a file left unwritten (one that would not map back to
-  // the folder's names): either holds a file at the old base.
-  if (applied.conflicts.length === 0 && applied.unmapped.length === 0) {
+  // was brought (and `git apply` takes it at the new HEAD). Each file
+  // written moves on its own (patch reads its base from the checkout, whose
+  // bytes it has); the commit moves only when nothing was left at the old
+  // base, an overlap or a file that would not map back to the folder's
+  // names.
+  const whole = applied.conflicts.length === 0 && applied.unmapped.length === 0;
+  if (written.size > 0 || whole) {
     const now = trustedCut(root, options.receipt, options.noReceipt === true ? { noReceipt: true } : {});
     const gone = new Set(applied.deleted);
     const known = new Set(now.record.manifest.included.map((file) => file.path));
@@ -779,7 +782,7 @@ export async function refreshProject(
     for (const [path, { sha256: hash }] of written) copiedNow.set(path, hash);
     const updated: CarveoutRecord = {
       ...now.record,
-      manifest: { ...now.record.manifest, sourceCommitSha: to, included },
+      manifest: { ...now.record.manifest, ...(whole ? { sourceCommitSha: to } : {}), included },
       ...(now.record.copied === undefined
         ? {}
         : { copied: [...copiedNow.entries()].map(([path, hash]) => ({ path, sha256: hash })).sort((a, b) => compare(a.path, b.path)) }),
