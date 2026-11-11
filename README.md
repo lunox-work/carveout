@@ -10,6 +10,7 @@
   <a href="https://www.npmjs.com/package/carveout"><img src="https://img.shields.io/npm/v/carveout?style=flat-square&label=npm" alt="npm version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT license"></a>
   <a href="skills/carveout/SKILL.md"><img src="https://img.shields.io/badge/Claude_Code-skill-D97757?style=flat-square" alt="Claude Code skill"></a>
+  <a href="https://skills.sh/lunox-work/carveout"><img src="https://img.shields.io/badge/skills.sh-npx_skills_add_lunox--work%2Fcarveout-111?style=flat-square" alt="skills.sh"></a>
   <a href="#limits"><img src="https://img.shields.io/badge/TypeScript-repositories-3178C6?style=flat-square" alt="TypeScript repositories"></a>
 </p>
 
