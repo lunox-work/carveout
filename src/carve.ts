@@ -278,6 +278,8 @@ export function renderTask(input: {
   readonly task: string;
   readonly testsInFolder: readonly string[];
   readonly surface: number;
+  /** How many checks of them `npm test` makes, as its last line counts them. */
+  readonly surfaceChecks?: number;
   /** The package's own check scripts, by name, for what CI checks. */
   readonly ci?: readonly string[];
   /** Where the package's test script finds its tests, from the folder's root. */
@@ -297,7 +299,13 @@ export function renderTask(input: {
     ...(input.testsAt === undefined ? [] : [`- New tests are where the repository's test script runs them: \`${input.testsAt}\`.`]),
     ...(input.surface === 0
       ? []
-      : [`- The ${input.surface} export(s) code outside this folder uses keep their names and types: \`npm test\` checks them, and its last line counts those checks.`]),
+      : [
+          `- The ${input.surface} export(s) code outside this folder uses keep their names and types${
+            input.surfaceChecks === undefined || input.surfaceChecks === 0
+              ? ": `npm test` checks them, and its last line counts those checks"
+              : ` (\`npm test\` makes ${input.surfaceChecks} checks of them, and its last line counts those that hold)`
+          }. An addition old callers still accept (a new optional field, a new export) keeps a type.`,
+        ]),
     "- The owner's \`carveout patch\` of the folder keeps nothing out (see AGENTS.md: what comes back, and what is held).",
     `- The repository's own CI passes once the change is merged: a pass here is a pass against mocks.${
       input.ci === undefined || input.ci.length === 0
@@ -1697,6 +1705,11 @@ export async function computeCut(
               task: request.task,
               testsInFolder: analysis.walk.tests,
               surface: contract.inbound.reduce((sum, module) => sum + module.symbols.length, 0),
+              // As npm test's last line will count them: one per export
+              // whose type is held, and one per module it imports.
+              surfaceChecks:
+                (project.files.find((file) => file.path === "carveout/surface/check.ts")?.text.match(/ \/\/ .+ \| .+ \| (value|type)$/gm)?.length ?? 0) +
+                (project.files.find((file) => file.path === "carveout/tests/interface.test.ts")?.text.match(/^test\(/gm)?.length ?? 0),
               ci: packageChecks(repo, packageDir),
               ...(testsAt === undefined ? {} : { testsAt }),
             }),

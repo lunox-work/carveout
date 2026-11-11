@@ -1591,7 +1591,7 @@ function readme(input: {
     "",
     ...list(input.tests, "None."),
     "",
-    `\`${SANDBOX_COMMANDS.test}\` builds the folder, then runs every test file in it (\`*.test.*\`, \`*.spec.*\`) on the runner it imports (\`node:test\` on the compiled \`.js\`, so run it through \`npm test\`; Vitest on the source, as the repository's does), the tests above and any you add. Tests that failed on the mocks before any edit, on either runner, are listed in \`${BASELINE_PATH}\` once the folder has been checked; the run prints in full only the failures that are not among them, and does not count them. Its last line counts the tests that pass, by runner, and apart from them the checks that the public surface keeps its exports and types. There is nothing to read in \`${TEST_RUNNER_PATH}\` beyond this.`,
+    `\`${SANDBOX_COMMANDS.test}\` builds the folder, then runs every test file in it (\`*.test.*\`, \`*.spec.*\`), the tests above and any you add, each on the runner it imports: a node:test test on its compiled \`.js\` (so run it through \`npm test\`), a Vitest test on its source. Tests that failed on the mocks before any edit, on either runner, are listed in \`${BASELINE_PATH}\` once the folder has been checked; the run prints in full only the failures that are not among them, and does not count them. Its last line counts the tests that pass, by runner, and apart from them the checks that the public surface keeps its exports and types. There is nothing to read in \`${TEST_RUNNER_PATH}\` beyond this.`,
     "",
     "`BOUNDARY.md` is an index of the modules the slice imports from outside and of the exports outside code takes from it; the types are in the `.d.ts` stubs beside the mocks. `carveout.json` records the cut.",
   ].join("\n")}\n`;
