@@ -136,7 +136,7 @@ test("a patch carries deletions, new files and new imports as the repository wri
       ["stub", "packages/money/src/index.d.ts"],
     ],
   );
-  assert.match(patch.boundary[0]?.detail ?? "", /adds left-pad 1\.3\.0, .* Add "left-pad": "1\.3\.0" to the package that needs it before applying/);
+  assert.match(patch.boundary[0]?.detail ?? "", /adds "left-pad": "1\.3\.0", .* Add "left-pad": "1\.3\.0" to the package that needs it before applying/);
   // The workspace package by name, the alias the slice's own import uses,
   // and the app's extensionless style for the new file.
   assert.match(patch.diff, /^\+import \{ format \} from "@fx\/money";$/m);

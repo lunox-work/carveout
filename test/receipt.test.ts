@@ -615,7 +615,10 @@ test("check names the packages a folder's package.json added, which its run does
   const { packagesAdded } = await import("../src/carve.js");
   const cut = JSON.stringify({ dependencies: { zod: "3.23.8" }, devDependencies: { typescript: "5.9.3" } });
   const folder = JSON.stringify({ dependencies: { zod: "3.23.8", dayjs: "1.11.13" }, devDependencies: { typescript: "5.9.3", "@types/lodash": "^4.17.0" } });
-  assert.deepEqual(packagesAdded(folder, cut), ["@types/lodash ^4.17.0", "dayjs 1.11.13"]);
+  assert.deepEqual(packagesAdded(folder, cut), ['"@types/lodash": "^4.17.0"', '"dayjs": "1.11.13"']);
+  // A pin the registry does not resolve, and a name with a newline, print as text and are said to be read.
+  const odd = JSON.stringify({ dependencies: { "x\ny": "git+https://example.com/x.git" } });
+  assert.deepEqual(packagesAdded(odd, cut), ['"x\\ny": "git+https://example.com/x.git" (not a registry version: a URL, a path or an alias; read it first)']);
   assert.deepEqual(packagesAdded(cut, cut), []);
   // A package.json that is not JSON any more adds nothing it can name.
   assert.deepEqual(packagesAdded("{", cut), []);

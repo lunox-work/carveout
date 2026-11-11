@@ -37,6 +37,7 @@ import {
   isSecretPath,
   isTestPath,
   isPackageName,
+  isRegistryVersion,
   packageNameOf,
   pathMatcher,
   renderBoundaryMarkdown,
@@ -2807,7 +2808,7 @@ export async function checkProject(
     for (const path of extra) await rm(join(work, path), { force: true });
     // A package the folder installed for itself: named, since the run that
     // judges the slice installs what the cut wrote, as the repository does.
-    if (changed.some(([path]) => path === "package.json")) addedPackages.push(...packagesAdded(readFileSync(join(work, "package.json"), "utf8"), texts["package.json"] ?? ""));
+    if (changed.some(([path]) => path === "package.json") && existsSync(join(work, "package.json"))) addedPackages.push(...packagesAdded(readFileSync(join(work, "package.json"), "utf8"), texts["package.json"] ?? ""));
     for (const [path, text] of changed) {
       await mkdir(dirname(join(work, path)), { recursive: true });
       await rm(join(work, path), { force: true });
@@ -2951,7 +2952,9 @@ export async function checkProject(
           for (const file of json.testResults ?? []) {
             const cases = file.assertionResults ?? [];
             tests += cases.length;
-            failures += cases.filter((each) => each.status === "failed").length + (cases.length === 0 && file.status === "failed" ? 1 : 0);
+            // Only a test that ran and passed counts: a skipped, todo or
+            // pending one passes nothing.
+            failures += cases.filter((each) => each.status !== "passed").length + (cases.length === 0 && file.status === "failed" ? 1 : 0);
           }
         } catch {
           failures += 1;
@@ -3077,8 +3080,8 @@ export async function checkProject(
   return steps;
 }
 
-/** The dependencies one package.json text pins that another does not, as `name version`. */
-export function packagesAdded(folder: string, cut: string): string[] {
+/** The dependencies one package.json text pins that another does not. */
+function dependenciesAdded(folder: string, cut: string): { name: string; version: string }[] {
   const entries = (text: string) => {
     try {
       const manifest = JSON.parse(text) as Record<string, Record<string, unknown> | undefined>;
@@ -3090,8 +3093,22 @@ export function packagesAdded(folder: string, cut: string): string[] {
   const known = new Set(entries(cut).map(([name]) => name));
   return entries(folder)
     .filter(([name]) => !known.has(name))
-    .map(([name, version]) => `${name} ${String(version)}`)
-    .sort(compare);
+    .map(([name, version]) => ({ name, version: typeof version === "string" ? version : JSON.stringify(version) }))
+    .sort((a, b) => compare(a.name, b.name));
+}
+
+/**
+ * A dependency as the owner reads it: quoted, so a name or pin carrying a
+ * newline or an escape prints as text, and a pin the registry does not
+ * resolve (a URL, a path, an alias) said to be one.
+ */
+function dependencyText(item: { name: string; version: string }): string {
+  return `${JSON.stringify(item.name)}: ${JSON.stringify(item.version)}${isRegistryVersion(item.version) ? "" : " (not a registry version: a URL, a path or an alias; read it first)"}`;
+}
+
+/** The dependencies one package.json text pins that another does not, as the owner reads them. */
+export function packagesAdded(folder: string, cut: string): string[] {
+  return dependenciesAdded(folder, cut).map(dependencyText);
 }
 
 
@@ -3266,6 +3283,8 @@ function boundaryEdit(
   path: string,
   record: CarveoutRecord,
   stubFiles: ReadonlyMap<string, string>,
+  /** The package.json the cut wrote, from the receipt: what was there before the folder's edits. */
+  cutPackageJson?: string,
 ): BoundaryEdit | null {
   const module = stubFiles.get(path);
   if (module !== undefined)
@@ -3275,33 +3294,19 @@ function boundaryEdit(
       detail: `${module} is cut: the edit to its stub stays in the folder, and the patch does not change ${module}.`,
     };
   if (path === "package.json") {
-    let added: { name: string; version: string }[] = [];
-    try {
-      const manifest = JSON.parse(readFileSync(join(root, path), "utf8")) as Record<
-        string,
-        Record<string, unknown> | undefined
-      >;
-      const known = new Set([
-        "typescript",
-        ...record.dependencies.map((dependency) => dependency.name),
-      ]);
-      added = [
-        ...Object.entries(manifest["dependencies"] ?? {}),
-        ...Object.entries(manifest["devDependencies"] ?? {}),
-      ]
-        .filter(([name]) => !known.has(name))
-        .map(([name, version]) => ({ name, version: typeof version === "string" ? version : String(version) }))
-        .sort((a, b) => compare(a.name, b.name));
-    } catch {
-      // Not JSON any more: reported as edited.
-    }
+    // Against the cut's own package.json (its type and peer packages
+    // included) when the receipt has it; else the record's dependencies.
+    const cut =
+      cutPackageJson ??
+      JSON.stringify({ dependencies: Object.fromEntries(["typescript", ...record.dependencies.map((dependency) => dependency.name)].map((name) => [name, ""])) });
+    const added = existsSync(join(root, path)) ? dependenciesAdded(readFileSync(join(root, path), "utf8"), cut) : [];
     return {
       path,
       kind: "dependency",
       detail:
         added.length === 0
           ? "package.json was edited; the repository's package files are not patched."
-          : `adds ${added.map((item) => `${item.name} ${item.version}`).join(", ")}, which the repository's package files do not get.`,
+          : `adds ${added.map(dependencyText).join(", ")}, which the repository's package files do not get.`,
       ...(added.length === 0 ? {} : { added }),
     };
   }
@@ -3613,7 +3618,7 @@ export async function patchProject(
       if (hash !== undefined) {
         if (sha256(text) !== hash) {
           generatedEdits.push(path);
-          const edit = boundaryEdit(root, path, record, stubFiles);
+          const edit = boundaryEdit(root, path, record, stubFiles, trusted.receipt?.generatedText?.["package.json"]);
           if (edit !== null) boundary.push(edit);
         }
         continue;
@@ -3714,7 +3719,7 @@ export async function patchProject(
       const where = edit.added.map((item) => {
         const dirs = [...new Set([...(importedBy.get(item.name) ?? [])].map((path) => packageOf(path)))].sort(compare);
         const files = dirs.map((dir) => (dir === "" ? "package.json" : `${dir}/package.json`));
-        return `"${item.name}": "${item.version}" ${files.length === 0 ? "to the package that needs it" : `to ${files.join(" and ")}`}`;
+        return `${dependencyText(item)} ${files.length === 0 ? "to the package that needs it" : `to ${files.join(" and ")}`}`;
       });
       boundary[index] = {
         ...edit,

@@ -594,7 +594,8 @@ async function main(argv: readonly string[]) {
               ...(result.receipt === null ? { noReceipt: true } : { receipt: result.receipt }),
               accept: accepted,
             });
-      const vacuous = preSteps === null ? null : preSteps.every((step) => step.ok);
+      // The acceptance tests' own verdict: the folder's tests are judged apart.
+      const vacuous = preSteps === null ? null : preSteps.find((step) => step.command === "accept")?.ok === true;
       // A build that fails on an acceptance test itself (an import it makes
       // that the folder lacks) is no failure of the work's.
       const unbuilt =
