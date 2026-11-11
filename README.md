@@ -730,8 +730,12 @@ class, `never[]` under the relaxed `noImplicitAny`).
   cut's `package.json`, so its build fails until then.
 - **Copied folders on refresh.** `apply` never writes a `--copy` folder's
   files. `refresh` takes one the folder never edited as the repository has
-  it (outside pseudonyms), and names one it edited, to bring by hand and
-  pass as `--resolved`.
+  it, deleted included (outside pseudonyms), and names one it edited, to
+  bring by hand and pass as `--resolved`. A copied folder the repository
+  deletes whole stops `apply` and `refresh`: cut again.
+- **Acceptance timeouts.** `check --accept` stops an acceptance run after
+  ten minutes, but only its first process: workers it started may outlive
+  it.
 - **Folders named like build output.** Files under `build/`, `dist/`,
   `vendor/` and `third_party/` are not parsed: a source folder named
   `build` is copied when reached, but its own imports are not followed.
