@@ -596,3 +596,17 @@ test("after an overlap moves a file alone, the folder still patches once the rep
   writeFileSync(join(scratch, "bases.patch"), last.diff);
   if (last.diff !== "") git(moving, ["apply", "--check", join(scratch, "bases.patch")]);
 });
+
+test("--resolved takes the slice's own files only, and names a resolution that leaves out the repository's change", async () => {
+  const { refreshProject } = await import("../src/mergeback.js");
+  const moving = join(scratch, "moving-resolved-check");
+  git(scratch, ["clone", "-q", repo, moving]);
+  const cut = await cutSlice({ repo: moving, out: join(scratch, "refresh-resolved-check"), entryPoints: [ENTRY], budget: { maxFiles: 40, maxDepth: 1 }, offline: true });
+  await assert.rejects(refreshProject(cut.out, { resolved: ["packages/money/src/index.ts"] }), /--resolved takes the slice's own files/);
+  // Upstream changes tax.ts; the folder never took it, yet calls it resolved.
+  const tax = join(moving, "apps/shop/src/tax.ts");
+  writeFileSync(tax, readFileSync(tax, "utf8").replace("0.1", "0.2"));
+  git(moving, ["commit", "-qam", "upstream"]);
+  const result = await refreshProject(cut.out, { resolved: ["apps/shop/src/tax.ts"] });
+  assert.deepEqual(result?.droppedUpstream, ["apps/shop/src/tax.ts"]);
+});

@@ -1144,6 +1144,10 @@ async function main(argv: readonly string[]) {
         );
         if (applied.leaks.length > 0) process.stdout.write(leaksText(applied.leaks));
         if (applied.unmapped.length > 0) process.stdout.write(unmappedText(applied.unmapped));
+        if (refreshed.droppedUpstream !== undefined)
+          process.stdout.write(
+            `Taken as resolved, though the folder's text leaves out some of the repository's change to it (the next patch reverts those lines; merge them in if that is not meant):\n${list(refreshed.droppedUpstream)}\n`,
+          );
       }
       if (refreshed !== null && (refreshed.applied.leaks.length > 0 || refreshed.applied.unmapped.length > 0)) process.exitCode = 2;
       if (refreshed !== null && refreshed.applied.conflicts.length > 0) process.exitCode = 7;

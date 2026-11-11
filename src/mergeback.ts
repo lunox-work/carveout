@@ -774,7 +774,13 @@ export async function refreshProject(
      */
     readonly resolved?: readonly string[];
   } = {},
-): Promise<{ readonly from: string; readonly to: string; readonly applied: Applied } | null> {
+): Promise<{
+  readonly from: string;
+  readonly to: string;
+  readonly applied: Applied;
+  /** Files taken as resolved whose text leaves out some of the repository's change to them. */
+  readonly droppedUpstream?: readonly string[];
+} | null> {
   const root = resolve(dir);
   const trusted = trustedCut(root, options.receipt, options.noReceipt === true ? { noReceipt: true } : {});
   const record = trusted.record;
@@ -788,6 +794,12 @@ export async function refreshProject(
   const copiedFolders = (record.extras ?? []).map((file) => file.path);
   const paths = [...new Set([...packages.map((dir) => (dir === "" ? "." : dir)), ...stubbed, ...copiedFolders])].sort(compare);
   const resolved = [...new Set(options.resolved ?? [])];
+  // Only the slice's own files: a path outside would join the record, and
+  // the next patch would delete it.
+  const sliceFiles = new Set(record.manifest.included.map((file) => file.path));
+  const outsideSlice = resolved.filter((path) => !sliceFiles.has(path));
+  if (outsideSlice.length > 0)
+    throw new Error(`--resolved takes the slice's own files; these are not: ${outsideSlice.join(", ")}.`);
   const change = git(repo, ["diff", "--binary", "--full-index", from, to, "--", ...paths, ...resolved.map((path) => `:(exclude)${path}`)]);
   if (change.trim() === "" && resolved.length === 0) return null;
   const written = new Map<string, { folderPath: string; sha256: string; folderSha256: string }>();
@@ -804,7 +816,24 @@ export async function refreshProject(
   });
   // A file resolved by hand moves to the new base as the folder holds it:
   // the repository's bytes there are its base, the folder's text an edit.
+  // One whose text leaves out some of the repository's change is named.
   const table = trusted.receipt?.pseudonyms;
+  const droppedUpstream: string[] = [];
+  const mergeScratch = resolved.length === 0 ? null : mkdtempSync(join(tmpdir(), "carveout-resolved-"));
+  for (const path of resolved) {
+    try {
+      const baseCommit = record.bases?.[path] ?? from;
+      const show = (commit: string) => execFileSync("git", ["show", `${commit}:${path}`], { cwd: repo, maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] }).toString("utf8");
+      const folderPathOf = table === undefined ? path : (exactToFolder(table, path, "")?.path ?? toFolder(table, path, "").path);
+      const folderText = readFileSync(join(root, folderPathOf), "utf8");
+      const ours = table === undefined ? folderText : fromFolder(table, folderPathOf, folderText).text;
+      const merged = mergeText(mergeScratch ?? tmpdir(), ours, show(baseCommit), show(to));
+      if (merged.conflicts || merged.text !== ours) droppedUpstream.push(path);
+    } catch {
+      // A file the commit deleted, or the folder did: nothing to compare.
+    }
+  }
+  if (mergeScratch !== null) await rm(mergeScratch, { recursive: true, force: true });
   for (const path of resolved) {
     let bytes: Buffer;
     try {
@@ -868,5 +897,5 @@ export async function refreshProject(
     };
     saveRecord(root, now, updated, {}, new Map([...written.values()].map(({ folderPath, folderSha256 }) => [folderPath, folderSha256])));
   }
-  return { from, to, applied };
+  return { from, to, applied, ...(droppedUpstream.length === 0 ? {} : { droppedUpstream }) };
 }
