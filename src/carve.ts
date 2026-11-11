@@ -583,6 +583,14 @@ export interface SliceRequest {
    * configuration's.
    */
   readonly private?: readonly string[];
+  /**
+   * Files the cut never reads, as if the checkout had none: the owner's
+   * acceptance tests, which no folder may hold nor be shaped by (a test
+   * that imports the slice would come along, or make what it imports part
+   * of the public surface). Kept in the receipt for later cuts, never in
+   * the folder's record.
+   */
+  readonly unseen?: readonly string[];
 }
 
 function git(repo: string, args: readonly string[]): string | null {
@@ -715,6 +723,7 @@ export function planSlice(request: SliceRequest): Plan {
   const { built, walk } = walkGraph(repo, entryPoints, budget, {
     ...walkOptions(settled, repo),
     ...(setup.length === 0 ? {} : { roots: setup }),
+    ...(request.unseen === undefined || request.unseen.length === 0 ? {} : { unseen: request.unseen }),
   });
   const texts = walk.included.map((path) => ({
     path,
@@ -1304,6 +1313,7 @@ export async function computeCut(
   const { built } = walkGraph(repo, entryPoints, budget, {
     ...walkOptions(settled, repo),
     ...(setup.length === 0 ? {} : { roots: setup }),
+    ...(request.unseen === undefined || request.unseen.length === 0 ? {} : { unseen: request.unseen }),
   });
   log(`Read the imports of ${built.files.length} files.`);
   const commitSha = git(repo, ["rev-parse", "HEAD"]);
@@ -2329,6 +2339,7 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
       // The advice a public folder keeps out of its own record.
       readiness,
       generatedText,
+      ...(request.unseen === undefined || request.unseen.length === 0 ? {} : { unseen: [...request.unseen] }),
     });
   await writeFile(join(out, RECORD_PATH), `${JSON.stringify(folderRecord, null, 2)}\n`, "utf8");
   return { out, record, contract, readiness, receipt, pseudonyms: table };

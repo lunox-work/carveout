@@ -554,6 +554,9 @@ async function main(argv: readonly string[]) {
       // whole package, the pure code it runs, and a folder for someone
       // outside, in pseudonyms.
       const config = readRepoConfig(repo);
+      // The owner's acceptance tests are never sent: a test that imports the
+      // slice would otherwise come with --with-tests, from the working tree.
+      const accepted = acceptOption(values.accept, values.repo);
       const result = await cutSlice({
         repo,
         out: values.out,
@@ -566,6 +569,7 @@ async function main(argv: readonly string[]) {
         copyPure: values["copy-pure"] ?? config.copyPure ?? true,
         ...(values["follow-workspaces"] === true ? { followWorkspaces: true } : {}),
         ...(values.private === undefined ? {} : { private: values.private }),
+        ...(accepted.length === 0 ? {} : { unseen: accepted.map((test) => test.path) }),
         public: values.public ?? config.public ?? true,
         ...(values.offline === true ? { offline: true } : {}),
         ...(values.copy === undefined ? {} : { copy: values.copy }),
@@ -582,7 +586,6 @@ async function main(argv: readonly string[]) {
       });
       // The owner's acceptance tests on the folder as it goes out: they
       // should not pass before the work, or they test nothing of it.
-      const accepted = acceptOption(values.accept, values.repo);
       const vacuous =
         accepted.length === 0 || steps.some((step) => !step.ok)
           ? null

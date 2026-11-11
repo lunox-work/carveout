@@ -59,6 +59,8 @@ export interface Receipt {
   readonly generatedText?: Readonly<Record<string, string>>;
   /** What would make the folder's tests run on real code (`readinessOf`), public cut or not. */
   readonly readiness?: Readiness;
+  /** Files every cut of this folder reads as absent: the owner's acceptance tests. */
+  readonly unseen?: readonly string[];
 }
 
 /** The record as the folder holds it: what its files are measured against. */

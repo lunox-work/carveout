@@ -557,3 +557,22 @@ test("--no-receipt reaches every folder command as no receipt, with negated flag
     assert.equal(result.status, command === "patch" ? 3 : 0, `${command}: ${result.stdout}${result.stderr}`);
   }
 });
+
+test("a file the cut is told not to see shapes nothing in the folder: the owner's hidden acceptance test", async () => {
+  const hiddenRepo = join(scratch, "hidden-repo");
+  cpSync(FIXTURE, hiddenRepo, { recursive: true });
+  // Not committed, as an owner keeps one: in the working tree, importing what the task adds.
+  git(hiddenRepo, ["init", "-q"]);
+  git(hiddenRepo, ["add", "-A"]);
+  git(hiddenRepo, ["commit", "-q", "-m", "fixture"]);
+  write(join(hiddenRepo, "apps/shop/src/hidden.test.ts"), 'import assert from "node:assert/strict";\nimport { test } from "node:test";\nimport { notYet } from "./cart";\ntest("acceptance", () => assert.equal(notYet(), 1));\n');
+  const request = { repo: hiddenRepo, entryPoints: [ENTRY], budget: { maxFiles: 40, maxDepth: 1 }, offline: true, tests: true };
+  const seen = await cutSlice({ ...request, out: join(scratch, "hidden-seen") });
+  assert.ok(existsSync(join(seen.out, "apps/shop/src/hidden.test.ts")), "without it, the test comes along");
+  const unseen = await cutSlice({ ...request, out: join(scratch, "hidden-unseen"), unseen: ["apps/shop/src/hidden.test.ts"] });
+  assert.equal(existsSync(join(unseen.out, "apps/shop/src/hidden.test.ts")), false);
+  assert.deepEqual(unseen.record.blockers.filter((blocker) => blocker.code === "declaration_incomplete"), []);
+  assert.doesNotMatch(readFileSync(join(unseen.out, "carveout.json"), "utf8") + readFileSync(join(unseen.out, "BOUNDARY.md"), "utf8"), /hidden\.test|notYet/);
+  assert.ok(unseen.receipt !== null);
+  assert.deepEqual(JSON.parse(readFileSync(unseen.receipt, "utf8")).unseen, ["apps/shop/src/hidden.test.ts"]);
+});

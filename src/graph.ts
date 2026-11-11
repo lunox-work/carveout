@@ -175,6 +175,8 @@ export interface BuiltGraph {
 export interface GraphOptions {
   /** Resolve a workspace package's import to its source file. */
   readonly followWorkspaces?: boolean;
+  /** Files read as if the checkout had none (the owner's acceptance tests). */
+  readonly unseen?: readonly string[];
 }
 
 /** What `walkGraph` takes: the walk's options and the graph's. */
@@ -215,8 +217,9 @@ export function walkGraph(
   options: WalkOptions = {},
 ): { built: BuiltGraph; walk: ReachResult } {
   const started = performance.now();
-  const files = listFiles(root);
-  const { followWorkspaces, ...rest } = options;
+  const { followWorkspaces, unseen, ...rest } = options;
+  const hidden = new Set(unseen ?? []);
+  const files = listFiles(root).filter((file) => !hidden.has(file));
   const graphOptions = followWorkspaces === undefined ? {} : { followWorkspaces };
   const builder = graphBuilder(root, files, performance.now() - started, graphOptions);
   const absoluteRoot = resolve(root);

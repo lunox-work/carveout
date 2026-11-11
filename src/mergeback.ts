@@ -220,6 +220,8 @@ export async function applyPatch(
       private: record.request.private ?? [],
       copy: record.request.copy ?? [],
       public: record.request.public === true,
+      // The owner's acceptance tests stay unread in every later cut.
+      ...(trusted.receipt?.unseen === undefined ? {} : { unseen: trusted.receipt.unseen }),
       ...(options.log === undefined ? {} : { log: options.log }),
     };
     const cuts: ComputedCut[] = [await computeCut(request)];
@@ -735,6 +737,7 @@ export async function widenProject(
     public: request.public === true,
     ...(request.task === undefined ? {} : { task: request.task }),
     ...(trusted.receipt?.pseudonyms === undefined ? {} : { earlierPseudonyms: trusted.receipt.pseudonyms }),
+    ...(trusted.receipt?.unseen === undefined ? {} : { unseen: trusted.receipt.unseen }),
     ...(trusted.receipt === null ? { receipt: false as const } : {}),
     ...(options.log === undefined ? {} : { log: options.log }),
   });
