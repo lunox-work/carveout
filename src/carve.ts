@@ -512,15 +512,14 @@ function withTestSetup(
   repo: string,
   entries: readonly string[],
   tests: boolean,
-): { entries: string[]; settings: VitestSettings | null } {
-  if (!tests) return { entries: [...entries], settings: null };
+): { setup: string[]; settings: VitestSettings | null } {
+  if (!tests) return { setup: [], settings: null };
   const packageOf = packageFolder(resolve(repo));
   const dirs = [...new Set(entries.map((entry) => packageOf(`${entry}/x`)))];
   const settings = dirs.map((dir) => vitestSettings(repo, dir)).find((found) => found !== null) ?? null;
-  return {
-    entries: [...new Set([...entries, ...(settings?.setupFiles ?? [])])].sort(compare),
-    settings,
-  };
+  // Walked from, never entry points: the package, the project's name and
+  // the interface test are the caller's entries' alone.
+  return { setup: [...new Set(settings?.setupFiles ?? [])].filter((file) => !entries.includes(file)).sort(compare), settings };
 }
 
 export interface Plan {
@@ -586,8 +585,12 @@ export function planSlice(request: SliceRequest): Plan {
   const settled = settle(request);
   const repo = resolve(request.repo);
   const budget = request.budget ?? SLICE_BUDGET_DEFAULTS;
-  const { entries: entryPoints } = withTestSetup(repo, entriesOf(request), request.tests === true);
-  const { built, walk } = walkGraph(repo, entryPoints, budget, walkOptions(settled, repo));
+  const entryPoints = entriesOf(request);
+  const { setup } = withTestSetup(repo, entryPoints, request.tests === true);
+  const { built, walk } = walkGraph(repo, entryPoints, budget, {
+    ...walkOptions(settled, repo),
+    ...(setup.length === 0 ? {} : { roots: setup }),
+  });
   const texts = walk.included.map((path) => ({
     path,
     text: readFileSync(join(repo, path), "utf8"),
@@ -1165,8 +1168,12 @@ export async function computeCut(
   const repo = resolve(request.repo);
   const log = request.log ?? (() => {});
   const budget = request.budget ?? SLICE_BUDGET_DEFAULTS;
-  const { entries: entryPoints } = withTestSetup(repo, entriesOf(request), request.tests === true);
-  const { built } = walkGraph(repo, entryPoints, budget, walkOptions(settled, repo));
+  const entryPoints = entriesOf(request);
+  const { setup, settings: vitest } = withTestSetup(repo, entryPoints, request.tests === true);
+  const { built } = walkGraph(repo, entryPoints, budget, {
+    ...walkOptions(settled, repo),
+    ...(setup.length === 0 ? {} : { roots: setup }),
+  });
   log(`Read the imports of ${built.files.length} files.`);
   const commitSha = git(repo, ["rev-parse", "HEAD"]);
   const signal = AbortSignal.timeout(15 * 60_000);
@@ -1179,6 +1186,7 @@ export async function computeCut(
       entryPoints,
       budget,
       tests: request.tests === true,
+      ...(setup.length === 0 ? {} : { setupFiles: setup }),
       ...(live.length === 0 ? {} : { live }),
       ...(settled.wholePackage ? { wholePackage: true } : {}),
       ...(settled.followWorkspaces ? { followWorkspaces: true } : {}),
@@ -1236,7 +1244,6 @@ export async function computeCut(
   };
   // The environment the package's Vitest tests run in, installed as the
   // repository locks it (`jsdom` for a component's tests).
-  const { settings: vitest } = withTestSetup(repo, entryPoints, request.tests === true);
   for (const name of ENVIRONMENT_PACKAGES[vitest?.environment ?? ""] ?? [])
     if (choices[name] === undefined && lockedVersion(repo, name) !== null) {
       choices[name] = "approved-package";
@@ -2872,6 +2879,13 @@ export async function patchProject(
   // (else every helper there escapes the rule). A file code imports has an
   // importer that is no test, so it is no helper either.
   const code = new Set(record.request.entryPoints.filter((entry) => included.has(entry) && !isTestPath(entry)));
+  // The setup files the package's Vitest tests run before them: held as
+  // the runner's configuration is. A cut from before they were recorded
+  // apart named them among its entry points.
+  const setupFiles = new Set(
+    record.manifest.params.setupFiles ??
+      record.manifest.params.entryPoints.filter((entry) => !record.request.entryPoints.includes(entry) && !isTestPath(entry)),
+  );
   const importersOf = new Map<string, string[]>();
   for (const edge of [...record.manifest.internalImports, ...record.manifest.cuts.inbound])
     importersOf.set(edge.to, [...(importersOf.get(edge.to) ?? []), edge.from]);
@@ -2887,6 +2901,7 @@ export async function patchProject(
     knownPackages,
     holds,
     testSupport: (path: string) => testOnly.has(path),
+    testSetup: (path: string) => setupFiles.has(path),
     reach: true,
     integrity: true,
     checks: true,

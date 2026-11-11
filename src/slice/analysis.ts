@@ -21,6 +21,12 @@ export interface SliceParams {
   /** Also bring along the tests outside the slice that import it. */
   readonly tests: boolean;
   /**
+   * The setup files the package's Vitest tests run before them (its
+   * config's `setupFiles`), walked from as the entry points are but no
+   * entry point: an edit to one is held as a test-runner setting's is.
+   */
+  readonly setupFiles?: readonly string[];
+  /**
    * Service packages kept real rather than mocked: installed and typed as
    * the repository has them, with the environment their importers read
    * left to the shell. Absent when none.

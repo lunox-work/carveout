@@ -11,7 +11,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rm
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, before, test } from "node:test";
-import { cutSlice } from "../src/carve.js";
+import { cutSlice, patchProject } from "../src/carve.js";
 import { buildScript } from "../src/project/project.js";
 import { vitestConfigText, vitestSettings } from "../src/project/vitest-config.js";
 
@@ -95,6 +95,21 @@ test("a cut whose package runs its Vitest tests in jsdom carries the settings an
   const config = readFileSync(join(cut.out, "vitest.config.mjs"), "utf8");
   assert.match(config, /"environment": "jsdom"/);
   assert.match(config, /"\.\/apps\/shop\/test\/setup\.ts"/);
+  // Walked from, but no entry point: not in the entry points an agent is
+  // told of, nor imported by the interface test.
+  assert.deepEqual(cut.record.manifest.entryPoints, ["apps/shop/src/tax.ts"]);
+  assert.deepEqual(cut.record.manifest.params.setupFiles, ["apps/shop/test/setup.ts"]);
+  assert.doesNotMatch(readFileSync(join(cut.out, "AGENTS.md"), "utf8"), /setup\.ts/);
+  // A mock of the code under test in the setup file replaces it in every
+  // test of the package: held as the runner's configuration is.
+  writeFileSync(join(cut.out, "apps/shop/test/setup.ts"), 'import { vi } from "vitest";\nvi.mock("../src/tax", () => ({ tax: () => 10 }));\nglobalThis.ready = true;\n');
+  const patch = await patchProject(cut.out);
+  assert.match(
+    patch.refused.find((refusal) => refusal.path === "apps/shop/test/setup.ts")?.reason ?? "",
+    /changes what a check holds code to/,
+    JSON.stringify(patch.refused),
+  );
+  assert.doesNotMatch(patch.diff, /vi\.mock/);
 });
 
 test("the folder's build does not count the implicit anys the stubs leave, and counts every other error", () => {

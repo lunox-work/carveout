@@ -155,6 +155,13 @@ export interface SliceTestLeft {
 
 export interface ReachOptions {
   /**
+   * Files walked from as the entry points are, which are no entry point:
+   * the setup files a package's Vitest tests run before them. They come
+   * along with what they import, as the tests' helpers; the entry points,
+   * their package and their demands are the caller's alone.
+   */
+  readonly roots?: readonly string[];
+  /**
    * Also include each test file outside the slice that imports it, directly
    * or through a barrel that re-exports from it, and runs on `node:test` or
    * Vitest. Such a barrel comes along too, its other re-exports cut. Tests
@@ -386,6 +393,9 @@ export function reach(
     if (resolved.length === 0) unknownEntryPoints.push(entry);
     for (const file of resolved) entries.add(file);
   }
+  const roots = new Set(
+    (options.roots ?? []).flatMap((root) => resolveEntry(root, byId, files)).filter((file) => !entries.has(file)),
+  );
   const maxFiles = Math.max(0, Math.floor(budget.maxFiles));
   const maxDepth = Math.max(0, Math.floor(budget.maxDepth));
   const packageOf = options.packageOf ?? (() => "");
@@ -406,7 +416,7 @@ export function reach(
   const seen = new Set<string>();
   const byState = (a: [string, Demand], b: [string, Demand]) =>
     compare(a[0], b[0]) || compare(a[1], b[1]);
-  let level: [string, Demand][] = [...entries].map((file) => [file, EVERYTHING]);
+  let level: [string, Demand][] = [...entries, ...roots].map((file) => [file, EVERYTHING]);
   let depth = 0;
   while (level.length > 0 && depth <= maxDepth && dropped.size === 0) {
     const work = level.sort(byState);
@@ -420,7 +430,7 @@ export function reach(
         return false;
       }
       depthOf.set(file, depth);
-      originOf.set(file, entries.has(file) ? "entry" : "walk");
+      originOf.set(file, entries.has(file) ? "entry" : roots.has(file) ? "helper" : "walk");
       return true;
     };
     // A re-export forwards a name at the barrel's depth; an import of the
@@ -532,7 +542,7 @@ export function reach(
       demand.set(file, set);
       return grew;
     };
-    for (const file of entries) if (depthOf.has(file)) add(file, EVERYTHING);
+    for (const file of [...entries, ...roots]) if (depthOf.has(file)) add(file, EVERYTHING);
     for (let changed = true; changed; ) {
       changed = false;
       for (const file of depthOf.keys()) {

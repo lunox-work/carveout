@@ -353,6 +353,7 @@ export async function analyseSlice(input: {
       : pathMatcher(params.private);
   const reached = reach(graph, params.entryPoints, params.budget, {
     tests: params.tests,
+    ...(params.setupFiles === undefined || params.setupFiles.length === 0 ? {} : { roots: params.setupFiles }),
     packageOf: packageFolder(input.sourceDir),
     runnerOf: testRunnerResolver(input.sourceDir, packageFolder(input.sourceDir)),
     ...(params.wholePackage === true ? { wholePackage: true } : {}),

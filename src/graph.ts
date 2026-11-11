@@ -225,7 +225,7 @@ export function walkGraph(
     packageOf: rest.packageOf ?? packageFolder(absoluteRoot),
   };
   const scripts = files.filter((file) => SCRIPT.test(file));
-  const prefixes = entryPoints.map((entry) =>
+  const prefixes = [...entryPoints, ...(options.roots ?? [])].map((entry) =>
     entry.replaceAll("\\", "/").replace(/^\.\//, "").replace(/^\/+|\/+$/g, ""),
   );
   builder.add(

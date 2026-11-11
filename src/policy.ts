@@ -284,6 +284,13 @@ export function handoffPolicy(options: {
   readonly holds?: (path: string) => boolean;
   /** Whether a path is a test's helper by what imports it (only tests do). */
   readonly testSupport?: (path: string) => boolean;
+  /**
+   * Whether a path is a setup file the test runner runs before every test
+   * (Vitest's `setupFiles`): whatever its name, a change to it is a change
+   * to what a check holds code to. A `vi.mock` there replaces the code
+   * under test in every test of the package.
+   */
+  readonly testSetup?: (path: string) => boolean;
 }): (
   path: string,
   change: "added" | "changed" | "deleted",
@@ -299,7 +306,7 @@ export function handoffPolicy(options: {
     if (allowed(path)) return null;
     if (protectedPath(path))
       return "a protected path (CI, hooks, manifests, lockfiles, environment): review it and pass --allow to carry it";
-    if (checkConfig(path) && (change !== "added" || pickedUp(path)))
+    if ((checkConfig(path) || options.testSetup?.(path) === true) && (change !== "added" || pickedUp(path)))
       return `${change === "added" ? "adds" : change === "deleted" ? "deletes" : "changes"} what a check holds code to (compiler, linter, test-runner configuration or setup): review it and pass --allow to carry it`;
     if (
       change === "added" &&
