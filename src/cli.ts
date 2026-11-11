@@ -33,7 +33,7 @@ import {
 } from "./core.js";
 import { gateRepository } from "./gate.js";
 import { impactOf, runImpactTests } from "./impact.js";
-import { applyPatch, mergeProject, widenProject } from "./mergeback.js";
+import { applyPatch, mergeProject, refreshProject, widenProject } from "./mergeback.js";
 import { statusProject } from "./status.js";
 import { hasAdvice, renderReadiness } from "./readiness.js";
 import { trustedCut } from "./receipt.js";
@@ -96,6 +96,11 @@ const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript r
       Brings a patch for the repository at the cut's commit into <dir>, with its
       imports rewritten as a cut writes them. --stubs also writes the stubs the
       change needs from the modules the slice cuts.
+
+  carveout refresh <dir> [--repo <checkout>] [--receipt <file>] [--json]
+      The repository's commits since the cut, brought into the folder: the
+      change in the slice's packages and the modules it stubs, merged into
+      the folder's own edits (an overlap is left, and named: exit 7).
 
   carveout widen <dir> --entry <path>... [--out <dir>] [--depth N] [--max-files N]
                  [--allow <path>]... [--receipt <file>] [--json]
@@ -952,6 +957,37 @@ async function main(argv: readonly string[]) {
       }
       if (applied.stubs.some((stub) => !stub.written)) process.exitCode = 5;
       if (applied.conflicts.length > 0) process.exitCode = 7;
+      return;
+    }
+
+    case "refresh": {
+      const [dir] = positionals;
+      if (dir === undefined) fail("refresh needs the folder a cut wrote.");
+      const given = repoFor(dir);
+      const refreshed = await refreshProject(dir, {
+        ...(given === undefined ? {} : { repo: given }),
+        ...receiptOption,
+        log: (line) => {
+          if (values.json !== true) process.stderr.write(`${line}\n`);
+        },
+      });
+      if (values.json === true) print(refreshed);
+      else if (refreshed === null) process.stdout.write("Nothing the slice reads has moved since the cut.\n");
+      else {
+        const { applied } = refreshed;
+        process.stdout.write(
+          [
+            `Brought ${refreshed.from.slice(0, 8)}..${refreshed.to.slice(0, 8)} into the folder: ${applied.changed.length} changed, ${applied.added.length} new, ${applied.deleted.length} deleted.`,
+            ...(applied.merged.length === 0 ? [] : [`Merged into the folder's own edits:\n${list(applied.merged)}`]),
+            ...(applied.conflicts.length === 0
+              ? []
+              : [`The folder's edits and the change overlap here; left as the folder had them, to merge by hand:\n${list(applied.conflicts)}`]),
+            ...(applied.stubs.length === 0 ? [] : [`Stubs written:\n${list(applied.stubs.map((stub) => `${stub.path}: ${stub.detail}`))}`]),
+            "",
+          ].join("\n"),
+        );
+      }
+      if (refreshed !== null && refreshed.applied.conflicts.length > 0) process.exitCode = 7;
       return;
     }
 

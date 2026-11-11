@@ -207,3 +207,26 @@ test("apply merges a change into the folder's own edits, and leaves an overlap t
   assert.match(readFileSync(mine, "utf8"), /subtotalMine/);
   assert.doesNotMatch(readFileSync(mine, "utf8"), /subtotalTheirs|<<<<<<</);
 });
+
+test("refresh brings the repository's commits since the cut into a folder that holds work", async () => {
+  const { refreshProject } = await import("../src/mergeback.js");
+  const moving = join(scratch, "moving");
+  git(scratch, ["clone", "-q", repo, moving]);
+  const cut = await cutSlice({ repo: moving, out: join(scratch, "refresh"), entryPoints: [ENTRY], budget: { maxFiles: 40, maxDepth: 1 }, offline: true });
+  assert.equal(await refreshProject(cut.out), null);
+  // The contributor works; the repository moves on, in two files.
+  const held = join(cut.out, ENTRY);
+  writeFileSync(held, readFileSync(held, "utf8").replace("export function subtotal", "// the contributor's note\nexport function subtotal"));
+  const cart = join(moving, ENTRY);
+  writeFileSync(cart, readFileSync(cart, "utf8").replace("  return new Stripe", "  // the repository's note\n  return new Stripe"));
+  const tax = join(moving, "apps/shop/src/tax.ts");
+  writeFileSync(tax, readFileSync(tax, "utf8").replace("0.1", "0.2"));
+  git(moving, ["commit", "-qam", "upstream"]);
+  const refreshed = await refreshProject(cut.out);
+  assert.ok(refreshed !== null);
+  assert.deepEqual(refreshed.applied.merged, [ENTRY]);
+  assert.deepEqual(refreshed.applied.conflicts, []);
+  assert.ok(refreshed.applied.changed.includes("apps/shop/src/tax.ts"));
+  assert.match(readFileSync(held, "utf8"), /the contributor's note[\s\S]*the repository's note/);
+  assert.match(readFileSync(join(cut.out, "apps/shop/src/tax.ts"), "utf8"), /0\.2/);
+});

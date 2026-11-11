@@ -579,3 +579,42 @@ export async function widenProject(
         });
   return { out, cut, patch, applied };
 }
+
+/**
+ * The repository's commits since the cut, brought into the folder: the
+ * change from the cut's commit to the checkout's HEAD in the packages the
+ * slice holds files of and in the modules it stubs, applied as `apply`
+ * applies a patch (the folder's own edits merged, an overlap left for a
+ * person, the stubs the change needs written). For a job long enough that
+ * the repository moves under it. Null when nothing it reads has moved.
+ */
+export async function refreshProject(
+  dir: string,
+  options: {
+    readonly repo?: string;
+    readonly receipt?: string;
+    readonly noReceipt?: boolean;
+    readonly log?: (line: string) => void;
+  } = {},
+): Promise<{ readonly from: string; readonly to: string; readonly applied: Applied } | null> {
+  const root = resolve(dir);
+  const trusted = trustedCut(root, options.receipt, options.noReceipt === true ? { noReceipt: true } : {});
+  const record = trusted.record;
+  const repo = trustedRepo(record, options.repo);
+  const from = record.manifest.sourceCommitSha;
+  if (from === null) throw new Error("The cut was not made in a Git checkout: there is no commit to refresh from.");
+  const to = git(repo, ["rev-parse", "HEAD"]).trim();
+  const packages = [...new Set(record.manifest.included.map((file) => packageDirOf(repo, file.path)))];
+  const stubbed = [...new Set(record.manifest.cuts.outbound.map((edge) => edge.to))];
+  const paths = [...new Set([...packages.map((dir) => (dir === "" ? "." : dir)), ...stubbed])].sort(compare);
+  const change = git(repo, ["diff", "--binary", "--full-index", from, to, "--", ...paths]);
+  if (change.trim() === "") return null;
+  const applied = await applyPatch(root, change, {
+    stubs: true,
+    repo,
+    ...(options.receipt === undefined ? {} : { receipt: options.receipt }),
+    ...(options.noReceipt === true ? { noReceipt: true } : {}),
+    ...(options.log === undefined ? {} : { log: options.log }),
+  });
+  return { from, to, applied };
+}

@@ -414,6 +414,11 @@ The verify command gets a scratch HOME and only the variables named with
 `--verify-env`. It never picks a checkout itself. Name a clean clone, or
 the person's own checkout only when they ask.
 
+When the repository moves during the job, `carveout refresh <folder>`
+brings its commits since the cut into the folder (the slice's packages and
+the modules it stubs), merged into the contributor's edits; an overlap is
+left as the folder had it and named (exit 7), for a person to merge.
+
 When the work turns out to need a module the slice cut, do not hand over a
 second folder from scratch: `carveout widen <folder> --entry <path>...`
 cuts it again with those entries, every other bound as it was, carries the
