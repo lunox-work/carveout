@@ -1354,6 +1354,19 @@ export async function computeCut(
         }),
   });
   const { contract, contractJson } = analysis;
+  // What the folder copies that the commit does not hold as it is: the
+  // owner's work in progress, which goes out as the working tree has it.
+  if (analysis.manifest.sourceDirty) {
+    const paths = analysis.manifest.included.map((file) => file.path);
+    const uncommitted = (git(repo, ["status", "--porcelain", "--", ...paths]) ?? "")
+      .split("\n")
+      .map((line) => line.slice(3).trim())
+      .filter((path) => path !== "");
+    if (uncommitted.length > 0)
+      log(
+        `Copies ${uncommitted.length} file(s) the commit does not hold as they are (the working tree's, uncommitted): ${uncommitted.slice(0, 8).join(", ")}${uncommitted.length > 8 ? `, and ${uncommitted.length - 8} more` : ""}. Commit them, or keep one out with --private, before the folder goes out.`,
+      );
+  }
   // A public folder names a file outside the slice only by its package.
   const outsideName = (() => {
     const packageOf = packageFolder(repo);
