@@ -163,7 +163,7 @@ export function renderSliceAgents(input: {
     "- Edit the copied source, and add files beside it in the same packages. The stubs, everything under `carveout/`, `package.json`, the lockfile and the root configuration are generated: edits to them do not go back.",
     "- A mock answers any call with another mock. To make one return something in a test, read the README's Mocks section; nothing else under `carveout/` needs reading.",
     "- If `carveout/baseline.json` is there, the tests it lists failed on the mocks before any edit and are not counted; with none, every test counts.",
-    "- The build writes a `.js` beside each `.ts` (`.cjs` beside `.cts`, `.mjs` beside `.mts`), a new file's too: leave them. Only the source comes back, never what the build wrote from it.",
+    "- The build writes a `.js` beside each `.ts` (`.cjs` beside `.cts`, `.mjs` beside `.mts`), a new file's too: leave them. Only the source comes back, never what the build wrote from it. A type error fails the build, and so `npm test`.",
     `- ${tests}${left} A pass here is a pass against mocks.`,
     ...(input.runner === undefined
       ? []

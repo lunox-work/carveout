@@ -302,3 +302,23 @@ test("a test that rewrites the TAP file while the run goes on changes nothing th
   assert.match(result.stdout, /npm test: 1 of 2 test\(s\) pass \(node:test\)/);
   assert.match(readFileSync(join(root, "carveout/.last-run.tap"), "utf8"), /not ok \d+ - fails/);
 });
+
+test("the last line says which surface checks fail as before any edit, and which added files' tests ran", () => {
+  const root = folder("summary", {
+    "carveout/test.js": testRunnerScript(undefined),
+    "carveout.json": JSON.stringify({ manifest: { included: [{ path: "src/old.test.ts" }] } }),
+    "carveout/baseline.json": JSON.stringify({ failing: ["src/cart.ts keeps the type of total"] }),
+    "carveout/surface/check.ts": "export const c0 = 0; // src/cart.ts | total | value\nexport const c1 = 1; // src/cart.ts | other | value\n",
+    "carveout/surface/tsconfig.json": "{}\n",
+    "node_modules/.bin/tsc": "#!/bin/sh\necho \"carveout/surface/check.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.\"\nexit 2\n",
+    "src/old.test.ts": 'import { test } from "node:test";\n',
+    "src/old.test.js": 'import { test } from "node:test";\ntest("old", () => {});\n',
+    "src/mine.test.ts": 'import { test } from "node:test";\n',
+    "src/mine.test.js": 'import { test } from "node:test";\ntest("mine", () => {});\n',
+  });
+  chmodSync(join(root, "node_modules/.bin/tsc"), 0o755);
+  const result = run(root);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /1 of 2 check\(s\) of the public surface hold \(1 failing as before any edit, not counted\)/);
+  assert.match(result.stdout, /Ran the tests of 1 file\(s\) the cut did not bring: src\/mine\.test\.ts\./);
+});
