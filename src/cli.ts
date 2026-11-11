@@ -186,7 +186,7 @@ function verdictOf(
   record: CarveoutRecord,
 ): {
   readonly ok: boolean;
-  readonly handoff: "ready" | "red-baseline" | "no-tests" | "failed";
+  readonly handoff: "blocked" | "ready" | "red-baseline" | "no-tests" | "failed";
   readonly counts?: TestCounts;
   readonly baseline?: readonly string[];
   readonly carried: number;
@@ -198,7 +198,9 @@ function verdictOf(
   const carried = record.tests?.carried.length ?? 0;
   return {
     ok,
-    handoff: !ok ? "failed" : baseline !== undefined ? "red-baseline" : carried === 0 ? "no-tests" : "ready",
+    // A cut with blockers (a name left in the folder, a stub it could not
+    // write) is not ready whatever its tests say.
+    handoff: !record.ready ? "blocked" : !ok ? "failed" : baseline !== undefined ? "red-baseline" : carried === 0 ? "no-tests" : "ready",
     ...(counts === undefined ? {} : { counts }),
     ...(baseline === undefined ? {} : { baseline }),
     carried,
@@ -552,7 +554,7 @@ async function main(argv: readonly string[]) {
       if (values.json === true)
         print({
           out: result.out,
-          ready: record.ready && verdict.handoff === "ready",
+          ready: verdict.handoff === "ready",
           handoff: verdict.handoff,
           counts: verdict.counts ?? null,
           baseline: verdict.baseline ?? [],
