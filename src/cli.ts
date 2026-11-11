@@ -824,7 +824,9 @@ async function main(argv: readonly string[]) {
         process.stdout.write(
           `${[
             handoff === "failed"
-              ? "The slice does not stand on its own yet."
+              ? edited && steps.some((step) => step.command === "npm test" && !step.ok)
+                ? "npm test fails on the folder's edits (above): what it lists failed after the edits and not before them, on the same mocks."
+                : "The slice does not stand on its own yet."
               : handoff === "red-baseline"
                 ? edited
                   ? `The edited folder installs, builds and passes its tests, but for the ${baselineOf?.length ?? 0} test(s) that failed on the mocks before any edit (not counted). A pass here is a pass against mocks: the repository's CI decides.${passing}`

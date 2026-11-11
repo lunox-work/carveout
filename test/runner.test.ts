@@ -47,6 +47,7 @@ function vitest(root: string, report: object, status: number): void {
   write(root, {
     "node_modules/.bin/vitest": [
       "#!/bin/sh",
+      'echo "$@" > vitest-args.txt',
       'for arg in "$@"; do case "$arg" in --outputFile.json=*) out="${arg#--outputFile.json=}";; esac; done',
       'mkdir -p "$(dirname "$out")"',
       `cat > "$out" <<'EOF'`,
@@ -84,6 +85,7 @@ test("a Vitest test that fails before any edit is in the TAP the baseline is rea
             ancestorTitles: ["money"],
             title,
             status: failing.includes(title) ? "failed" : "passed",
+            failureMessages: failing.includes(title) ? [`AssertionError: expected 1 to be 2 (${title})\n    at src/a.test.ts:9:3`] : [],
           })),
           { ancestorTitles: ["money"], title: "skipped", status: "skipped" },
         ],
@@ -97,6 +99,8 @@ test("a Vitest test that fails before any edit is in the TAP the baseline is rea
   vitest(root, report(["fails on the mock", "fails # on purpose"]), 1);
   const first = run(root);
   assert.equal(first.status, 1, first.stdout + first.stderr);
+  // No baseline yet: Vitest's own report, and the JSON one.
+  assert.match(readFileSync(join(root, "vitest-args.txt"), "utf8"), /--reporter=default --reporter=json/);
   const tap = readFileSync(join(root, "carveout/.last-run.tap"), "utf8");
   assert.match(tap, /^not ok \d+ - src\/a\.test\.ts > money > fails on the mock$/m);
   // `#` is escaped, so the name is not read as a TAP directive.
@@ -116,6 +120,8 @@ test("a Vitest test that fails before any edit is in the TAP the baseline is rea
   write(root, { "carveout/baseline.json": JSON.stringify({ failing }) });
   const second = run(root);
   assert.equal(second.status, 0, second.stdout + second.stderr);
+  // With one, the JSON report alone: the baseline's failures go unprinted.
+  assert.doesNotMatch(readFileSync(join(root, "vitest-args.txt"), "utf8"), /--reporter=default/);
   assert.match(second.stdout, /3 Vitest test\(s\) fail on the mocks as they did when the folder was checked/);
   assert.match(second.stdout, /3 failure\(s\) as before any edit, on the mocks, not counted/);
 
@@ -123,7 +129,12 @@ test("a Vitest test that fails before any edit is in the TAP the baseline is rea
   vitest(root, report(["fails on the mock", "fails # on purpose", "fails after the change"]), 1);
   const third = run(root);
   assert.equal(third.status, 1);
-  assert.match(third.stdout, /Failing now and not when the folder was checked:\n {2}src\/a\.test\.ts > money > fails after the change/);
+  // In full, with its message; the baseline's failures not printed.
+  assert.match(
+    third.stdout,
+    /Failing now and not when the folder was checked:\n\nnot ok - src\/a\.test\.ts > money > fails after the change\n {2}AssertionError: expected 1 to be 2 \(fails after the change\)\n {6}at src\/a\.test\.ts:9:3/,
+  );
+  assert.doesNotMatch(third.stdout, /\(fails on the mock\)/);
 
   // A run that fails with every test passing (an error outside any test) fails.
   write(root, { "carveout/baseline.json": JSON.stringify({ failing: [] }) });
