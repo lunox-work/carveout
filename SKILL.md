@@ -61,7 +61,9 @@ mocks (and the `--copy-pure`, `--live` or `--copy` it names), no tests (the
 work needs tests written into the task), or a step that fails. The folder's
 `AGENTS.md` tells the contributor what comes back; `TASK.md` says when the
 work is accepted. During the job, `refresh` brings the repository's new
-commits into the folder and `widen --entry` cuts it wider, the work kept.
+commits into the folder (an overlap is named, never overwritten; after
+merging one by hand, `refresh --resolved <path>`), and a patch after it
+carries the work alone; `widen --entry` cuts it wider, the work kept.
 The sections below are each step in full.
 
 ## 0. A change in the repository: impact and gate
@@ -309,8 +311,8 @@ or on the build. Tell the person how many there are.
 The check ends with a verdict on the hand-off (`handoff` in `--json`):
 `ready` (the slice's tests pass before any edit), `red-baseline` (some
 fail on the mocks: a contributor cannot make those pass, so a fixed task
-should not rest on them), `no-tests` (a pass means it builds) or
-`failed`. On `red-baseline` it names what would run them on real code,
+should not rest on them), `no-tests` (a pass means it builds), `blocked`
+(the cut has blockers, a name left in a public folder say) or `failed`. On `red-baseline` it names what would run them on real code,
 which the cut also printed: `--copy-pure` with the modules it would copy
 and their lines, `--live <package>` for a mocked database, cache or queue
 client (the tests then need that service), `--copy <dir>` for a folder a
