@@ -201,3 +201,23 @@ test("the owner's other repositories, written after the owner's name, join the v
     ["sandbox-blueprint", "sandbox-factory"],
   );
 });
+
+test("a renaming apply writes maps back byte for byte, or the rules alone do, or nothing is written", async () => {
+  const { exactToFolder, fromFolder } = await import("../src/pseudonyms/index.js");
+  const table = {
+    rules: [{ before: "posthog", after: "zorvex", kind: "identifier" as const, paths: [] }],
+    kept: [],
+    vocabulary: ["posthog"],
+    words: [{ term: "posthog", placeholder: "zorvex" }],
+  };
+  // Words that come back as written: used.
+  const plain = exactToFolder(table, "src/track.ts", "// send to posthog\nexport const posthogKey = 1;\n");
+  assert.ok(plain !== null);
+  assert.doesNotMatch(plain.text, /posthog/i);
+  assert.equal(fromFolder(table, plain.path, plain.text).text, "// send to posthog\nexport const posthogKey = 1;\n");
+  // A mixed case restyle cannot keep (PostHog would come back Posthog): the rules alone, which a leak scan then names.
+  const mixed = exactToFolder(table, "src/events.ts", "export const PostHogHost = 1;\n");
+  assert.deepEqual(mixed, { path: "src/events.ts", text: "export const PostHogHost = 1;\n" });
+  // A placeholder word the repository's own text holds maps back to the term: nothing to write.
+  assert.equal(exactToFolder(table, "src/notes.ts", "// zorvex is a vendor\n"), null);
+});

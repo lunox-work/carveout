@@ -24,7 +24,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { RECORD_PATH, carveoutHome, readRecord, type CarveoutRecord } from "./carve.js";
-import { recordToFolder, toFolder, type FolderPseudonyms } from "./pseudonyms/index.js";
+import { exactToFolder, recordToFolder, toFolder, type FolderPseudonyms } from "./pseudonyms/index.js";
 import type { Readiness } from "./readiness.js";
 
 export const RECEIPT_SCHEMA_VERSION = 1;
@@ -258,7 +258,9 @@ export function folderRecordFor(
   };
   if (table === undefined) return quiet;
   const renamed = recordToFolder(table, quiet);
-  const pathOf = (path: string) => toFolder(table, path, "").path;
+  // A path the cut never saw (a file apply grew) takes its words too, when
+  // they map back.
+  const pathOf = (path: string) => exactToFolder(table, path, "")?.path ?? toFolder(table, path, "").path;
   const hashAt = (path: string) => {
     const given = known(path);
     if (given !== undefined) return given;

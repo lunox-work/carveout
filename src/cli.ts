@@ -214,6 +214,11 @@ function leaksText(leaks: readonly { readonly term: string; readonly files: read
   )}\n`;
 }
 
+/** Slice files a command left unwritten: in the folder's names they would not map back. */
+function unmappedText(paths: readonly string[]): string {
+  return `Not written, left as the folder had them: in the folder's names their text would not map back to the repository's byte for byte (a mixed-case name, a placeholder word the repository's text holds), so a patch would rewrite it. Cut again to take them:\n${list(paths)}\n`;
+}
+
 function fail(message: string): never {
   process.stderr.write(`carveout: ${message}\n`);
   process.exit(1);
@@ -999,9 +1004,10 @@ async function main(argv: readonly string[]) {
             )}\n`,
           );
         if (applied.leaks.length > 0) process.stdout.write(leaksText(applied.leaks));
+        if (applied.unmapped.length > 0) process.stdout.write(unmappedText(applied.unmapped));
       }
       if (applied.stubs.some((stub) => !stub.written)) process.exitCode = 5;
-      if (applied.leaks.length > 0) process.exitCode = 2;
+      if (applied.leaks.length > 0 || applied.unmapped.length > 0) process.exitCode = 2;
       if (applied.conflicts.length > 0) process.exitCode = 7;
       return;
     }
@@ -1033,8 +1039,9 @@ async function main(argv: readonly string[]) {
           ].join("\n"),
         );
         if (applied.leaks.length > 0) process.stdout.write(leaksText(applied.leaks));
+        if (applied.unmapped.length > 0) process.stdout.write(unmappedText(applied.unmapped));
       }
-      if (refreshed !== null && refreshed.applied.leaks.length > 0) process.exitCode = 2;
+      if (refreshed !== null && (refreshed.applied.leaks.length > 0 || refreshed.applied.unmapped.length > 0)) process.exitCode = 2;
       if (refreshed !== null && refreshed.applied.conflicts.length > 0) process.exitCode = 7;
       return;
     }

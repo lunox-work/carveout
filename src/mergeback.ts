@@ -17,7 +17,7 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -40,7 +40,7 @@ import {
 import { symbolDiff } from "./status.js";
 import { trustedRepo } from "./policy.js";
 import { folderView, saveRecord, trustedCut } from "./receipt.js";
-import { fromFolder, looseLeaks, toFolder, wordsToFolder, type FolderPseudonyms } from "./pseudonyms/index.js";
+import { exactToFolder, fromFolder, looseLeaks, toFolder, wordsToFolder, type FolderPseudonyms } from "./pseudonyms/index.js";
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const sha256 = (data: string | Buffer) =>
@@ -81,6 +81,13 @@ export interface Applied {
    * By term, with the folder paths it is in.
    */
   readonly leaks: readonly { readonly term: string; readonly files: readonly string[] }[];
+  /**
+   * Slice files not written: in the folder's names their text would not
+   * map back to the repository's byte for byte (a mixed-case name, a
+   * placeholder word the repository's text holds), so a patch of them
+   * would rewrite the repository's. Left as the folder had them.
+   */
+  readonly unmapped: readonly string[];
 }
 
 /** `theirs` merged into `ours` from `base`, as `git merge-file` does; conflicts when they overlap. */
@@ -137,7 +144,7 @@ export async function applyPatch(
   let trusted = trustedCut(root, options.receipt, options.noReceipt === true ? { noReceipt: true } : {});
   // A public folder in pseudonyms takes the change in its own names: each
   // file at its folder path, its text renamed by the receipt's table.
-  const names = namesOf(trusted.receipt?.pseudonyms);
+  const names = namesOf(trusted.receipt?.pseudonyms, ownPackagesOf(root));
   const record = trusted.record;
   const source = trustedRepo(record, options.repo);
   checkRecordFiles(record, source);
@@ -263,6 +270,7 @@ export async function applyPatch(
     const outside: string[] = [];
     const merged: string[] = [];
     const conflicts: string[] = [];
+    const unmapped: string[] = [];
     const grown: IncludedFile[] = [];
     const rewrites: ImportRewrite[] = [];
     /** Folder paths the command wrote, for the leak scan. */
@@ -313,10 +321,22 @@ export async function applyPatch(
           conflicts.push(path);
           continue;
         }
-        await writeFile(join(root, folderPath), names.text(path, result.text));
+        const folderText = names.exact(path, result.text);
+        if (folderText === null) {
+          unmapped.push(path);
+          continue;
+        }
+        await writeFile(join(root, folderPath), folderText);
         merged.push(path);
       } else if (text === null) await copyFile(join(repo, path), join(root, folderPath));
-      else await writeFile(join(root, folderPath), names.text(path, text));
+      else {
+        const folderText = names.exact(path, text);
+        if (folderText === null) {
+          unmapped.push(path);
+          continue;
+        }
+        await writeFile(join(root, folderPath), folderText);
+      }
       wrote.push(folderPath);
       const clean =
         text === null
@@ -324,7 +344,7 @@ export async function applyPatch(
               const bytes = readFileSync(join(repo, path));
               return { folderPath, sha256: sha256(bytes), folderSha256: sha256(bytes) };
             })()
-          : { folderPath, sha256: sha256(text), folderSha256: sha256(names.text(path, text)) };
+          : { folderPath, sha256: sha256(text), folderSha256: sha256(names.exact(path, text) ?? "") };
       newly.set(path, clean);
       options.written?.set(path, clean);
       if (!included.has(path) && status === "M") {
@@ -365,7 +385,18 @@ export async function applyPatch(
       };
       trusted = saveRecord(root, trusted, updated, {}, new Map(fresh.map(([, { folderPath, folderSha256 }]) => [folderPath, folderSha256])));
     }
-    return { changed, added, deleted, outside, stubs, merged, conflicts, leaks: leaksIn(root, wrote, trusted.receipt?.pseudonyms) };
+    // The folder's own record names paths too: scanned with what was written.
+    return {
+      changed,
+      added,
+      deleted,
+      outside,
+      stubs,
+      merged,
+      conflicts,
+      leaks: leaksIn(root, wrote.length === 0 ? [] : [...wrote, "carveout.json"], trusted.receipt?.pseudonyms),
+      unmapped,
+    };
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }
@@ -374,20 +405,40 @@ export async function applyPatch(
 /** How a path and a text in the repository's names are put in the folder's, and back. */
 interface Names {
   readonly path: (path: string) => string;
+  /** A generated file's text (a stub), which never goes back. */
   readonly text: (path: string, text: string) => string;
+  /** A slice file's text in the folder's names when it maps back byte for byte; else null. */
+  readonly exact: (path: string, text: string) => string | null;
   readonly back: (folderPath: string, text: string) => string;
 }
 
+/** The folder's own mock packages, which go by the table's names. */
+function ownPackagesOf(root: string): (name: string) => boolean {
+  const own = new Set<string>();
+  const mocks = join(root, "carveout", "packages");
+  if (existsSync(mocks))
+    for (const entry of readdirSync(mocks, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name.startsWith("@"))
+        for (const inner of readdirSync(join(mocks, entry.name), { withFileTypes: true }))
+          if (inner.isDirectory()) own.add(`${entry.name}/${inner.name}`);
+      else own.add(entry.name);
+    }
+  return (name) => own.has(name);
+}
+
 /** The folder's names for a cut in pseudonyms (its table), or the repository's own. */
-function namesOf(table: FolderPseudonyms | undefined): Names {
-  if (table === undefined) return { path: (path) => path, text: (_path, text) => text, back: (_path, text) => text };
+function namesOf(table: FolderPseudonyms | undefined, own: (name: string) => boolean = () => false): Names {
+  if (table === undefined)
+    return { path: (path) => path, text: (_path, text) => text, exact: (_path, text) => text, back: (_path, text) => text };
   // The table's rules, then a placeholder for each term they did not reach:
   // a file the repository added since the cut, or a line it wrote, spells
   // a term where no rule of the cut's matches.
   return {
-    path: (path) => wordsToFolder(table, toFolder(table, path, "").path),
+    path: (path) => exactToFolder(table, path, "", own)?.path ?? toFolder(table, path, "").path,
     text: (path, text) => wordsToFolder(table, toFolder(table, path, text).text),
-    back: (path, text) => fromFolder(table, path, text).text,
+    exact: (path, text) => exactToFolder(table, path, text, own)?.text ?? null,
+    back: (path, text) => fromFolder(table, path, text, own).text,
   };
 }
 

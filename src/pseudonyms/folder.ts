@@ -433,6 +433,34 @@ export function wordsToFolder(table: FolderPseudonyms, text: string): string {
   return unmaskKept(out, table.kept);
 }
 
+/**
+ * A path or a text in the folder's names that maps back byte for byte: the
+ * table's rules with a placeholder for each term they left
+ * (`wordsToFolder`) when `fromFolder` takes that back to what it was, else
+ * the rules alone when those do; null when neither does (a mixed-case term
+ * `restyle` cannot keep, a package name the restore shields, a placeholder
+ * word the repository's own text holds). What `apply` writes, and only
+ * that: a text that maps back wrong would have `patch` rewrite the
+ * repository's.
+ */
+export function exactToFolder(
+  table: FolderPseudonyms,
+  path: string,
+  text: string,
+  ownPackage: (name: string) => boolean = () => false,
+): { readonly path: string; readonly text: string } | null {
+  const ruled = toFolder(table, path, text);
+  const worded = { path: wordsToFolder(table, ruled.path), text: wordsToFolder(table, ruled.text) };
+  const back = (folder: { path: string; text: string }) => fromFolder(table, folder.path, folder.text, ownPackage);
+  const exact = (folder: { path: string; text: string }) => {
+    const restored = back(folder);
+    return restored.path === path && restored.text === text;
+  };
+  if (exact(worded)) return worded;
+  if (exact(ruled)) return ruled;
+  return null;
+}
+
 /** A path or text in the repository's names, put in the folder's. */
 export function toFolder(table: FolderPseudonyms, path: string, text: string): AliasedFile {
   const out = renameFile({ path, text: maskKept(text, table.kept) }, table.rules);
