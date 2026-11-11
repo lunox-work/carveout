@@ -566,3 +566,33 @@ test("the receipt keeps the test side as the cut wrote it, never the code", asyn
   const kept = Object.keys(readReceipt(cut.receipt).testText ?? {}).sort();
   assert.deepEqual(kept, ["apps/shop/src/cart.test.ts", "apps/shop/src/fakes.ts"]);
 });
+
+test("after an overlap moves a file alone, the folder still patches once the repository moves again", async () => {
+  const { refreshProject } = await import("../src/mergeback.js");
+  const { patchProject } = await import("../src/carve.js");
+  const moving = join(scratch, "moving-bases");
+  git(scratch, ["clone", "-q", repo, moving]);
+  const cut = await cutSlice({ repo: moving, out: join(scratch, "refresh-bases"), entryPoints: [ENTRY], budget: { maxFiles: 40, maxDepth: 1 }, offline: true });
+  const held = join(cut.out, ENTRY);
+  writeFileSync(held, readFileSync(held, "utf8").replace("export function subtotal", "export function subtotalMine"));
+  const cart = join(moving, ENTRY);
+  const tax = join(moving, "apps/shop/src/tax.ts");
+  writeFileSync(cart, readFileSync(cart, "utf8").replace("export function subtotal", "export function subtotalTheirs"));
+  writeFileSync(tax, readFileSync(tax, "utf8").replace("0.1", "0.2"));
+  git(moving, ["commit", "-qam", "upstream C1"]);
+  assert.deepEqual((await refreshProject(cut.out))?.applied.conflicts, [ENTRY]);
+  writeFileSync(tax, readFileSync(tax, "utf8").replace("0.2", "0.3"));
+  git(moving, ["commit", "-qam", "upstream C2"]);
+  // Not refused as forged: tax.ts's base is its own.
+  const patch = await patchProject(cut.out, { repo: moving });
+  assert.ok(patch.changed.includes(ENTRY), patch.diff);
+  const again = await refreshProject(cut.out);
+  assert.ok(again !== null);
+  assert.match(readFileSync(join(cut.out, "apps/shop/src/tax.ts"), "utf8"), /0\.3/);
+  // Merged by hand, then resolved: the folder patches at HEAD.
+  writeFileSync(held, readFileSync(held, "utf8").replace(/export function subtotalMine/, "export function subtotalTheirs"));
+  await refreshProject(cut.out, { resolved: [ENTRY] });
+  const last = await patchProject(cut.out, { repo: moving });
+  writeFileSync(join(scratch, "bases.patch"), last.diff);
+  if (last.diff !== "") git(moving, ["apply", "--check", join(scratch, "bases.patch")]);
+});

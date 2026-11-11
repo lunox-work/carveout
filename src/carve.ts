@@ -884,6 +884,11 @@ export interface CarveoutRecord {
    * the repository wrote: the folder holding one is edited.
    */
   readonly copied?: readonly { path: string; sha256: string; applied?: true }[];
+  /**
+   * The commit a slice file's base is at, where refresh moved it on its
+   * own and the record's commit stayed (an overlap elsewhere held it).
+   */
+  readonly bases?: Readonly<Record<string, string>>;
   readonly lockfile: boolean;
   readonly blockers: readonly {
     readonly code: string;
@@ -2414,7 +2419,8 @@ export function readRecord(dir: string): CarveoutRecord {
 export function checkRecordFiles(record: CarveoutRecord, repo: string): void {
   const commit = record.manifest.sourceCommitSha;
   for (const file of [...record.manifest.included, ...(record.extras ?? [])]) {
-    const committed = commit === null ? null : gitShow(repo, commit, file.path);
+    const at = record.bases?.[file.path] ?? commit;
+    const committed = at === null ? null : gitShow(repo, at, file.path);
     if (committed !== null && sha256(committed) === file.sha256) continue;
     const current = join(repo, file.path);
     if (
@@ -3481,10 +3487,9 @@ export async function patchProject(
   const readBase = (path: string, original: string) => {
     const repoPath = join(repo, path);
     const current = existsSync(repoPath) ? readFileSync(repoPath) : null;
-    const committed =
-      record.manifest.sourceCommitSha === null
-        ? null
-        : gitShow(repo, record.manifest.sourceCommitSha, path);
+    // At the file's own base, where refresh moved it alone.
+    const baseCommit = record.bases?.[path] ?? record.manifest.sourceCommitSha;
+    const committed = baseCommit === null ? null : gitShow(repo, baseCommit, path);
     const moved = current === null || sha256(current) !== original;
     return {
       moved,

@@ -784,7 +784,9 @@ export async function refreshProject(
   const to = git(repo, ["rev-parse", "HEAD"]).trim();
   const packages = [...new Set(record.manifest.included.map((file) => packageDirOf(repo, file.path)))];
   const stubbed = [...new Set(record.manifest.cuts.outbound.map((edge) => edge.to))];
-  const paths = [...new Set([...packages.map((dir) => (dir === "" ? "." : dir)), ...stubbed])].sort(compare);
+  // And the copied folders' files, which may sit outside those packages.
+  const copiedFolders = (record.extras ?? []).map((file) => file.path);
+  const paths = [...new Set([...packages.map((dir) => (dir === "" ? "." : dir)), ...stubbed, ...copiedFolders])].sort(compare);
   const resolved = [...new Set(options.resolved ?? [])];
   const change = git(repo, ["diff", "--binary", "--full-index", from, to, "--", ...paths, ...resolved.map((path) => `:(exclude)${path}`)]);
   if (change.trim() === "" && resolved.length === 0) return null;
@@ -853,9 +855,15 @@ export async function refreshProject(
       (now.record.copied ?? []).filter((file) => !gone.has(file.path)).map((file) => [file.path, file]),
     );
     for (const [path, { sha256: hash }] of written) copiedNow.set(path, { path, sha256: hash });
+    // Each file written moved to the new commit; the record's commit too
+    // when whole, when no file is left behind it.
+    const bases = whole
+      ? undefined
+      : { ...(now.record.bases ?? {}), ...Object.fromEntries([...written.keys()].map((path) => [path, to])) };
     const updated: CarveoutRecord = {
       ...now.record,
       manifest: { ...now.record.manifest, ...(whole ? { sourceCommitSha: to } : {}), included },
+      ...(bases === undefined ? { bases: undefined } : { bases }),
       ...(now.record.copied === undefined ? {} : { copied: [...copiedNow.values()].sort((a, b) => compare(a.path, b.path)) }),
     };
     saveRecord(root, now, updated, {}, new Map([...written.values()].map(({ folderPath, folderSha256 }) => [folderPath, folderSha256])));

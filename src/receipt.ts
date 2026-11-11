@@ -237,6 +237,8 @@ export function publicRecord(record: CarveoutRecord): CarveoutRecord {
     importRewrites: [],
     inputs: [],
     request: { ...request, choices: {} },
+    // Commits name the repository's history: the receipt keeps them.
+    bases: undefined,
     publicScrubbed: true,
   };
 }
