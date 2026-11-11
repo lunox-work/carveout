@@ -552,3 +552,17 @@ test("an overlap merged by hand is taken as resolved, and the folder patches at 
   writeFileSync(join(scratch, "resolved.patch"), patch.diff);
   git(moving, ["apply", "--check", join(scratch, "resolved.patch")]);
 });
+
+test("the receipt keeps the test side as the cut wrote it, never the code", async () => {
+  const sided = join(scratch, "sided-repo");
+  cpSync(FIXTURE, sided, { recursive: true });
+  writeFileSync(join(sided, "apps/shop/src/fakes.ts"), "export const expectTotal = (got: number, want: number): void => {\n  if (got !== want) throw new Error(`${got}`);\n};\n");
+  writeFileSync(join(sided, "apps/shop/src/cart.test.ts"), 'import { test } from "node:test";\nimport { subtotal } from "./cart";\nimport { expectTotal } from "./fakes";\ntest("subtotal", () => expectTotal(subtotal([]), 0));\n');
+  git(sided, ["init", "-q"]);
+  git(sided, ["add", "-A"]);
+  git(sided, ["commit", "-q", "-m", "fixture"]);
+  const cut = await cutSlice({ repo: sided, out: join(scratch, "sided-slice"), entryPoints: [ENTRY], budget: { maxFiles: 40, maxDepth: 1 }, offline: true, tests: true });
+  assert.ok(cut.receipt !== null);
+  const kept = Object.keys(readReceipt(cut.receipt).testText ?? {}).sort();
+  assert.deepEqual(kept, ["apps/shop/src/cart.test.ts", "apps/shop/src/fakes.ts"]);
+});
