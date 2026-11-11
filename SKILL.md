@@ -48,8 +48,10 @@ carveout check ../job-returned --isolated --accept test/acceptance.test.ts  # th
 git switch -c contrib/job && git apply --3way change.patch  # then CI decides
 ```
 
-`check --accept` runs the owner's acceptance tests, kept in the repository
-and never sent, with the returned folder's tests, in a copy: it runs the
+`handoff --accept` runs them once before the folder goes out and warns
+when they already pass (they would test nothing of the work). `check
+--accept` runs the owner's acceptance tests, kept in the repository and
+never sent, with the returned folder's tests, in a copy: it runs the
 folder's code, so read the patch first, and run it in a container with no
 secrets when the folder's author is not trusted.
 
