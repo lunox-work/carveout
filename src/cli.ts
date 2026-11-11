@@ -43,7 +43,7 @@ const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript r
 
   carveout handoff <entry>... --out <dir> [--task <file|text>] [--depth N] [--max-files N]
                  [--private <path>]... [--name <word>]... [--copy <dir>]... [--live <pkg>]...
-                 [--receipt <file>] [--json]
+                 [--accept <test>...] [--no-whole-package] [--no-copy-pure] [--receipt <file>] [--json]
       The hand-off in one step: a cut with the tests that run the code, its
       whole package and the pure code it runs, for someone outside (public,
       in pseudonyms), and its check. Prints whether the folder is ready (its
