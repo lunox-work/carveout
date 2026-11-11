@@ -844,11 +844,16 @@ export async function refreshProject(
     }
   }
   if (mergeScratch !== null) await rm(mergeScratch, { recursive: true, force: true });
+  /** Copied files the new commit deleted: no longer the repository's copies. */
+  const copiedGone: string[] = [];
   for (const path of resolved) {
     let bytes: Buffer;
     try {
       bytes = execFileSync("git", ["show", `${to}:${path}`], { cwd: repo, maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
     } catch {
+      // A copied file the repository deleted, taken as resolved: what the
+      // folder holds of it is the folder's own, a new file to a patch.
+      if (copiedFolders.includes(path)) copiedGone.push(path);
       continue;
     }
     const folderPath = table === undefined ? path : (exactToFolder(table, path, "")?.path ?? toFolder(table, path, "").path);
@@ -883,7 +888,10 @@ export async function refreshProject(
       try {
         bytes = execFileSync("git", ["show", `${to}:${name}`], { cwd: repo, maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
       } catch {
-        // Gone upstream: left in the folder, named.
+        // Deleted upstream, and never edited here: deleted here too.
+        await rm(at, { force: true });
+        copiedGone.push(name);
+        copiedTaken.push(name);
         continue;
       }
       writeFileSync(at, bytes);
@@ -895,13 +903,13 @@ export async function refreshProject(
     ...trusted.record.manifest.included.map((file) => file.path),
     ...(trusted.record.extras ?? []).map((file) => file.path),
   ]);
-  const left = changedNames.filter((name) => held.has(name) && !written.has(name) && !applied.deleted.includes(name));
+  const left = changedNames.filter((name) => held.has(name) && !written.has(name) && !applied.deleted.includes(name) && !copiedGone.includes(name));
   // A copied folder's file the repository changed is never written over
   // what the folder holds: named, to bring by hand and pass as resolved.
   const copiedSet = new Set(copiedFolders);
   const copiedLeft = left.filter((name) => copiedSet.has(name));
   const whole = applied.conflicts.length === 0 && applied.unmapped.length === 0 && left.length === 0;
-  if (written.size > 0 || whole) {
+  if (written.size > 0 || whole || copiedGone.length > 0) {
     const now = trustedCut(root, options.receipt, options.noReceipt === true ? { noReceipt: true } : {});
     const gone = new Set(applied.deleted);
     const known = new Set(now.record.manifest.included.map((file) => file.path));
@@ -918,7 +926,7 @@ export async function refreshProject(
       ...[...written.keys()].filter((path) => !known.has(path) && !extrasPaths.has(path)).map(atTo),
     ].sort((a, b) => compare(a.path, b.path));
     const extras = now.record.extras
-      ?.filter((file) => !gone.has(file.path))
+      ?.filter((file) => !gone.has(file.path) && !copiedGone.includes(file.path))
       .map((file) => {
         const moved = written.get(file.path);
         return moved === undefined ? file : { path: file.path, sha256: moved.sha256 };

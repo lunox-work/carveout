@@ -681,3 +681,37 @@ test("without a receipt, a record whose commits are not object ids is refused be
   writeFileSync(path, JSON.stringify({ ...record, manifest: { ...record.manifest, sourceCommitSha: "HEAD~1" } }));
   assert.throws(() => trustedCut(cut.out, undefined, { noReceipt: true }), /not an object id \(HEAD~1\)/);
 });
+
+test("refresh follows a copied file the repository deleted: gone here when unedited, the folder's own once resolved", async () => {
+  const { refreshProject } = await import("../src/mergeback.js");
+  const { patchProject } = await import("../src/carve.js");
+  const moving = join(scratch, "copied-deleted");
+  git(scratch, ["clone", "-q", repo, moving]);
+  const kept = "apps/shop/migrations/0001.sql";
+  const dropped = "apps/shop/migrations/0002.sql";
+  mkdirSync(join(moving, "apps/shop/migrations"), { recursive: true });
+  writeFileSync(join(moving, kept), "create table carts (id int);\n");
+  writeFileSync(join(moving, dropped), "insert into carts values (1);\n");
+  // One that stays: the copied folder itself is still the repository's.
+  writeFileSync(join(moving, "apps/shop/migrations/0003.sql"), "select 1;\n");
+  git(moving, ["add", "-A"]);
+  git(moving, ["commit", "-qm", "migrations"]);
+  const cut = await cutSlice({ repo: moving, out: join(scratch, "copied-deleted-out"), entryPoints: [ENTRY], budget: { maxFiles: 40, maxDepth: 1 }, offline: true, copy: ["apps/shop/migrations"] });
+  writeFileSync(join(cut.out, kept), "create table carts (id int, total int);\n");
+  git(moving, ["rm", "-q", kept, dropped]);
+  git(moving, ["commit", "-qm", "upstream drops the migrations"]);
+  const first = await refreshProject(cut.out);
+  assert.ok(first !== null);
+  assert.deepEqual(first.copiedTaken, [dropped]);
+  assert.deepEqual(first.copiedLeft, [kept]);
+  assert.ok(!existsSync(join(cut.out, dropped)));
+  // Kept by the person: resolved, it is the folder's own, a new file to a patch.
+  const resolved = await refreshProject(cut.out, { resolved: [kept] });
+  assert.ok(resolved !== null);
+  const record = JSON.parse(readFileSync(join(cut.out, "carveout.json"), "utf8")) as { extras?: { path: string }[] };
+  assert.deepEqual(record.extras?.map((file) => file.path), ["apps/shop/migrations/0003.sql"]);
+  const patch = await patchProject(cut.out, { repo: moving });
+  assert.deepEqual(patch.added, [kept]);
+  writeFileSync(join(scratch, "copied-deleted.patch"), patch.diff);
+  git(moving, ["apply", "--check", join(scratch, "copied-deleted.patch")]);
+});
