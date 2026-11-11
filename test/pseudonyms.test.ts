@@ -107,14 +107,14 @@ test("a term is renamed in the identifier it is in, its case kept, and as text w
   assert.equal(
     result.files[0]?.text,
     [
-      "// Talks to the Acme API.",
-      "export const acmeClient = { token: process.env.ACME_TOKEN };",
-      "export class AcmeError extends Error {}",
-      "export const acme = 1;",
-      'export const label = "acme";',
+      "// Talks to the Zorvex API.",
+      "export const zorvexClient = { token: process.env.ZORVEX_TOKEN };",
+      "export class ZorvexError extends Error {}",
+      "export const zorvex = 1;",
+      'export const label = "zorvex";',
     ].join("\n"),
   );
-  assert.equal(result.files[1]?.text, "Acme");
+  assert.equal(result.files[1]?.text, "Zorvex");
   // The first spelling found is the identifier rule; one that differs from
   // it only by case is text, held in place by the characters around it.
   assert.deepEqual(
@@ -148,7 +148,7 @@ test("a term in two casings no identifier rule reaches gets a text rule for each
   const result = applied(files, vocabulary, rules);
   assert.equal(
     result.files[0]?.text,
-    "export class Acme {}\n// acme and ACME alike.\n",
+    "export class Zorvex {}\n// zorvex and ZORVEX alike.\n",
   );
 });
 
@@ -164,11 +164,11 @@ test("a path segment that carries a term is renamed, and imports follow it", () 
   const rules = draftPseudonyms({ files, vocabulary, imports: [] });
   const result = applied(files, vocabulary, rules);
   assert.deepEqual(result.renames, [
-    { from: "src/lunox/paths.ts", to: "src/acme/paths.ts" },
+    { from: "src/lunox/paths.ts", to: "src/zorvex/paths.ts" },
   ]);
   assert.equal(
     result.files[1]?.text,
-    'import { root } from "./acme/paths.js";\n',
+    'import { root } from "./zorvex/paths.js";\n',
   );
 });
 
@@ -177,14 +177,14 @@ test("a placeholder the inputs already use is passed over, and no vocabulary dra
   const files: AliasedFile[] = [
     {
       path: "src/app.ts",
-      text: "// Acme Corp's sandbox-factory, built on lunox.\n",
+      text: "// Zorvex Corp's sandbox-factory, built on lunox.\n",
     },
   ];
   const rules = draftPseudonyms({ files, vocabulary, imports: [] });
   const result = applied(files, vocabulary, rules);
   assert.equal(
     result.files[0]?.text,
-    "// Acme Corp's globex-labs, built on initech.\n",
+    "// Zorvex Corp's velmira-labs, built on quarnell.\n",
   );
   assert.deepEqual(draftPseudonyms({ files, vocabulary: [], imports: [] }), []);
 });

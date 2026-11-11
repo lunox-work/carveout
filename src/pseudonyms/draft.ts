@@ -37,10 +37,21 @@ export interface PseudonymImport {
 }
 
 /**
- * Fictional company names, which read as a stand-in for whose code it is.
- * A term takes the first that no input contains, in any case.
+ * Placeholders, in the order tried: a term takes the first that no input
+ * contains, in any case.
  */
 export const PSEUDONYM_PLACEHOLDERS: readonly string[] = [
+  // Made-up words first: a word the code or a contributor uses for what it
+  // is (the ACME protocol, `acme-client`, an "Acme Corp" in test data) must
+  // never be read back as a hidden name.
+  "zorvex",
+  "velmira",
+  "quarnell",
+  "brixdor",
+  "tovlane",
+  "munquist",
+  "kelbrook",
+  "drovane",
   "acme",
   "globex",
   "initech",

@@ -452,6 +452,40 @@ export function workspaceVocabulary(
   return terms;
 }
 
+/**
+ * Names a codebase calls its own things by: the platform's globals and
+ * their members (`console`, `performance.mark`, `URLSearchParams`), and the
+ * words APIs are made of. A one-word name of the workspace's that is one of
+ * these (a repository called `search`, a mail address `mark@…`) would rename
+ * the code's own calls, so it is not scanned for alone.
+ */
+const CODE_WORDS: ReadonlySet<string> = new Set(
+  (
+    "console document window navigator location history screen performance " +
+    "process global globalthis crypto fetch request response headers event " +
+    "error date math json string number object array promise symbol proxy " +
+    "reflect intl buffer stream worker module require exports import " +
+    "search mark measure query params status result value values items " +
+    "node react vue next nuxt vite test tests spec mock mocks stub " +
+    "user users admin login logout session token auth account settings " +
+    "home index main page pages view views layout model models store " +
+    "data info list item name title label text type types kind state " +
+    "start stop open close read write send post update delete create"
+  ).split(" "),
+);
+
+/**
+ * Whether a one-word name is too common to scan for alone: generic, an
+ * organization's trade or form, an everyday word, or a word code is made
+ * of. A name of several words is scanned whole whatever its words.
+ */
+export function tooCommonAlone(name: string): boolean {
+  const words = termWords(name);
+  if (words.length !== 1) return false;
+  const word = words[0] ?? "";
+  return GENERIC_WORDS.has(word) || ORGANIZATION_WORDS.has(word) || COMMON_WORDS.has(word) || CODE_WORDS.has(word);
+}
+
 export interface VocabularyLeak {
   readonly term: string;
   readonly occurrences: number;
@@ -474,7 +508,9 @@ export interface TermMatch {
  * found in `web30`.
  */
 export function termMatches(text: string, term: string): TermMatch[] {
-  const pattern = new RegExp(term.split("-").join("[\\s_\\-./]*"), "giu");
+  // A term's words join across a space, `_`, `-` or `.`, never a `/`: two
+  // folders that hold its words are two names, each renamed on its own.
+  const pattern = new RegExp(term.split("-").join("[\\s_\\-.]*"), "giu");
   const matches: TermMatch[] = [];
   for (const match of text.matchAll(pattern)) {
     const start = match.index;

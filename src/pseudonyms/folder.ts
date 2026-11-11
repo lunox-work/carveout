@@ -31,6 +31,7 @@ import {
   emailNames,
   termMatches,
   termWords,
+  tooCommonAlone,
   vocabularyLeaks,
   type VocabularyLeak,
   type VocabularyName,
@@ -74,11 +75,12 @@ function manifestNames(path: string): VocabularyName[] {
       // "Name <mail@host> (url)"
       const mail = /<([^>]+)>/.exec(person)?.[1];
       const who = person.replace(/<[^>]*>|\([^)]*\)/g, "").trim();
-      if (who !== "") names.push({ name: who, kind: "name" });
+      // Whole and by each distinctive word: a company's name, or a person's surname alone.
+      if (who !== "") names.push({ name: who, kind: "organization" });
       if (mail !== undefined) names.push(...emailNames(mail));
     } else if (person !== null && typeof person === "object") {
       const record = person as Record<string, unknown>;
-      if (typeof record["name"] === "string") names.push({ name: record["name"], kind: "name" });
+      if (typeof record["name"] === "string") names.push({ name: record["name"], kind: "organization" });
       if (typeof record["email"] === "string") names.push(...emailNames(record["email"]));
     }
   }
@@ -104,16 +106,98 @@ function ownerName(name: string): VocabularyName {
   return termWords(name).length > 1 ? { name, kind: "name" } : { name, kind: "organization" };
 }
 
-/** The account and repository a hosted URL names: `github.com/acme/shop`. */
+/** Hosts anyone's code is kept on: their names say nothing of whose it is. */
+const PUBLIC_HOSTS = /(^|\.)(github\.com|gitlab\.com|bitbucket\.org|dev\.azure\.com|visualstudio\.com|npmjs\.(com|org)|codeberg\.org|sr\.ht|sourceforge\.net|googlesource\.com|vercel\.app|netlify\.app|pages\.dev)$/i;
+
+/** The labels of a host that name its owner: `lunox` of `git.lunox.work`. */
+function hostNames(host: string): VocabularyName[] {
+  const clean = host.toLowerCase().replace(/:\d+$/, "");
+  if (clean === "" || PUBLIC_HOSTS.test(clean) || /^\d+(\.\d+){3}$/.test(clean) || clean === "localhost") return [];
+  const labels = clean.split(".").filter(Boolean);
+  // The label before the public suffix (`co.uk` counts as one).
+  const suffix = labels.length >= 3 && /^(co|com|org|net|ac|gov)$/.test(labels[labels.length - 2] ?? "") ? 2 : 1;
+  const main = labels[labels.length - 1 - suffix];
+  return main === undefined ? [] : [{ name: main, kind: "organization" }];
+}
+
+/**
+ * The names a repository URL or a remote gives: its account and its
+ * repository, in any of the forms Git and npm write (`git@host:acme/shop.git`,
+ * `ssh://git@host:7999/acme/shop.git`, `https://host/acme/shop`, Azure's
+ * `dev.azure.com/acme/project/_git/shop`, npm's `github:acme/shop` or
+ * `acme/shop`), and a private host's own name.
+ */
 function hostedNames(url: string): VocabularyName[] {
-  const match = /(?:github\.com|gitlab\.com|bitbucket\.org)[/:]([^/\s]+)\/([^/\s#?]+?)(?:\.git)?(?:[/#?]|$)/i.exec(url);
-  if (match === null) return [];
-  // The account is the organization itself: its distinctive words are its
-  // own (`lunox` of `lunox-work`), whatever the code is about.
-  return [
-    { name: match[1] ?? "", kind: "organization" },
-    { name: match[2] ?? "", kind: "name" },
-  ];
+  const value = url.trim();
+  const names: VocabularyName[] = [];
+  const shorthand = /^(?:(github|gitlab|bitbucket):)?([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?$/.exec(value);
+  if (shorthand !== null && !value.includes("://") && !value.includes("@")) {
+    names.push({ name: shorthand[2] ?? "", kind: "organization" }, { name: shorthand[3] ?? "", kind: "name" });
+    return names;
+  }
+  const scp = /^[^@/\s]+@([^:/\s]+):(.+)$/.exec(value);
+  let host = "";
+  let path = "";
+  if (scp !== null && !value.includes("://")) {
+    host = scp[1] ?? "";
+    path = scp[2] ?? "";
+  } else {
+    try {
+      const parsed = new URL(value.replace(/^git\+/, ""));
+      host = parsed.hostname;
+      path = parsed.pathname;
+    } catch {
+      return names;
+    }
+  }
+  names.push(...hostNames(host));
+  // A page's path (`/support`, `/lunox-work/shop/issues` past the repo) names
+  // nothing; a code host's or a remote's names the account and repository.
+  const remote = scp !== null || /^(ssh|git)(\+\w+)?:/.test(value) || /\.git\/?$/.test(value);
+  const codeHost = /(^|\.)(github\.com|gitlab\.com|bitbucket\.org|dev\.azure\.com|visualstudio\.com)$/i.test(host);
+  if (!remote && !codeHost) return names;
+  const raw = path
+    .replace(/^\/+|\/+$/g, "")
+    .replace(/\.git$/, "")
+    .split("/")
+    .filter((part) => part !== "");
+  // Azure: org/project/_git/repo; Bitbucket Server: scm/project/repo.
+  const azure = raw.indexOf("_git");
+  const parts = raw.filter((part) => !/^v\d+$/.test(part) && !/^(scm|projects|repos|browse)$/i.test(part));
+  const owner = parts[0];
+  const repo = azure !== -1 ? raw[azure + 1] : parts[1];
+  if (owner !== undefined) names.push({ name: owner, kind: "organization" });
+  if (repo !== undefined && repo !== owner) names.push({ name: repo, kind: "name" });
+  return names;
+}
+
+/** Affixes a handle wraps a name in: `lunoxhq`, `getlunox`, `lunoxapp`. */
+const HANDLE_PREFIXES = ["get", "try", "use", "join", "go", "hello", "meet"];
+const HANDLE_SUFFIXES = ["hq", "app", "apps", "inc", "io", "dev", "devs", "labs", "lab", "team", "co", "ai", "hub", "official", "corp", "tech", "studio", "group"];
+
+/**
+ * More spellings an organization's or a person's name goes by: the stem of
+ * a handle (`lunox` of `lunoxhq`), its words split at a digit (`web3 labs`
+ * of `web3labs`), and its letters without accents (`lunox` of `Lunöx`).
+ */
+function spellings(entry: VocabularyName): VocabularyName[] {
+  const out: VocabularyName[] = [entry];
+  const plain = entry.name.normalize("NFD").replace(/\p{M}/gu, "");
+  if (plain !== entry.name) out.push({ ...entry, name: plain });
+  // Matched whole: its words alone (`web3`) are everyone's.
+  const split = plain.replace(/(\d)(\p{L})/gu, "$1 $2");
+  if (split !== plain) out.push({ name: split, kind: "name" });
+  if (entry.kind === "organization") {
+    const word = plain.toLowerCase();
+    // A stem of letters alone, and not one everyone's code uses (`web3`).
+    const stem = (candidate: string) => {
+      if (candidate.length >= 4 && /^\p{L}+$/u.test(candidate) && !tooCommonAlone(candidate))
+        out.push({ name: candidate, kind: "organization" });
+    };
+    for (const prefix of HANDLE_PREFIXES) if (word.startsWith(prefix)) stem(word.slice(prefix.length));
+    for (const suffix of HANDLE_SUFFIXES) if (word.endsWith(suffix)) stem(word.slice(0, -suffix.length));
+  }
+  return out;
 }
 
 /** A Git setting of the checkout, or null. */
@@ -141,23 +225,36 @@ export function workspaceNames(
   packageDirs: readonly string[],
   owner: readonly string[] = [],
 ): VocabularyName[] {
-  const names: VocabularyName[] = owner.map((name) => ({ name, kind: "organization" as const }));
+  const found: VocabularyName[] = [];
+  const names = found;
   for (const dir of ["", ...packageDirs]) names.push(...manifestNames(join(repo, dir, "package.json")));
   const origin = gitValue(repo, ["remote", "get-url", "origin"]);
   if (origin !== null) names.push(...hostedNames(origin));
   names.push({ name: basename(repo), kind: "name" });
+  // A person is named whole and by each distinctive word: a surname alone
+  // in a comment says who wrote it as well.
   const person = gitValue(repo, ["config", "user.name"]);
-  if (person !== null) names.push({ name: person, kind: "name" });
+  if (person !== null) names.push({ name: person, kind: "organization" });
   const mail = gitValue(repo, ["config", "user.email"]);
   if (mail !== null) names.push(...emailNames(mail));
-  return names;
+  // A name found, of one word the code calls its own things by, is not
+  // scanned for alone; the owner's own names always are.
+  return [
+    ...owner.map((name) => ({ name, kind: "organization" as const })),
+    ...found.filter((entry) => !tooCommonAlone(entry.name)),
+  ].flatMap(spellings);
 }
 
 /** Characters no source holds, around a kept name's index while the table runs. */
 const MASK_OPEN = "";
 const MASK_CLOSE = "";
 
-/** `text` with each kept name (longest first) behind a mask the table cannot match. */
+/**
+ * `text` with each kept name (longest first) behind a mask the table cannot
+ * match, where it is written as a package: in quotes, alone or before a
+ * subpath (`"@lunox/ui"`, `'@lunox/ui/button'`). Elsewhere it is a word
+ * like any other, renamed and scanned.
+ */
 export function maskKept(text: string, kept: readonly string[]): string {
   if (kept.length === 0) return text;
   let out = text;
@@ -165,7 +262,8 @@ export function maskKept(text: string, kept: readonly string[]): string {
     .map((name, index) => ({ name, index }))
     .sort((a, b) => b.name.length - a.name.length)
     .forEach(({ name, index }) => {
-      out = out.split(name).join(`${MASK_OPEN}${index}${MASK_CLOSE}`);
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      out = out.replace(new RegExp(`(["'\`]|node_modules/)${escaped}(?=["'\`/])`, "g"), `$1${MASK_OPEN}${index}${MASK_CLOSE}`);
     });
   return out;
 }
@@ -256,6 +354,36 @@ export function pseudonymize(input: {
   };
 }
 
+/**
+ * Each term found in the files by a looser reading than the table's: inside
+ * a longer word (`getlunox`, `lunoxes`), whatever joins its words, in any
+ * case, its accents stripped, and in binary files' bytes. The table renames
+ * a name on its word's edges; a name it could not reach still says whose
+ * code it is, and blocks the folder.
+ */
+export function looseLeaks(
+  files: readonly { readonly path: string; readonly text: string }[],
+  vocabulary: readonly string[],
+  kept: readonly string[] = [],
+): VocabularyLeak[] {
+  const plain = (text: string) => text.normalize("NFD").replace(/\p{M}/gu, "");
+  const leaks: VocabularyLeak[] = [];
+  for (const term of vocabulary) {
+    const pattern = new RegExp(term.split("-").map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[\\s_\\-.]*"), "giu");
+    let occurrences = 0;
+    const found: string[] = [];
+    for (const file of files) {
+      const text = plain(maskKept(`${file.path}\n${file.text}`, kept));
+      const count = [...text.matchAll(pattern)].length;
+      if (count === 0) continue;
+      occurrences += count;
+      found.push(file.path);
+    }
+    if (occurrences > 0) leaks.push({ term, occurrences, files: found });
+  }
+  return leaks;
+}
+
 /** A path or text in the repository's names, put in the folder's. */
 export function toFolder(table: FolderPseudonyms, path: string, text: string): AliasedFile {
   const out = renameFile({ path, text: maskKept(text, table.kept) }, table.rules);
@@ -274,17 +402,39 @@ function restoreWords(text: string, words: FolderPseudonyms["words"]): string {
   return out;
 }
 
+/** A module specifier as code writes one: after `from`, `import`, `import(` or `require(`. */
+const SPECIFIER = /(\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+|\bexport\s+\*\s+from\s*)(["'])([^"'\n]+)\2/gm;
+const SHIELD_OPEN = "\uE002";
+const SHIELD_CLOSE = "\uE003";
+
 /**
  * A path or text in the folder's names, put back in the repository's: the
  * table undone, then any placeholder still there (a name the folder's
- * holder made) put back as its term.
+ * holder made) put back as its term. A package the contributor imports by
+ * its own name (`acme-client`) is shielded from both, unless it is one of
+ * the folder's own mock packages (`ownPackage`), whose names are the
+ * table's.
  */
-export function fromFolder(table: FolderPseudonyms, path: string, text: string): AliasedFile {
-  const out = renameFile({ path, text: maskKept(text, table.kept) }, invertAliasRules(table.rules));
-  return {
-    path: restoreWords(out.path, table.words),
-    text: unmaskKept(restoreWords(out.text, table.words), table.kept),
-  };
+export function fromFolder(
+  table: FolderPseudonyms,
+  path: string,
+  text: string,
+  ownPackage: (name: string) => boolean = () => false,
+): AliasedFile {
+  const shielded: string[] = [];
+  const masked = maskKept(text, table.kept).replace(SPECIFIER, (whole, lead: string, quote: string, specifier: string) => {
+    if (specifier.startsWith(".") || specifier.startsWith("/")) return whole;
+    const name = specifier.startsWith("@") ? specifier.split("/").slice(0, 2).join("/") : (specifier.split("/")[0] ?? specifier);
+    if (ownPackage(name)) return whole;
+    shielded.push(specifier);
+    return `${lead}${quote}${SHIELD_OPEN}${shielded.length - 1}${SHIELD_CLOSE}${quote}`;
+  });
+  const out = renameFile({ path, text: masked }, invertAliasRules(table.rules));
+  const restored = restoreWords(out.text, table.words).replace(
+    new RegExp(`${SHIELD_OPEN}(\\d+)${SHIELD_CLOSE}`, "g"),
+    (whole, index: string) => shielded[Number(index)] ?? whole,
+  );
+  return { path: restoreWords(out.path, table.words), text: unmaskKept(restored, table.kept) };
 }
 
 /** Record fields that hold hashes or ids: never renamed, whatever they spell. */

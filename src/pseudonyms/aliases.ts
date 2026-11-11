@@ -59,7 +59,9 @@ export interface AliasProblem {
 
 export const ALIAS_RULES_MAX = 500;
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
-const PATH = /^[A-Za-z0-9_.\-/@]+$/;
+// Any character a file name may hold but a NUL, a backslash or a quote:
+// a framework's `app/[lunoxId]` or an `assets/Lunox Logo.png` is a path.
+const PATH = /^[^\0\\"'`\n]+$/;
 
 export interface AliasValidation {
   readonly ok: boolean;
@@ -246,8 +248,10 @@ export interface AliasApplication {
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const identifierPattern = (name: string) =>
   new RegExp(`(?<![A-Za-z0-9_$])${escape(name)}(?![A-Za-z0-9_$])`, "g");
+// A path's rule matches after a `/` too: `../../packages/lunox-money/x`
+// is the same folder, from another file.
 const pathPattern = (name: string) =>
-  new RegExp(`(?<![A-Za-z0-9_.\\-/@])${escape(name)}(?![A-Za-z0-9_\\-@])`, "g");
+  new RegExp(`(?<![A-Za-z0-9_.\\-@])${escape(name)}(?![A-Za-z0-9_\\-@])`, "g");
 const textPattern = (name: string) => new RegExp(escape(name), "g");
 const patternFor = (rule: AliasRule, name: string) =>
   rule.kind === "identifier"

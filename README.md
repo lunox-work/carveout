@@ -124,6 +124,17 @@ What carveout holds to:
   name's spelling (splits it into its words) can fail in pseudonyms: on
   sandbox-factory, 2 of 415 tests did. `--keep-names` writes the
   repository's names.
+  The names come from the root's and the slice's packages (names, scopes,
+  authors, repository URLs in any form Git or npm writes, a private host's
+  own name), the `origin` remote, the checkout's folder and the
+  maintainer's Git identity, with a handle's stem (`lunox` of `lunoxhq`),
+  a name's accent-free spelling and its words split at a digit; a one-word
+  name the code calls its own things by (`search`, `console`) is not
+  scanned alone, and `keepNames` in the configuration lets one stay. The
+  blocker scan reads more loosely than the table renames: a name inside a
+  longer word (`getlunox`), in a binary file's bytes or in the resolved
+  lock blocks the folder. A package the contributor imports by its own
+  name keeps it on the way back, even with a placeholder in it.
   `--private <path>` keeps a module
   out even when the walk reaches it, `--copy-pure` included. `--copy-pure`
   copies more of the repository (the pure code the slice runs) so the

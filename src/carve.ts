@@ -80,6 +80,7 @@ import { configuredFolders, liveCandidates, type Readiness } from "./readiness.j
 import {
   fromFolder,
   keptNames,
+  looseLeaks,
   maskKept,
   pseudonymize,
   vocabularyBlockers,
@@ -182,6 +183,8 @@ export interface RepoConfig {
    * (kind `identifier`, `text` or `path`).
    */
   readonly pseudonyms?: readonly AliasRule[];
+  /** Names carveout finds that the owner lets a public folder carry (a word the code is about). */
+  readonly keepNames?: readonly string[];
 }
 
 /** The owner's settings at the repository's root; empty when there are none. */
@@ -225,6 +228,7 @@ export function readRepoConfig(repo: string): RepoConfig {
   set("private", paths("private"));
   set("copy", paths("copy"));
   set("names", paths("names"));
+  set("keepNames", paths("keepNames"));
   const pseudonyms = record["pseudonyms"];
   if (pseudonyms !== undefined) {
     if (
@@ -308,6 +312,21 @@ function settle<
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const sha256 = (data: string | Buffer) =>
   createHash("sha256").update(data).digest("hex");
+
+/**
+ * Whether bytes are text a table may rename: no NUL in their first 8 KiB,
+ * and valid UTF-8 throughout. A PDF or an archive in a copied folder is
+ * not, whatever its name; decoded and written back it would be corrupted.
+ */
+export function isTextContent(bytes: Buffer): boolean {
+  if (bytes.subarray(0, 8192).includes(0)) return false;
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** Assets that are not text: copied and compared as bytes. */
 export function isBinaryPath(path: string): boolean {
@@ -824,10 +843,18 @@ export function seededLockfile(
   }
   const source = lock.packages ?? {};
   const packages: Record<string, Record<string, unknown>> = {};
+  // A package resolved from a registry other than the public one keeps its
+  // version, never its URL or hash: a private registry's host names whose
+  // repository this is, and the folder's npm resolves from the public one.
+  const publicRegistry = /^https:\/\/registry\.(npmjs\.org|yarnpkg\.com)\//;
   const take = (prefix: string) => {
     for (const [key, entry] of Object.entries(source)) {
       if (!key.startsWith(`${prefix}node_modules/`) || entry["link"] === true) continue;
-      packages[key.slice(prefix.length)] = entry;
+      const resolved = entry["resolved"];
+      packages[key.slice(prefix.length)] =
+        typeof resolved === "string" && !publicRegistry.test(resolved)
+          ? Object.fromEntries(Object.entries(entry).filter(([field]) => field !== "resolved" && field !== "integrity"))
+          : entry;
     }
   };
   take("");
@@ -1714,22 +1741,24 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
   // and the scan says where.
   const config = readRepoConfig(repo);
   const publicCut = computed.request.public === true;
-  const textExtras = extras.filter((path) => !isBinaryPath(path));
-  const binaryPaths = [...binaries, ...extras.filter((path) => isBinaryPath(path))];
+  const textExtras = extras.filter((path) => !isBinaryPath(path) && isTextContent(readFileSync(join(repo, path))));
+  const binaryPaths = [...binaries, ...extras.filter((path) => !textExtras.includes(path))];
   const extraText = new Map(textExtras.map((path) => [path, readFileSync(join(repo, path), "utf8")]));
   let table: FolderPseudonyms | null = null;
   let pathOf = (path: string) => path;
   let folderText = (_path: string, text: string) => text;
   let leaks: VocabularyLeak[] = [];
+  let leakScan: { vocabulary: string[]; kept: string[] } | null = null;
   if (publicCut) {
     const packageOf = packageFolder(repo);
+    const kept = new Set((config.keepNames ?? []).map((name) => workspaceVocabulary([name])[0] ?? name.toLowerCase()));
     const vocabulary = workspaceVocabulary(
       workspaceNames(
         repo,
         [...new Set(computed.manifest.included.map((file) => packageOf(file.path)))],
         [...(config.names ?? []), ...(request.names ?? [])],
       ),
-    );
+    ).filter((term) => !kept.has(term));
     // What the folder installs from the registry keeps its name: npm needs it.
     const manifestJson = JSON.parse(files.find((file) => file.path === "package.json")?.text ?? "{}") as {
       dependencies?: Record<string, string>;
@@ -1738,13 +1767,13 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
     const installed = Object.entries({ ...manifestJson.dependencies, ...manifestJson.devDependencies })
       .filter(([, version]) => !version.startsWith("file:"))
       .map(([name]) => name);
-    const kept = keptNames(installed, vocabulary);
+    const keptPackages = keptNames(installed, vocabulary);
     const texts = [
       ...files.map((file) => ({ path: file.path, text: file.text })),
       ...textExtras.map((path) => ({ path, text: extraText.get(path) ?? "" })),
     ];
     if (receipt !== null && request.pseudonyms !== false && vocabulary.length > 0) {
-      const result = pseudonymize({ files: texts, binaries: binaryPaths, vocabulary, owner: config.pseudonyms ?? [], kept });
+      const result = pseudonymize({ files: texts, binaries: binaryPaths, vocabulary, owner: config.pseudonyms ?? [], kept: keptPackages });
       if (!result.ok)
         throw new Error(
           `Nothing written: the public folder's pseudonyms would not map back byte for byte.\n${result.problems
@@ -1758,13 +1787,14 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
       leaks = [...result.leaks];
       if (table.rules.length > 0)
         log(`Pseudonyms: ${table.rules.length} rename(s) hide ${vocabulary.length} name(s) the repository goes by; the receipt keeps the table.`);
-      if (kept.length > 0)
-        log(`Kept as the registry names them (npm installs them so), though they carry a hidden name: ${kept.join(", ")}. --mock one to rename it.`);
+      if (keptPackages.length > 0)
+        log(`Kept as the registry names them (npm installs them so), though they carry a hidden name: ${keptPackages.join(", ")}. --mock one to rename it.`);
     } else
       leaks = vocabularyLeaks(
-        texts.map((file) => ({ path: file.path, text: maskKept(file.text, kept) })),
+        texts.map((file) => ({ path: file.path, text: maskKept(file.text, keptPackages) })),
         vocabulary,
       );
+    leakScan = { vocabulary, kept: keptPackages };
   }
   // The generated files' text as the folder holds them, which the receipt keeps.
   const generatedText: Record<string, string> = {};
@@ -1882,7 +1912,18 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
     .map((file) => ({ path: file.path, sha256: sha256(file.text) }))
     .sort((a, b) => compare(a.path, b.path));
   const readiness = readinessOf(request, computed);
-  // A name the table left is a blocker, named in full to the maintainer.
+  // A name the table left is a blocker, named in full to the maintainer;
+  // so is one a looser reading finds in anything the folder holds, its
+  // binary files and its resolved lock included.
+  if (leakScan !== null) {
+    const held = listTree(out).map((path) => {
+      const bytes = readFileSync(join(out, path));
+      return { path, text: isTextContent(bytes) ? bytes.toString("utf8") : bytes.toString("latin1") };
+    });
+    const strict = new Set(leaks.map((leak) => leak.term));
+    for (const leak of looseLeaks(held, leakScan.vocabulary, leakScan.kept))
+      if (!strict.has(leak.term)) leaks.push(leak);
+  }
   const leakBlockers = vocabularyBlockers(leaks).map(({ code, file, detail }) => ({ code, file, detail }));
   const record: CarveoutRecord = {
     ...computed,
@@ -2380,11 +2421,23 @@ async function unaliasFolder(root: string, table: FolderPseudonyms, record: Carv
   const scratch = mkdtempSync(join(tmpdir(), "carveout-names-"));
   const folder = join(scratch, "folder");
   const from = new Map<string, string>();
+  // The folder's own mock packages go by the table's names; any other
+  // package a file imports keeps the name it has.
+  const own = new Set<string>();
+  const mocks = join(root, HARNESS_DIR, "packages");
+  if (existsSync(mocks))
+    for (const entry of readdirSync(mocks, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name.startsWith("@"))
+        for (const inner of readdirSync(join(mocks, entry.name), { withFileTypes: true }))
+          if (inner.isDirectory()) own.add(`${entry.name}/${inner.name}`);
+      else own.add(entry.name);
+    }
   for (const path of listTree(root)) {
     if (path === RECORD_PATH) continue;
     const bytes = readFileSync(join(root, path));
-    const binary = isBinaryPath(path);
-    const back = fromFolder(table, path, binary ? "" : bytes.toString("utf8"));
+    const binary = isBinaryPath(path) || !isTextContent(bytes);
+    const back = fromFolder(table, path, binary ? "" : bytes.toString("utf8"), (name) => own.has(name));
     const earlier = from.get(back.path);
     if (earlier !== undefined) {
       await rm(scratch, { recursive: true, force: true });
@@ -2817,6 +2870,17 @@ export async function patchProject(
         ).toString("utf8");
       await mkdir(repoDir, { recursive: true });
       run(["init", "-q"]);
+      // A file that is not UTF-8 goes as a binary patch: as text, the diff
+      // would carry its bytes through a string and lose them.
+      const opaque = [...changed, ...added, ...deleted].filter((path) => {
+        for (const side of ["a", "b"]) {
+          const at = join(scratch, side, path);
+          if (existsSync(at) && !isTextContent(readFileSync(at))) return true;
+        }
+        return false;
+      });
+      if (opaque.length > 0)
+        await writeFile(join(repoDir, ".git", "info", "attributes"), `${opaque.map((path) => `/${path.replace(/ /g, "[[:space:]]")} binary`).join("\n")}\n`);
       for (const path of [...changed, ...deleted]) {
         await mkdir(dirname(join(repoDir, path)), { recursive: true });
         await writeFile(join(repoDir, path), readFileSync(join(scratch, "a", path)));
