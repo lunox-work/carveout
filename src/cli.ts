@@ -589,7 +589,9 @@ async function main(argv: readonly string[]) {
                     ? "it builds, but no test of this code came with it: write the tests the work must pass"
                     : `it does not ${failedStep === undefined ? "install, build or test" : failedStep.command} on its own (below)`
           }`,
-          ...(verdict.counts === undefined ? [] : [`  Tests:${countsSentence(verdict.counts, false)}`]),
+          ...(verdict.counts === undefined
+            ? []
+            : [`  ${verdict.counts.tests === 0 && verdict.counts.surface !== undefined ? "Checks" : "Tests"}:${countsSentence(verdict.counts, false)}`]),
           ...(record.exposure === undefined ? [] : [`  Shows ${renderExposure(record.exposure)}`]),
           `  Names: ${
             result.pseudonyms === null
