@@ -851,6 +851,7 @@ async function main(argv: readonly string[]) {
       const acceptStep = steps.find((step) => step.command === "accept");
       const checked = trustedCut(dir, values.receipt, { optional: true }).record;
       const testStep = steps.find((step) => step.command === "npm test");
+      const restoredStep = steps.find((step) => step.restored !== undefined);
       const baselineOf = testStep?.baselineInEffect !== undefined && testStep.baselineInEffect.length > 0 ? testStep.baselineInEffect : undefined;
       const baselineEdited = steps.find((step) => step.baselineEdited !== undefined)?.baselineEdited;
       const counts = steps.find((step) => step.counts !== undefined)?.counts;
@@ -874,14 +875,19 @@ async function main(argv: readonly string[]) {
           counts: counts ?? null,
           baseline: baselineOf ?? [],
           baselineEdited: baselineEdited ?? [],
-          restored: testStep?.restored ?? [],
+          restored: restoredStep?.restored ?? [],
+          addedPackages: restoredStep?.addedPackages ?? [],
           receipt: testStep?.receiptRead ?? false,
           steps,
         });
       else {
-        if (testStep?.restored !== undefined)
+        if (restoredStep?.restored !== undefined)
           process.stdout.write(
-            `The folder's generated files were not the cut's; the check ran on the receipt's:\n${list(testStep.restored)}\n`,
+            `The folder's generated files were not the cut's; the check ran on the receipt's:\n${list(restoredStep.restored)}\n`,
+          );
+        if (restoredStep?.addedPackages !== undefined)
+          process.stdout.write(
+            `The folder's package.json adds packages the repository does not install, so the check did not either:\n${list(restoredStep.addedPackages)}\nThe repository's package files are not patched: \`carveout patch\` names the file each one goes into, for the owner to add, or take them out.\n`,
           );
         if (testStep !== undefined && testStep.receiptRead === false && values["no-receipt"] !== true)
           process.stdout.write("No receipt for this folder: its own carveout/baseline.json was not read, so every failing test counts.\n");

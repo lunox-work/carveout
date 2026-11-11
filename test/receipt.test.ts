@@ -610,3 +610,13 @@ test("--resolved takes the slice's own files only, and names a resolution that l
   const result = await refreshProject(cut.out, { resolved: ["apps/shop/src/tax.ts"] });
   assert.deepEqual(result?.droppedUpstream, ["apps/shop/src/tax.ts"]);
 });
+
+test("check names the packages a folder's package.json added, which its run does not install", async () => {
+  const { packagesAdded } = await import("../src/carve.js");
+  const cut = JSON.stringify({ dependencies: { zod: "3.23.8" }, devDependencies: { typescript: "5.9.3" } });
+  const folder = JSON.stringify({ dependencies: { zod: "3.23.8", dayjs: "1.11.13" }, devDependencies: { typescript: "5.9.3", "@types/lodash": "^4.17.0" } });
+  assert.deepEqual(packagesAdded(folder, cut), ["@types/lodash ^4.17.0", "dayjs 1.11.13"]);
+  assert.deepEqual(packagesAdded(cut, cut), []);
+  // A package.json that is not JSON any more adds nothing it can name.
+  assert.deepEqual(packagesAdded("{", cut), []);
+});

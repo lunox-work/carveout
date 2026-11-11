@@ -2478,6 +2478,8 @@ export interface CheckStep {
   readonly baselineInEffect?: readonly string[];
   /** Generated files the folder changed, put back from the receipt for the run. */
   readonly restored?: readonly string[];
+  /** Packages the folder's package.json added, which the run did not install. */
+  readonly addedPackages?: readonly string[];
   /** Whether a receipt vouched for the record and baseline the run read. */
   readonly receiptRead?: boolean;
 }
@@ -2774,6 +2776,7 @@ export async function checkProject(
   // files it added under carveout/, taken out. In place, nothing is
   // changed: a folder that does not match is not run.
   const restored: string[] = [];
+  const addedPackages: string[] = [];
   const texts = trusted.receipt?.generatedText;
   if (texts !== undefined) {
     const tree = listTree(work);
@@ -2801,6 +2804,9 @@ export async function checkProject(
       ];
     }
     for (const path of extra) await rm(join(work, path), { force: true });
+    // A package the folder installed for itself: named, since the run that
+    // judges the slice installs what the cut wrote, as the repository does.
+    if (changed.some(([path]) => path === "package.json")) addedPackages.push(...packagesAdded(readFileSync(join(work, "package.json"), "utf8"), texts["package.json"] ?? ""));
     for (const [path, text] of changed) {
       await mkdir(dirname(join(work, path)), { recursive: true });
       await rm(join(work, path), { force: true });
@@ -3037,11 +3043,38 @@ export async function checkProject(
       ...(baselineEdited === undefined ? {} : { baselineEdited }),
       baselineInEffect: recorded ?? inEffect,
       ...(restored.length === 0 ? {} : { restored }),
+      ...(addedPackages.length === 0 ? {} : { addedPackages }),
       receiptRead: trusted.receipt !== null,
+    };
+  } else if (steps.length > 0 && restored.length > 0) {
+    // The run stopped before the tests (a build the restored package.json
+    // cannot satisfy): the step that failed says what was put back.
+    const last = steps.length - 1;
+    steps[last] = {
+      ...(steps[last] as CheckStep),
+      restored,
+      ...(addedPackages.length === 0 ? {} : { addedPackages }),
     };
   }
   if (scratch !== null) await rm(scratch, { recursive: true, force: true });
   return steps;
+}
+
+/** The dependencies one package.json text pins that another does not, as `name version`. */
+export function packagesAdded(folder: string, cut: string): string[] {
+  const entries = (text: string) => {
+    try {
+      const manifest = JSON.parse(text) as Record<string, Record<string, unknown> | undefined>;
+      return [...Object.entries(manifest["dependencies"] ?? {}), ...Object.entries(manifest["devDependencies"] ?? {})];
+    } catch {
+      return [];
+    }
+  };
+  const known = new Set(entries(cut).map(([name]) => name));
+  return entries(folder)
+    .filter(([name]) => !known.has(name))
+    .map(([name, version]) => `${name} ${String(version)}`)
+    .sort(compare);
 }
 
 
