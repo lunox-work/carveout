@@ -1,7 +1,9 @@
 <!doctype html>
-<!-- Source of assets/hero.png; render with `PLAYWRIGHT=<dir with node_modules/playwright> node assets/src/render.mjs`.
-     "11%": experiments/results/hero-exposure.json (8 sandbox-factory slices, median, with the hand-off's flags --whole-package --with-tests --copy-pure; 0.7% for a default cut).
-     "0 lines": carveout patch reads the returned folder and runs none of it; check and merge --verify run it only in a container with no network. The held list is the patch policy. -->
+<!-- Source of assets/hero.png and assets/flow.png; render with `PLAYWRIGHT=<dir with node_modules/playwright> node assets/src/render.mjs`.
+     hero, "0.7%": experiments/results/hero-exposure.json, median of the 8 sandbox-factory slices cut plain (11% with --whole-package --with-tests --copy-pure); each cell is 0.25% of 245,456 lines.
+     hero, "0 lines": carveout patch reads the returned folder and runs none of it; check and merge --verify run it only in a container with no network. The held list is the patch policy.
+     hero, "52 of 52": experiments/results/e5.jsonl, rows on CLI 1009bdd: 52 replayed commits patch and apply, 49 byte-identical (experiments/RESULTS.md, Phase 7).
+     flow: one hand-off on 2026-11-11, sandbox-factory @2e0b730, entry packages/jira/src/selection-jql.ts, carveout 0.1.1 `handoff`; the held line is `patch` on a folder whose code read process.execArgv. -->
 <html>
 <head>
 <meta charset="utf-8">
@@ -16,71 +18,145 @@
   --line: rgb(255 255 255 / 0.08);
   --text: #fafafa;
   --muted: #71717a;
+  --dim: #a1a1aa;
   --cell: #1f1f23;
   --seen: #22c55e;
   --held: #f43f5e;
 }
 * { box-sizing: border-box; margin: 0; }
-body { background: #000; }
-.scene { width: 1280px; height: 640px; background: var(--bg); color: var(--text); font-family: Sans; padding: 44px 64px; position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; }
+body { background: #000; display: flex; flex-direction: column; gap: 40px; }
+.scene { width: 1280px; background: var(--bg); color: var(--text); font-family: Sans; padding: 44px 64px 40px; position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 36px; }
 .scene::before { content: ""; position: absolute; inset: 0; background: radial-gradient(ellipse 60% 50% at 50% 0%, rgb(255 255 255 / 0.06), transparent); }
 .scene > * { position: relative; }
-.mark { font-family: Mono; font-size: 16px; color: var(--text); font-weight: 500; letter-spacing: 0.02em; }
-h1 { font-family: Display; font-weight: 600; letter-spacing: -0.03em; font-size: 40px; line-height: 1.15; max-width: 1060px; }
-h1 span { color: var(--muted); }
-.cols { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-.col { display: flex; justify-content: space-between; align-items: center; padding: 30px 40px; gap: 24px; }
+.mark { font-family: Mono; font-size: 16px; font-weight: 500; letter-spacing: 0.02em; }
+h1 { font-family: Display; font-weight: 600; letter-spacing: -0.03em; font-size: 50px; line-height: 1.1; }
+h1 em { font-style: normal; color: var(--seen); }
+.cols { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.col { display: flex; flex-direction: column; gap: 22px; padding: 30px 32px 30px; }
 .col:first-child { padding-left: 0; }
 .col:last-child { padding-right: 0; }
 .col + .col { border-left: 1px solid var(--line); }
-.stat { display: flex; flex-direction: column; gap: 14px; }
 .label { font-family: Mono; font-size: 14px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
-.num { font-family: Display; font-weight: 600; letter-spacing: -0.04em; line-height: 0.9; font-size: 104px; }
-.num small { color: var(--muted); font-size: 0.4em; letter-spacing: -0.02em; margin-left: 8px; }
+.num { font-family: Display; font-weight: 600; letter-spacing: -0.04em; line-height: 0.9; font-size: 84px; }
+.num small { color: var(--muted); font-size: 0.42em; letter-spacing: -0.02em; margin-left: 10px; }
 .of { font-family: Mono; font-size: 15px; color: var(--muted); line-height: 1.5; }
 .seen { color: var(--seen); }
-.repo { display: grid; grid-template-columns: repeat(40, 6px); gap: 2px; }
-.repo u { width: 6px; height: 6px; border-radius: 1.5px; background: var(--cell); }
-.repo u.s { background: var(--seen); box-shadow: 0 0 10px rgb(34 197 94 / 0.7); }
-.held { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 13px; font-family: Mono; font-size: 15px; color: var(--text); }
+.grid { display: grid; gap: 4px; }
+.grid u { aspect-ratio: 1; border-radius: 2px; background: var(--cell); }
+.grid u.s { background: var(--seen); box-shadow: 0 0 10px rgb(34 197 94 / 0.6); }
+.grid u.a { background: var(--seen); opacity: 0.55; }
+.held { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 8px; font-family: Mono; font-size: 15px; }
 .held li { display: flex; align-items: center; gap: 12px; white-space: nowrap; }
-.held svg { width: 16px; height: 16px; flex: none; color: var(--held); }
+.held svg, .ok svg { width: 16px; height: 16px; flex: none; }
+.held svg { color: var(--held); }
 .foot { font-family: Mono; font-size: 14px; color: var(--muted); }
+
+/* flow */
+.stages { display: grid; grid-template-columns: 1fr 44px 1fr 44px 1fr; align-items: stretch; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.stage { display: flex; flex-direction: column; gap: 18px; padding: 30px 0; }
+.arrow { display: flex; align-items: center; justify-content: center; color: var(--muted); }
+.arrow svg { width: 28px; height: 28px; }
+.cmd { font-family: Mono; font-size: 15px; color: var(--text); background: rgb(255 255 255 / 0.05); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; align-self: flex-start; }
+.big { font-family: Display; font-weight: 600; letter-spacing: -0.03em; font-size: 40px; line-height: 1; }
+.big small { font-size: 0.5em; color: var(--muted); letter-spacing: -0.01em; margin-left: 6px; }
+.tree { font-family: Mono; font-size: 14px; line-height: 1.75; color: var(--dim); }
+.tree b { font-weight: 400; color: var(--seen); }
+.tree i { font-style: normal; color: var(--muted); }
+.term { font-family: Mono; font-size: 14px; line-height: 1.75; color: var(--dim); }
+.term .p { color: var(--muted); }
+.term .g { color: var(--seen); }
+.ok { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 10px; font-family: Mono; font-size: 14px; }
+.ok li { display: flex; align-items: flex-start; gap: 10px; line-height: 1.45; }
+.ok li svg { margin-top: 2px; }
+.ok .y svg { color: var(--seen); }
+.ok .n svg { color: var(--held); }
+.ok .n span { color: var(--dim); }
 </style>
 </head>
 <body>
 
 <section class="scene" id="hero">
   <div class="mark">carveout</div>
-  <h1>Zero-trust handoff for your codebase. <span>They see one folder. Until you've read it, their code runs only in a sealed container.</span></h1>
+  <h1>Open-source a feature,<br><em>not your codebase.</em></h1>
   <div class="cols">
     <div class="col">
-      <div class="stat">
-        <div class="label">What they see</div>
-        <div class="num seen">11%</div>
-        <div class="of">of the repository's<br>source, as written</div>
-      </div>
-      <div class="repo" id="repo"></div>
+      <div class="label">What they see</div>
+      <div class="num seen">0.7%</div>
+      <div class="grid" id="seen" style="grid-template-columns: repeat(40, 1fr); gap: 3px"></div>
+      <div class="of">of a 245k-line repo, median slice<br>11% with tests and pure code</div>
     </div>
     <div class="col">
-      <div class="stat">
-        <div class="label">What runs</div>
-        <div class="num">0<small>lines</small></div>
-        <div class="of">of their code run on<br>your machine</div>
-      </div>
+      <div class="label">What runs on your machine</div>
+      <div class="num">0<small>lines</small></div>
       <ul class="held" id="held"></ul>
+      <div class="of">of their code: the patch is read<br>checks run in a sealed container</div>
+    </div>
+    <div class="col">
+      <div class="label">What comes back</div>
+      <div class="num seen">52<small>of 52</small></div>
+      <div class="grid" id="back" style="grid-template-columns: repeat(13, 1fr); gap: 7px"></div>
+      <div class="of">real commits, replayed via a slice,<br>come back as patches that apply</div>
     </div>
   </div>
-  <div class="foot">sandbox-factory · 245k lines of TypeScript · median of 8 hand-off slices (0.7% for a default cut) · bound it with maxExposurePercent</div>
+  <div class="foot">sandbox-factory · 245k lines of TypeScript · 8 slices · 52 replayed commits, 49 byte-identical · experiments/RESULTS.md</div>
+</section>
+
+<section class="scene" id="flow">
+  <div class="mark">carveout</div>
+  <h1>One folder out. <em>One checked patch back.</em></h1>
+  <div class="stages">
+    <div class="stage">
+      <div class="label">1 · Out</div>
+      <div class="cmd">carveout handoff selection-jql.ts</div>
+      <div class="big">709<small>files in the repo</small></div>
+      <div class="tree">
+        <b>15 go out</b> <i>· source, tests, pure code</i><br>
+        the rest: <i>.d.ts stubs + mocks, no bodies</i><br>
+        names: <i>pseudonyms, the receipt stays home</i><br>
+        <b>✓ 15 of 15 tests pass before any edit</b>
+      </div>
+    </div>
+    <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+    <div class="stage">
+      <div class="label">2 · Their work</div>
+      <div class="cmd">contractor · contributor · agent</div>
+      <div class="big">1<small>folder, nothing else</small></div>
+      <div class="term">
+        <span class="p">$</span> npm ci<br>
+        <span class="p">$</span> <i>edit, add tests</i><br>
+        <span class="p">$</span> npm test<br>
+        <span class="g">✔ 17 of 17 pass</span><br>
+        <span class="g">✔ 840 of 840 surface checks hold</span>
+      </div>
+    </div>
+    <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></div>
+    <div class="stage">
+      <div class="label">3 · Back</div>
+      <div class="cmd">carveout patch ./returned</div>
+      <div class="big">0<small>lines of it run</small></div>
+      <ul class="ok" id="back-list"></ul>
+    </div>
+  </div>
+  <div class="foot">a real hand-off · sandbox-factory, packages/jira/src/selection-jql.ts · held: patch on folders that tried it · 2026-11-11</div>
 </section>
 
 <script>
-// 1,000 cells, each ~245 lines of the repository; 112 lit = the 11% hand-off median, clustered like a few folders.
-const lit = new Set(Array.from({ length: 7 }, (_, row) => Array.from({ length: 16 }, (_, col) => (row + 8) * 40 + col + 12)).flat());
-document.getElementById("repo").innerHTML = Array.from({ length: 1000 }, (_, i) => `<u class="${lit.has(i) ? "s" : ""}"></u>`).join("");
 const x = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
-const held = ["CI and hook files", "manifests, lockfiles", "deleted or weakened tests", "new network or disk access", "files outside the slice"];
+const v = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3L13 4.5"/></svg>';
+// 400 cells, each 0.25% of the repository; 3 lit = the 0.7% median slice.
+const lit = new Set([179, 180, 219]);
+document.getElementById("seen").innerHTML = Array.from({ length: 400 }, (_, i) => `<u class="${lit.has(i) ? "s" : ""}"></u>`).join("");
+// 52 replayed commits: all apply; 49 byte-identical (bright), 3 not (dim).
+const differ = new Set([49, 50, 51]);
+document.getElementById("back").innerHTML = Array.from({ length: 52 }, (_, i) => `<u class="${differ.has(i) ? "a" : "s"}"></u>`).join("");
+const held = ["CI, hooks, lockfiles", "deleted or weakened tests", "code that spots a test run", "new network or disk access", "files outside the slice"];
 document.getElementById("held").innerHTML = held.map((h) => `<li>${x}${h}</li>`).join("");
+document.getElementById("back-list").innerHTML = [
+  ["y", "2 files: the change and its tests"],
+  ["y", "git apply · repo tests 165 of 165"],
+  ["n", "held: code that matched process.execArgv against a test runner"],
+  ["n", "held: CI, lockfile or manifest edits, weakened tests, new reach"],
+].map(([k, t]) => `<li class="${k}">${k === "y" ? v : x}<span>${t}</span></li>`).join("");
 </script>
 </body>
 </html>

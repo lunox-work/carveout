@@ -1,6 +1,6 @@
 ---
 name: carveout
-description:
+description: >-
   Hand one part of a closed TypeScript repository to an outside
   contractor, and take the work back, without showing them the rest. A
   slice is the files a change needs, copied at their repository paths, with
