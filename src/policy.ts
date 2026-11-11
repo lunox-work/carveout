@@ -451,6 +451,9 @@ function reachCounts(path: string, text: string, context: ReachContext = {}): Ma
       const root = (name.startsWith("node:") ? name.slice(5) : name).split("/")[0] ?? name;
       if (!QUIET_NODE_MODULES.has(root)) add(`node:${root}`);
     } else if (name.startsWith(".")) {
+      // An installed package's files by path: no patch shows what is there,
+      // and the folder's own copy is the contributor's to plant.
+      if (/(^|\/)node_modules(\/|$)/.test(name)) add("a package's files by path (node_modules)");
       // A relative import that leaves the slice's packages reads closed code.
       const { packages, packageOf, holds } = context;
       if (packages !== undefined && packageOf !== undefined) {

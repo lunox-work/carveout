@@ -2504,6 +2504,20 @@ function folderEdited(dir: string, record: CarveoutRecord): boolean {
   );
 }
 
+/** The node_modules folders under a folder, below its root. */
+function nodeModulesIn(root: string, dir = "", into: string[] = []): string[] {
+  for (const entry of readdirSync(join(root, dir), { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name === ".git") continue;
+    const path = dir === "" ? entry.name : `${dir}/${entry.name}`;
+    if (entry.name === "node_modules") {
+      if (dir !== "") into.push(path);
+      continue;
+    }
+    nodeModulesIn(root, path, into);
+  }
+  return into;
+}
+
 /** The paths under a folder that are symbolic links, outside node_modules. */
 function symlinksIn(root: string, dir = "", into: string[] = []): string[] {
   for (const entry of readdirSync(join(root, dir), { withFileTypes: true })) {
@@ -2614,6 +2628,9 @@ export async function checkProject(
     work = join(scratch, "project");
     execFileSync("cp", ["-R", source, work]);
     await rm(join(work, "node_modules"), { recursive: true, force: true });
+    // Nor a node_modules folder anywhere in it: no patch reads one, so what
+    // the folder holds there never runs (npm ci writes the root's anew).
+    for (const nested of nodeModulesIn(work)) await rm(join(work, nested), { recursive: true, force: true });
     // A tool's folder is no part of a change, and a patch never judges what
     // it holds: none of it runs (a test there could write the baseline).
     for (const tool of toolDirsIn(work, record)) await rm(join(work, tool), { recursive: true, force: true });
@@ -3090,9 +3107,13 @@ export async function patchProject(
   // A copied folder's files are the repository's too: edited, they are
   // in the patch against the repository's copy.
   for (const extra of record.extras ?? []) included.set(extra.path, extra.sha256);
-  const ignored = new Set(
-    readFileSync(join(root, ".gitignore"), "utf8").split("\n").filter(Boolean),
-  );
+  // The .gitignore the cut wrote (the receipt's), not the folder's own: a
+  // file the folder's holder lists there would be left unjudged, and check
+  // runs the cut's.
+  const gitignoreText =
+    trusted.receipt?.generatedText?.[".gitignore"] ??
+    (existsSync(join(root, ".gitignore")) ? readFileSync(join(root, ".gitignore"), "utf8") : "");
+  const ignored = new Set(gitignoreText.split("\n").filter(Boolean));
   const stubModules = new Set([
     ...record.manifest.cuts.outbound.map((edge) => edge.to),
     ...record.dependencies

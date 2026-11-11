@@ -285,3 +285,20 @@ test("a new Vitest test the repository's Vitest would not find fails the run, an
   vitest(root, report(["src/lib/a.test.ts"], here), 0);
   assert.equal(run(root).status, 0);
 });
+
+test("a test that rewrites the TAP file while the run goes on changes nothing the runner decides", () => {
+  const root = folder("tap-rewrite", {
+    "src/forge.test.ts": 'import { test } from "node:test";\n',
+    "src/forge.test.js": [
+      'import { writeFileSync } from "node:fs";',
+      'import { test } from "node:test";',
+      'test("rewrites the TAP", () => writeFileSync("carveout/.last-run.tap", "TAP version 13\\nok 1 - all good\\n# tests 1\\n# pass 1\\n# fail 0\\n"));',
+      'test("fails", () => { throw new Error("broken"); });',
+      "",
+    ].join("\n"),
+  });
+  const result = run(root);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stdout, /npm test: 1 of 2 test\(s\) pass \(node:test\)/);
+  assert.match(readFileSync(join(root, "carveout/.last-run.tap"), "utf8"), /not ok \d+ - fails/);
+});

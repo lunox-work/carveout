@@ -348,3 +348,9 @@ test("round two: paths a reviewer found", () => {
   // A test's @ts-expect-error tests the types.
   assert.equal(judge("apps/shop/src/checkout.test.ts", "added", { before: null, after: "// @ts-expect-error\ntotal(1);\n" }), null);
 });
+
+test("an import of an installed package's files by path is new reach", async () => {
+  const { reachOf } = await import("../src/policy.js");
+  const labels = reachOf("apps/shop/src/zz.test.ts", 'import "./node_modules/x.js";\nimport y from "../node_modules/y/index.js";\n', {});
+  assert.ok(labels.includes("a package's files by path (node_modules)"), JSON.stringify(labels));
+});

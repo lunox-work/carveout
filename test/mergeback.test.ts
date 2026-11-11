@@ -248,14 +248,16 @@ test("npm test runs a test added after the cut, and patch carries it", async () 
     { cwd: out, stdio: "pipe" },
   );
   execFileSync(process.execPath, [TSC, "-p", "tsconfig.json"], { cwd: out, stdio: "pipe" });
-  const output = execFileSync(process.execPath, ["carveout/test.js"], {
+  const run = spawnSync(process.execPath, ["carveout/test.js"], {
     cwd: out,
-    stdio: "pipe",
+    encoding: "utf8",
     env: Object.fromEntries(
       Object.entries(process.env).filter(([key]) => key !== "NODE_TEST_CONTEXT"),
     ),
-  }).toString("utf8");
-  assert.match(output, /added after the cut/);
+  });
+  assert.equal(run.status, 0, run.stdout + run.stderr);
+  // node's own report goes to stderr; its TAP, to the runner alone.
+  assert.match(run.stderr, /added after the cut/);
   const patch = await patchProject(out);
   assert.deepEqual(patch.added, ["apps/shop/src/late.test.ts"]);
   assert.match(patch.diff, /^\+import \{ subtotal \} from "\.\/cart";$/m);
