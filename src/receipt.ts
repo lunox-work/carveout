@@ -240,7 +240,13 @@ export function publicRecord(record: CarveoutRecord): CarveoutRecord {
  * paths and the hashes of what the folder holds at them (`dir`), so its
  * own commands (the coverage guard, check) read it as written.
  */
-export function folderRecordFor(record: CarveoutRecord, table: FolderPseudonyms | undefined, dir: string): CarveoutRecord {
+export function folderRecordFor(
+  record: CarveoutRecord,
+  table: FolderPseudonyms | undefined,
+  dir: string,
+  /** A hash already known for a folder path, over what the folder holds there now. */
+  known: (folderPath: string) => string | undefined = () => undefined,
+): CarveoutRecord {
   const scrubbed = publicRecord(record);
   const quiet: CarveoutRecord = {
     ...scrubbed,
@@ -254,6 +260,8 @@ export function folderRecordFor(record: CarveoutRecord, table: FolderPseudonyms 
   const renamed = recordToFolder(table, quiet);
   const pathOf = (path: string) => toFolder(table, path, "").path;
   const hashAt = (path: string) => {
+    const given = known(path);
+    if (given !== undefined) return given;
     const at = join(resolve(dir), path);
     return existsSync(at) ? createHash("sha256").update(readFileSync(at)).digest("hex") : "";
   };
@@ -283,7 +291,21 @@ export function saveRecord(
   written: Readonly<Record<string, string>> = {},
 ): TrustedCut {
   const scrub = trusted.receipt !== null && updated.request.public === true;
-  const folder = scrub ? folderRecordFor(updated, trusted.receipt?.pseudonyms, dir) : updated;
+  // Each path keeps the hash the folder's record had for it: the folder's
+  // edits since are still edits, and a file an earlier apply wrote still
+  // differs from the cut's, so the next apply merges into it rather than
+  // over it. Only a generated file the command wrote, or a path new to the
+  // record, is hashed as the folder holds it now.
+  const previous = new Map<string, string>();
+  const before = trusted.receipt?.folderRecord;
+  if (before !== undefined)
+    for (const file of [...before.manifest.included, ...before.generated, ...(before.copied ?? []), ...(before.extras ?? [])])
+      if (file.sha256 !== "") previous.set(file.path, file.sha256);
+  const known = (path: string) => {
+    const text = written[path];
+    return text !== undefined ? createHash("sha256").update(text).digest("hex") : previous.get(path);
+  };
+  const folder = scrub ? folderRecordFor(updated, trusted.receipt?.pseudonyms, dir, known) : updated;
   writeFileSync(join(resolve(dir), RECORD_PATH), `${JSON.stringify(folder, null, 2)}\n`);
   if (trusted.receipt === null || trusted.receiptPath === null) return { ...trusted, record: updated, folder };
   // The receipt keeps the record as the cut makes it, checkout included,

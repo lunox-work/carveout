@@ -208,6 +208,48 @@ test("apply merges a change into the folder's own edits, and leaves an overlap t
   assert.doesNotMatch(readFileSync(mine, "utf8"), /subtotalTheirs|<<<<<<</);
 });
 
+test("a folder in pseudonyms keeps its edits through an apply that writes stubs, and the next apply merges into them", async () => {
+  const cut = await cutSlice({
+    repo,
+    out: join(scratch, "pseudonym-apply"),
+    entryPoints: [ENTRY],
+    budget: { maxFiles: 40, maxDepth: 1 },
+    offline: true,
+    public: true,
+    names: ["subtotal"],
+  });
+  assert.ok(cut.pseudonyms !== null && cut.pseudonyms.rules.length > 0);
+  const held = join(cut.out, ENTRY);
+  writeFileSync(held, readFileSync(held, "utf8").replace("export interface Line", "// the contributor's note\nexport interface Line"));
+  const change = (edit: (work: string) => void) => {
+    const work = join(scratch, `up-${Math.random().toString(36).slice(2)}`);
+    git(scratch, ["clone", "-q", repo, work]);
+    edit(work);
+    return git(work, ["diff"]);
+  };
+  // A: a new export of the stubbed package, used by tax.ts; cart.ts untouched.
+  const first = await applyPatch(
+    cut.out,
+    change((work) => {
+      const money = join(work, "packages/money/src/index.ts");
+      writeFileSync(money, `${readFileSync(money, "utf8")}export function parse(text: string): number {\n  return Number(text);\n}\n`);
+      const tax = join(work, "apps/shop/src/tax.ts");
+      writeFileSync(tax, `import { parse } from "@fx/money";\n${readFileSync(tax, "utf8")}export const rate = (text: string): number => parse(text);\n`);
+    }),
+    { stubs: true },
+  );
+  assert.ok(first.stubs.some((stub) => stub.written), JSON.stringify(first.stubs));
+  assert.match(readFileSync(held, "utf8"), /the contributor's note/);
+  // B: over cart.ts. Merged into the folder's edit, not written over it.
+  const second = await applyPatch(cut.out, change((work) => {
+    const cart = join(work, ENTRY);
+    writeFileSync(cart, readFileSync(cart, "utf8").replace("  return new Stripe", "  // the repository's note\n  return new Stripe"));
+  }));
+  assert.deepEqual(second.merged, [ENTRY]);
+  assert.deepEqual(second.changed, [ENTRY]);
+  assert.match(readFileSync(held, "utf8"), /the contributor's note[\s\S]*the repository's note/);
+});
+
 test("refresh brings the repository's commits since the cut into a folder that holds work", async () => {
   const { refreshProject } = await import("../src/mergeback.js");
   const moving = join(scratch, "moving");
