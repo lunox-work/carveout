@@ -146,3 +146,27 @@ test("a service package the code's own types are built from is installed, not mo
   const stripe = cut.record.dependencies.find((dependency) => dependency.name === "stripe");
   assert.equal(stripe?.resolution, "approved-package", JSON.stringify(cut.record.dependencies));
 });
+
+test("a module that is no package (a Vite virtual module) is mocked in the folder and found by its name", async () => {
+  const repo = join(scratch, "virtual");
+  cpSync(FIXTURE, repo, { recursive: true });
+  write(repo, {
+    "apps/shop/src/version.ts": 'import build from "virtual:build-info";\n\nexport const version = (): string => String(build.version ?? "dev");\n',
+    "apps/shop/src/virtual.d.ts": 'declare module "virtual:build-info" {\n  const build: { version?: string };\n  export default build;\n}\n',
+  });
+  const git = (args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, stdio: "ignore" });
+  git(["init", "-q"]);
+  git(["add", "-A"]);
+  git(["commit", "-q", "-m", "fixture"]);
+  const cut = await cutSlice({ repo, out: join(scratch, "virtual-slice"), entryPoints: ["apps/shop/src/version.ts"], budget: { maxFiles: 40, maxDepth: 1 }, offline: true });
+  const manifest = JSON.parse(readFileSync(join(cut.out, "package.json"), "utf8"));
+  assert.equal(manifest.dependencies?.["virtual:build-info"], undefined);
+  const map = JSON.parse(readFileSync(join(cut.out, "carveout/virtual/map.json"), "utf8"));
+  assert.deepEqual(Object.keys(map), ["virtual:build-info"]);
+  const tsconfig = JSON.parse(readFileSync(join(cut.out, "tsconfig.json"), "utf8"));
+  assert.ok(tsconfig.compilerOptions.paths["virtual:build-info"]);
+  // The folder's loader finds it at runtime: a recording mock.
+  const run = spawnSync(process.execPath, ["--import", "./carveout/assets.js", "--input-type=module", "-e", 'const m = await import("virtual:build-info"); console.log(typeof m.default);'], { cwd: cut.out, encoding: "utf8" });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /function|object/);
+});

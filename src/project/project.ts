@@ -32,6 +32,7 @@ import {
   type Toolchain,
 } from "./build.js";
 import {
+  isPackageName,
   packageNameOf,
   type PathClass,
   type ResolvedDependency,
@@ -47,6 +48,9 @@ import { moduleSpecifiers, rewriteSpecifiers } from "../specifiers.js";
 
 export const HARNESS_DIR = "carveout";
 export const MOCKS_DIR = `${HARNESS_DIR}/packages`;
+/** Mocks of modules that are no package (`virtual:build-info`), with the loader's map of them. */
+export const VIRTUAL_DIR = `${HARNESS_DIR}/virtual`;
+export const VIRTUAL_MAP_PATH = `${VIRTUAL_DIR}/map.json`;
 export const TESTS_DIR = `${HARNESS_DIR}/tests`;
 export const MOCK_RUNTIME_PATH = `${HARNESS_DIR}/mock.js`;
 export const AMBIENT_PATH = `${HARNESS_DIR}/ambient.d.ts`;
@@ -107,7 +111,7 @@ const ASSETS_LOADER = [
   "// `./ui/index.ts`) to the compiled file: the cut rewrote the slice's own",
   "// imports so Node takes them, and one written after the cut runs too.",
   "// Registered with --import before anything runs.",
-  "import { globSync } from \"node:fs\";",
+  "import { globSync, readFileSync } from \"node:fs\";",
   "import { register } from \"node:module\";",
   "import { dirname, relative, resolve as resolvePath, sep } from \"node:path\";",
   "import { fileURLToPath, pathToFileURL } from \"node:url\";",
@@ -155,7 +159,17 @@ const ASSETS_LOADER = [
   "}",
   "",
   "const RELATIVE = /^\\.\\.?\\//;",
+  "// Modules that are no package (`virtual:build-info`), mocked under carveout/virtual.",
+  "const VIRTUAL = (() => {",
+  "  try {",
+  "    return JSON.parse(readFileSync(new URL(\"./virtual/map.json\", import.meta.url), \"utf8\"));",
+  "  } catch {",
+  "    return {};",
+  "  }",
+  "})();",
   "export async function resolve(specifier, context, nextResolve) {",
+  "  if (Object.hasOwn(VIRTUAL, specifier))",
+  "    return { url: new URL(`../${VIRTUAL[specifier]}/index.js`, import.meta.url).href, shortCircuit: true };",
   "  try {",
   "    return await nextResolve(specifier, context);",
   "  } catch (error) {",
@@ -408,6 +422,12 @@ export function runtimeKindOf(
   )
     return "value";
   if (/^export\s+(default\s+|\{)/.test(declaration)) return "value";
+  // A name the module imports and exports again (`import { LIMITS } from
+  // "./jira"; export { LIMITS };`): a value, unless it is imported as a type.
+  if (/^import\s/.test(declaration)) {
+    const escaped = symbol.name.replace(/[$]/g, "\\$");
+    return new RegExp(`\\btype\\s+${escaped}\\b`).test(declaration) ? "type" : "value";
+  }
   return "unknown";
 }
 // Module specifiers are read from the syntax tree (`../specifiers.ts`);
@@ -877,7 +897,10 @@ export function projectCompilerOptions(
     rootDir: ".",
     declaration: false,
     sourceMap: false,
-    noEmitOnError: true,
+    // A build that waives the stubs' implicit anys (`buildScript`) still
+    // emits: those are errors tsc reports, and the folder's tests need the
+    // JavaScript.
+    noEmitOnError: options?.["noEmitOnError"] !== false,
     skipLibCheck: true,
     types: [],
     allowJs: false,
@@ -889,10 +912,16 @@ export function tsconfigFor(
   options: Readonly<Record<string, unknown>> | undefined,
   types: readonly string[] = [],
   excluded: readonly string[] = [],
+  /** Module names TypeScript finds by path: the folder's virtual modules. */
+  paths: Readonly<Record<string, readonly string[]>> = {},
 ) {
   return `${JSON.stringify(
     {
-      compilerOptions: { ...projectCompilerOptions(options), types: [...types] },
+      compilerOptions: {
+        ...projectCompilerOptions(options),
+        types: [...types],
+        ...(Object.keys(paths).length === 0 ? {} : { paths }),
+      },
       include: ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"],
       // The surface check has its own config, which `npm test` compiles.
       exclude: ["node_modules", MOCKS_DIR, SURFACE_DIR, ...excluded],
@@ -1309,7 +1338,7 @@ function readme(input: {
     "",
     "## Run it",
     "",
-    `Node ${input.toolchain.nodeRange} and npm ${input.toolchain.npm}. ${
+    `Node ${input.toolchain.nodeRange} and npm ${input.toolchain.npm.split(".")[0]} or later. ${
       input.live.length === 0
         ? "No account, service or credential is needed."
         : `The live packages below need their service running: ${input.live.join(", ")}, configured by ${input.liveEnvironment.length === 0 ? "the code's own defaults" : `your shell's ${input.liveEnvironment.map((name) => `\`${name}\``).join(", ")} or the code's own defaults`}. Nothing else needs an account, service or credential.`
@@ -1540,6 +1569,7 @@ export function generateProject(input: ProjectInput): GeneratedProject {
 
   // Packages: approved ones install; mocked ones are local packages.
   const namedImports = scanNamedImports(input.sources);
+  const virtualModules: Record<string, string> = {};
   const mockedPackages: string[] = [];
   const installedPackages: { name: string; version: string }[] = [];
   const dependencies: Record<string, string> = {};
@@ -1558,9 +1588,16 @@ export function generateProject(input: ProjectInput): GeneratedProject {
       dependencies[dependency.name] = dependency.version;
     } else if (dependency.resolution === "runtime-mock") {
       const name = dependency.name;
-      mockedPackages.push(name);
-      const dir = `${MOCKS_DIR}/${name}`;
-      dependencies[name] = `file:${dir}`;
+      // A module that is no package (`virtual:build-info`, an alias that
+      // resolved nowhere) is mocked in the folder and found by its name:
+      // TypeScript through `paths`, Node through the loader's map.
+      const virtual = !isPackageName(name);
+      const dir = virtual ? `${VIRTUAL_DIR}/${name.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "")}` : `${MOCKS_DIR}/${name}`;
+      if (virtual) virtualModules[name] = dir;
+      else {
+        mockedPackages.push(name);
+        dependencies[name] = `file:${dir}`;
+      }
       const names = [...(namedImports.get(name) ?? [])].sort(compare);
       add({
         path: `${dir}/package.json`,
@@ -1757,10 +1794,14 @@ export function generateProject(input: ProjectInput): GeneratedProject {
         ...(input.keepsImplicitAny === true ? {} : waived.length > 0 ? { noEmitOnError: false } : UNTYPED_PACKAGE_OPTIONS),
       },
       globals && vitestInstalled ? ["vitest/globals"] : [],
+      [],
+      Object.fromEntries(Object.entries(virtualModules).map(([name, dir]) => [name, [`./${dir}/index.d.ts`]])),
     ),
     class: "config",
     public: true,
   });
+  if (Object.keys(virtualModules).length > 0)
+    add({ path: VIRTUAL_MAP_PATH, text: `${JSON.stringify(virtualModules, null, 2)}\n`, class: "harness", public: true });
   if (input.vitest !== undefined && vitestTests.length > 0)
     add({ path: "vitest.config.mjs", text: vitestConfigText(input.vitest), class: "config", public: true });
 
@@ -1801,7 +1842,9 @@ export function generateProject(input: ProjectInput): GeneratedProject {
     .sort(compare);
   add({
     path: ".gitignore",
-    text: `${["node_modules/", ...emitted].join("\n")}\n`,
+    // The build's output for any source, a new one's too, and the test
+    // run's record: none of it goes back.
+    text: `${["node_modules/", "*.js", "!carveout/**/*.js", "!vitest.config.mjs", "*.tsbuildinfo", "carveout/.last-run.tap", ...emitted].join("\n")}\n`,
     class: "config",
     public: true,
   });

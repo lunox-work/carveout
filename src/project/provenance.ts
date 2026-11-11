@@ -278,6 +278,16 @@ export function resolveScope(input: ScopeInput): ScopeRecord {
   };
 }
 
+/**
+ * Whether a name is one npm installs a package by: `zod`, `@scope/name`.
+ * A Vite virtual module (`virtual:build-info`), an alias that resolved
+ * nowhere (`@/api`) or any other scheme is not; a slice mocks it as a
+ * module of its own, never as a package.
+ */
+export function isPackageName(name: string): boolean {
+  return /^(@[a-z0-9~][a-z0-9._~-]*\/)?[a-z0-9~][a-z0-9._~-]*$/i.test(name);
+}
+
 export function packageNameOf(specifier: string): string {
   const parts = specifier.split("/");
   return specifier.startsWith("@") && parts.length > 1

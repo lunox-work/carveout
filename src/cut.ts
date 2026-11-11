@@ -20,6 +20,7 @@ import {
   SLICE_TOOL_VERSION,
   canonicalJson,
   detectExternals,
+  isPackageName,
   isRegistryVersion,
   isSecretPath,
   pathMatcher,
@@ -562,7 +563,9 @@ export async function analyseSlice(input: {
         ...pinned,
         ...(registry === null ? {} : { registry }),
       });
-      if (pinned.version === null)
+      // A module that is no package (`virtual:build-info`) is mocked by its
+      // name and installed by none: no pin to look for.
+      if (pinned.version === null && isPackageName(name))
         unpinned.push({
           code: "missing_build_input",
           file: from === "" ? null : from,

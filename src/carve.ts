@@ -30,6 +30,7 @@ import {
   isScript,
   isSecretPath,
   isTestPath,
+  isPackageName,
   packageNameOf,
   pathMatcher,
   renderBoundaryMarkdown,
@@ -129,7 +130,7 @@ export function renderSliceAgents(input: {
   const tests =
     input.testsInFolder === 0
       ? "No test of this code came with the folder"
-      : `${input.testsInFolder} test(s) of this code run here`;
+      : `${input.testsInFolder} test file(s) of this code run here, beside the folder's own interface test`;
   const left =
     input.testsLeft === 0
       ? "."
@@ -143,7 +144,8 @@ export function renderSliceAgents(input: {
     "- `npm ci`, then `npm test`: it builds and runs the folder's tests. Nothing else needs setting up.",
     "- Edit the copied source, and add files beside it in the same packages. The stubs, everything under `carveout/`, `package.json`, the lockfile and the root configuration are generated: edits to them do not go back.",
     "- A mock answers any call with another mock. To make one return something in a test, read the README's Mocks section; nothing else under `carveout/` needs reading.",
-    "- Tests listed in `carveout/baseline.json` failed on the mocks before any edit and are not counted.",
+    "- If `carveout/baseline.json` is there, the tests it lists failed on the mocks before any edit and are not counted; with none, every test counts.",
+    "- The build writes a `.js` beside each `.ts`, a new file's too: leave them. Only the `.ts` comes back.",
     `- ${tests}${left} A pass here is a pass against mocks.`,
     "- When done, leave the edits in place: the repository's owner turns them into a patch with `carveout patch`.",
     "",
@@ -158,11 +160,27 @@ export function renderSliceAgents(input: {
   ].join("\n")}\n`;
 }
 
+/** The checks a package's own scripts run (test, lint, typecheck), as commands: what its CI holds a change to. */
+function packageChecks(repo: string, packageDir: string | null): string[] {
+  if (packageDir === null) return [];
+  try {
+    const scripts =
+      (JSON.parse(readFileSync(join(repo, packageDir, "package.json"), "utf8")) as { scripts?: Record<string, unknown> }).scripts ?? {};
+    return Object.entries(scripts)
+      .filter(([name, command]) => typeof command === "string" && /^(test|lint|typecheck|type-check|check|format:check|check-types)$/.test(name))
+      .map(([, command]) => String(command));
+  } catch {
+    return [];
+  }
+}
+
 /** The folder's TASK.md: the work asked for, in the owner's words, and when it is accepted. */
 export function renderTask(input: {
   readonly task: string;
   readonly testsInFolder: readonly string[];
   readonly surface: number;
+  /** The commands the repository runs on the package (its own scripts), for what CI checks. */
+  readonly ci?: readonly string[];
 }): string {
   return `${[
     "# Task",
@@ -171,7 +189,7 @@ export function renderTask(input: {
     "",
     "## Accepted when",
     "",
-    "- `npm test` passes in this folder: the tests you write for the task, and the ones already here, but for those `carveout/baseline.json` names (they fail on the mocks before any edit).",
+    "- `npm test` passes in this folder: the tests you write for the task, and the ones already here, but for any `carveout/baseline.json` names (they fail on the mocks before any edit).",
     ...(input.testsInFolder.length === 0
       ? []
       : [`- The ${input.testsInFolder.length} test file(s) that came with the folder still pass, and only grew.`]),
@@ -179,7 +197,11 @@ export function renderTask(input: {
       ? []
       : [`- The ${input.surface} export(s) code outside this folder uses keep their names and types (\`npm test\` checks them).`]),
     "- The owner's \`carveout patch\` of the folder keeps nothing out (see AGENTS.md: what comes back, and what is held).",
-    "- The repository's own CI passes once the change is merged: a pass here is a pass against mocks.",
+    `- The repository's own CI passes once the change is merged: a pass here is a pass against mocks.${
+      input.ci === undefined || input.ci.length === 0
+        ? ""
+        : ` For this package it runs: ${input.ci.map((command) => `\`${command}\``).join(", ")}.`
+    }`,
   ].join("\n")}\n`;
 }
 export const CONTRACT_PATH = "carveout/contract.json";
@@ -1228,7 +1250,7 @@ export async function computeCut(
       for (const { specifier } of moduleSpecifiers(file.path, readFileSync(join(repo, file.path), "utf8"))) {
         if (specifier.startsWith(".") || isNodeBuiltin(specifier)) continue;
         const name = packageNameOf(specifier);
-        if (serviceOf(name) !== null && !workspaces.has(name) && !typedBy.has(name)) typedBy.set(name, file.path);
+        if (serviceOf(name) !== null && !workspaces.has(name) && isPackageName(name) && !typedBy.has(name)) typedBy.set(name, file.path);
       }
   for (const [name, file] of [...typedBy].sort(([a], [b]) => compare(a, b)))
     if (choices[name] === undefined && repositoryVersion(repo, name, [file]) !== null) {
@@ -1498,6 +1520,7 @@ export async function computeCut(
               task: request.task,
               testsInFolder: analysis.walk.tests,
               surface: contract.inbound.reduce((sum, module) => sum + module.symbols.length, 0),
+              ci: packageChecks(repo, packageDir),
             }),
             class: "config" as const,
             public: true,
@@ -1683,7 +1706,7 @@ function prototypePatchedPackages(
         for (const element of clause.namedBindings.elements)
           if (!element.isTypeOnly) names.push(element.name.text);
       const name = packageNameOf(specifier);
-      if (workspaces.has(name) || found.has(name)) continue;
+      if (workspaces.has(name) || found.has(name) || !isPackageName(name)) continue;
       for (const binding of names)
         if (new RegExp(`\\b${binding.replace(/\$/g, "\\$")}\\.prototype\\b`).test(source.text)) {
           found.set(name, binding);
@@ -1724,7 +1747,7 @@ export function instanceofPackages(
       )
         continue;
       const name = packageNameOf(specifier);
-      if (workspaces.has(name)) continue;
+      if (workspaces.has(name) || !isPackageName(name)) continue;
       const clause = statement.importClause;
       if (clause === undefined || clause.phaseModifier === ts.SyntaxKind.TypeKeyword)
         continue;
@@ -2687,14 +2710,27 @@ export async function patchProject(
   const heldModules = new Set([...included.keys(), ...cutModules].map(bare));
   const holds = (path: string) => heldModules.has(bare(path));
   // A slice file only tests import is a test's helper: an edit to it is a
-  // test edit, wherever it is kept and whatever it is named.
+  // test edit, wherever it is kept and whatever it is named. Not the code
+  // under change: what the entry points reach through code that is no test
+  // (an entry module imported only by its own test is the task's code).
+  const entries = record.request.entryPoints;
+  const isEntry = (path: string) => entries.some((entry) => path === entry || path.startsWith(`${entry}/`));
+  const code = new Set([...included.keys()].filter((path) => isEntry(path) && !isTestPath(path)));
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const edge of record.manifest.internalImports)
+      if (code.has(edge.from) && !isTestPath(edge.to) && !code.has(edge.to)) {
+        code.add(edge.to);
+        grew = true;
+      }
+  }
   const importersOf = new Map<string, string[]>();
   for (const edge of [...record.manifest.internalImports, ...record.manifest.cuts.inbound])
     importersOf.set(edge.to, [...(importersOf.get(edge.to) ?? []), edge.from]);
   const testOnly = new Set(
     [...included.keys()].filter((path) => {
       const importers = importersOf.get(path) ?? [];
-      return !isTestPath(path) && importers.length > 0 && importers.every((from) => isTestPath(from));
+      return !isTestPath(path) && !code.has(path) && importers.length > 0 && importers.every((from) => isTestPath(from));
     }),
   );
   const judge = handoffPolicy({
@@ -2799,7 +2835,7 @@ export async function patchProject(
         path === "package-lock.json" ||
         // The folder's .gitignore is the contributor's to edit: it hides
         // build output, never a slice file's or a generated file's edit.
-        (ignored.has(path) && !included.has(path) && !generated.has(path) && (skipped.push(path), true))
+        (ignored.has(path) && !included.has(path) && !generated.has(path) && (emitted(path) || buildOutput(path, present) || (skipped.push(path), true)))
       )
         continue;
       const bytes = await readFile(join(root, path));
@@ -2816,7 +2852,7 @@ export async function patchProject(
       const original = included.get(path);
       if (original === undefined) {
         if (path.startsWith("carveout/")) {
-          if (path !== BASELINE_PATH && path !== LAST_RUN_PATH) skipped.push(path);
+          if (!buildOutput(path, present) && !emitted(path)) skipped.push(path);
           continue;
         }
         if (emitted(path)) continue;
