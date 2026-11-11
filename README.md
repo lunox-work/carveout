@@ -723,6 +723,14 @@ class, `never[]` under the relaxed `noImplicitAny`).
   out that the folder added is taken out. Another file it keeps out (a
   module that gained new reach, say) runs as the folder holds it; the
   command names each.
+- **New packages.** A package the contributor adds to the folder's
+  `package.json` never reaches the repository's: `patch` names it with its
+  pin and the `package.json` it goes into, and holds the files that import
+  it until the owner adds it and passes `--allow`. `check` runs on the
+  cut's `package.json`, so its build fails until then.
+- **Copied folders on refresh.** `apply` and `refresh` never write a
+  `--copy` folder's files: `refresh` names the ones the repository changed,
+  to bring by hand and pass as `--resolved`.
 - **Folders named like build output.** Files under `build/`, `dist/`,
   `vendor/` and `third_party/` are not parsed: a source folder named
   `build` is copied when reached, but its own imports are not followed.
