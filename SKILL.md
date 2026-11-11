@@ -61,8 +61,9 @@ mocks (and the `--copy-pure`, `--live` or `--copy` it names), no tests (the
 work needs tests written into the task), or a step that fails. The folder's
 `AGENTS.md` tells the contributor what comes back; `TASK.md` says when the
 work is accepted. During the job, `refresh` brings the repository's new
-commits into the folder (an overlap is named, never overwritten; after
-merging one by hand, `refresh --resolved <path>`), and a patch after it
+commits into the folder (an overlap is named, never overwritten, exit 7,
+and so is a `--copy` file the folder edited; after merging one by hand,
+`refresh --resolved <path>`), and a patch after it
 carries the work alone; `widen --entry` cuts it wider, the work kept.
 The sections below are each step in full.
 
