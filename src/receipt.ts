@@ -128,6 +128,9 @@ export interface TrustedCut {
   readonly receiptPath: string | null;
 }
 
+/** A Git object id, SHA-1 or SHA-256. */
+const COMMIT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+
 /**
  * The record a command on a folder acts on. `given` names a receipt file
  * (`--receipt`); else the receipt of the cut id the folder's record names
@@ -165,6 +168,12 @@ export function trustedCut(
         throw new Error(
           `${dir} is a public folder whose record keeps the repository's names out; its receipt holds them. Pass --receipt <file> (the cut printed where it wrote it), or work on the machine that cut it.`,
         );
+      // A folder's own record names the commits patch, refresh and status
+      // pass to git: each must be an object id, never an option.
+      const commits = [folder.manifest?.sourceCommitSha ?? null, ...Object.values(folder.bases ?? {})].filter((commit) => commit !== null);
+      const notCommits = commits.filter((commit) => typeof commit !== "string" || !COMMIT_ID.test(commit));
+      if (notCommits.length > 0)
+        throw new Error(`${dir}/carveout.json names a commit that is not an object id (${notCommits.map(String).join(", ")}): cut the folder again.`);
       return { record: folder, folder, receipt: null, receiptPath: null };
     }
     throw new Error(

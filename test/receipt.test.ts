@@ -660,3 +660,16 @@ test("refresh leaves a copied folder's files to the folder, and --resolved moves
   writeFileSync(join(scratch, "copied-refresh.patch"), patch.diff);
   git(moving, ["apply", "--check", join(scratch, "copied-refresh.patch")]);
 });
+
+test("without a receipt, a record whose commits are not object ids is refused before git sees them", async () => {
+  const cut = await cutSlice({ repo, out: join(scratch, "commit-ids"), entryPoints: [ENTRY], budget: { maxFiles: 40, maxDepth: 1 }, offline: true });
+  const path = join(cut.out, "carveout.json");
+  const record = JSON.parse(readFileSync(path, "utf8"));
+  // No receipt to vouch for it: the folder's own record is all there is.
+  rmSync(cut.receipt ?? "", { force: true });
+  assert.doesNotThrow(() => trustedCut(cut.out, undefined, { noReceipt: true }));
+  writeFileSync(path, JSON.stringify({ ...record, bases: { [ENTRY]: "--output=/tmp/carveout-pwned" } }));
+  assert.throws(() => trustedCut(cut.out, undefined, { noReceipt: true }), /not an object id \(--output=\/tmp\/carveout-pwned\)/);
+  writeFileSync(path, JSON.stringify({ ...record, manifest: { ...record.manifest, sourceCommitSha: "HEAD~1" } }));
+  assert.throws(() => trustedCut(cut.out, undefined, { noReceipt: true }), /not an object id \(HEAD~1\)/);
+});
