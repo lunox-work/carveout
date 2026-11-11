@@ -43,6 +43,13 @@
   "bin": {
     "carveout": "dist/src/cli.js"
   },
+  "exports": {
+    "./api": {
+      "types": "./dist/src/api.d.ts",
+      "default": "./dist/src/api.js"
+    },
+    "./package.json": "./package.json"
+  },
   "files": [
     "dist/src/",
     "AGENTS.md",

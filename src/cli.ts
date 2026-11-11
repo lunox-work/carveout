@@ -19,6 +19,7 @@ import {
   cutSlice,
   folderCameBack,
   patchProject,
+  planBlockers,
   planSlice,
   readRecord,
   readRepoConfig,
@@ -468,12 +469,7 @@ async function main(argv: readonly string[]) {
       const importers = [
         ...new Set(plan.walk.cuts.inbound.map((edge) => edge.from)),
       ].sort();
-      const broken = plan.walk.dependencies.filter(
-        (dependency) => dependency.status !== "external",
-      );
-      const readsCut = plan.walk.cuts.outbound.filter(
-        (edge) => edge.relation === "reads",
-      );
+      const blockers = planBlockers(plan);
       process.stdout.write(
         [
           `${plan.walk.included.length} files from ${plan.entryPoints.join(", ")} (budget ${plan.budget.maxFiles} files, depth ${plan.budget.maxDepth}${plan.wholePackage ? ", the whole package" : ""}${plan.followWorkspaces ? ", workspace packages followed" : ""}${plan.copyPure ? ", pure code copied" : ""}; ${plan.graphFiles} script files read)${atLimit ? ", at the file limit: raise --max-files or narrow the entry points" : ""}.`,
@@ -566,32 +562,7 @@ async function main(argv: readonly string[]) {
             ),
             ...plan.externals.environment.map((item) => `$${item.name}`),
           ]),
-          ...(plan.walk.unknownEntryPoints.length +
-            broken.length +
-            readsCut.length +
-            plan.secretFiles.length ===
-          0
-            ? []
-            : [
-                "",
-                "Blockers:",
-                list([
-                  ...plan.walk.unknownEntryPoints.map(
-                    (entry) => `${entry}: names no script file in the repository`,
-                  ),
-                  ...broken.map(
-                    (dependency) =>
-                      `${dependency.file}${dependency.location === null ? "" : `:${dependency.location.slice(1)}`}: ${dependency.status === "dynamic" ? "dynamic import of a computed name" : dependency.status === "path" ? `reads ${dependency.specifier ?? ""} by path, which a slice cannot copy` : `${dependency.specifier ?? ""} resolves to no file`}`,
-                  ),
-                  ...readsCut.map(
-                    (edge) =>
-                      `${edge.from}${edge.location === null ? "" : `:${edge.location.slice(1)}`}: reads ${edge.to} by path, and it is outside the slice`,
-                  ),
-                  ...plan.secretFiles.map(
-                    (path) => `${path}: a credentials file is never copied`,
-                  ),
-                ]),
-              ]),
+          ...(blockers.length === 0 ? [] : ["", "Blockers:", list(blockers)]),
           "",
         ].join("\n"),
       );

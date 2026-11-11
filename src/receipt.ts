@@ -104,6 +104,11 @@ export function readReceipt(path: string): Receipt {
   } catch (error) {
     throw new Error(`${path} is not a receipt: ${error instanceof Error ? error.message : String(error)}`);
   }
+  return asReceipt(parsed, path);
+}
+
+/** A receipt given as data (`api.ts`: kept by the caller, not a file), or throws when it is not one; `label` names it. */
+export function asReceipt(parsed: unknown, label = "The receipt given"): Receipt {
   const receipt = parsed as Partial<Receipt>;
   if (
     receipt === null ||
@@ -114,7 +119,7 @@ export function readReceipt(path: string): Receipt {
     typeof receipt.repo !== "string" ||
     receipt.record === undefined
   )
-    throw new Error(`${path} is not a carveout receipt this version reads.`);
+    throw new Error(`${label} is not a carveout receipt this version reads.`);
   return receipt as Receipt;
 }
 
@@ -135,7 +140,8 @@ const COMMIT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
  * The record a command on a folder acts on. `given` names a receipt file
  * (`--receipt`); else the receipt of the cut id the folder's record names
  * is looked for under `CARVEOUT_HOME`. A receipt of another cut is refused.
- * Without one, the folder's own record is all there is.
+ * Without one, the folder's own record is all there is. `trustedCutWith`
+ * takes the receipt as data instead, and reads no file but the folder's.
  */
 export function trustedCut(
   dir: string,
@@ -181,12 +187,28 @@ export function trustedCut(
     );
   }
   if (!existsSync(path)) throw new Error(`${path}: no such receipt.`);
-  const receipt = readReceipt(path);
+  return vouched(dir, folderOwn, readReceipt(path), path);
+}
+
+/**
+ * The record a command on a folder acts on, by a receipt given as data
+ * (`api.ts`): checked as `trustedCut` checks a receipt file, with no
+ * receipt looked for under `CARVEOUT_HOME`.
+ */
+export function trustedCutWith(dir: string, given: unknown): TrustedCut {
+  const receipt = asReceipt(given);
+  const folderOwn = existsSync(join(resolve(dir), RECORD_PATH)) ? readRecord(dir) : null;
+  return vouched(dir, folderOwn, receipt, null);
+}
+
+/** The folder's record held to its receipt: refused when they are not one cut's. */
+function vouched(dir: string, folderOwn: CarveoutRecord | null, receipt: Receipt, path: string | null): TrustedCut {
+  const named = path ?? "The receipt given";
   const view = folderView(receipt);
   const folder = folderOwn ?? view;
   if (folder.cutId !== undefined && folder.cutId !== receipt.cutId)
     throw new Error(
-      `${path} is the receipt of cut ${receipt.cutId.slice(0, 8)}, and the folder says it is cut ${String(folder.cutId).slice(0, 8)}: name the receipt of this folder's cut.`,
+      `${named} is the receipt of cut ${receipt.cutId.slice(0, 8)}, and the folder says it is cut ${String(folder.cutId).slice(0, 8)}: name the receipt of this folder's cut.`,
     );
   // A folder whose generated files are another cut's is not this receipt's.
   const shape = (record: CarveoutRecord) =>

@@ -456,6 +456,34 @@ hold), 3 nothing to patch, 4 stale (`status`), 5 the edits reach past the
 slice, 6 the hand-off policy kept files out (`patch`, `merge`) or held a
 change (`gate`), 7 the folder's edits and an applied change overlap (`apply`).
 
+## Library: `carveout/api`
+
+For a platform that keeps the receipt itself (`src/api.ts`, types in
+`dist/src/api.d.ts`). The same code paths as the CLI:
+
+```ts
+import { cut, patch, plan } from "carveout/api";
+
+plan({ root, entries, depth?, maxFiles?, withTests?, copyPure? })
+// → included files, cuts, public surface (module, names, importers),
+//   tests carried with their runner and left with the reason, blockers. Writes nothing.
+await cut({ ...walk, out, offline?, public? = false, typesCache?, log? })
+// → { out, record (its carveout.json), ready, blockers, receipt, readiness }
+await patch({ receipt, folder, repo?, allow? })
+// → the `Patch` that `patch --json` prints: diff, refused (exit 6), boundary (exit 5), …
+```
+
+`cut` writes the folder as `carveout cut` does and returns the receipt as
+data, written nowhere; `patch` takes it back as data and judges the folder
+by it alone. `public` is off whatever `carveout.config.json` says. Also
+exported: `integrityOf`, `gainedIntegrity`, `weakenedTest`, and the slice
+and project modules `src/core.ts` gathers. The API starts no container,
+runs nothing from the folder and never reads or writes `CARVEOUT_HOME`. It
+runs Git, read-only, on the repository, and in a scratch repository for a
+patch with edits. A cut that is not `offline` also runs npm, scripts off,
+for package types and the folder's lockfile. `test/api.test.ts` holds it
+to that with `child_process` made to throw.
+
 ## Also: checking a change in the repository
 
 The import graph a slice is cut from also answers two questions about a

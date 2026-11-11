@@ -56,9 +56,12 @@ import {
   type SliceExternals,
   type SliceExposure,
   type SliceTestLeft,
+  type SliceGraph,
+  type TestRunner,
   exposureOf,
   renderTestsMarkdown,
   serviceOf,
+  testRunnerOf,
   testsVerdict,
 } from "./core.js";
 import { analyseSlice } from "./cut.js";
@@ -71,7 +74,7 @@ import {
 import { packageModules, packageUses } from "./extract/fixture.js";
 import { npmPackageTypes, typesPackageOf } from "./extract/package-types.js";
 import { NODE_BUILTINS, isNodeBuiltin } from "./extract/typescript.js";
-import { walkGraph } from "./graph.js";
+import { walkGraph, workspaceImportersOf } from "./graph.js";
 import { ENVIRONMENT_PACKAGES, fileEnvironments, vitestSettings, type VitestSettings } from "./project/vitest-config.js";
 import { packageRegistries } from "./extract/package-registry.js";
 import {
@@ -113,7 +116,9 @@ import {
   receiptPathFor,
   trustedBaseline,
   trustedCut,
+  trustedCutWith,
   writeReceipt,
+  type Receipt,
 } from "./receipt.js";
 
 export const CARVEOUT_VERSION = "0.1.1";
@@ -778,6 +783,87 @@ export interface Plan {
   readonly exposure: SliceExposure;
   /** The exposure against the owner's bound; absent when none is set. */
   readonly exposureBudget?: ExposureBudget;
+  /**
+   * The slice's modules that code outside it imports, with the names it
+   * takes (`"*"`: the whole module) and the importers, a workspace
+   * package's importers by its name included: what a cut's surface check
+   * holds to its types. Read from the import graph; the cut's
+   * `carveout/contract.json` has the compiler's reading.
+   */
+  readonly surface: readonly PlanSurface[];
+  /** The runner each test brought along runs on, by file. */
+  readonly testRunners: Readonly<Record<string, TestRunner>>;
+}
+
+/** One module of a plan's public surface. */
+export interface PlanSurface {
+  readonly module: string;
+  readonly names: readonly string[] | "*";
+  readonly importers: readonly string[];
+}
+
+/** See `Plan.surface`. */
+function surfaceOf(repo: string, walk: ReachResult, graph: SliceGraph, followWorkspaces: boolean): PlanSurface[] {
+  const counted = followWorkspaces ? walk : workspaceImportersOf(repo)(walk, graph);
+  const at = (from: string, specifier: string | null, location: string | null) => `${from}\n${specifier ?? ""}\n${location ?? ""}`;
+  const links = new Map<string, (readonly string[] | null)[]>();
+  for (const link of graph.links)
+    if (link.source.startsWith("file:") && link.relation === "imports") {
+      const key = at(link.source.slice("file:".length), link.specifier, link.location);
+      links.set(key, [...(links.get(key) ?? []), link.names]);
+    }
+  const byModule = new Map<string, { names: Set<string> | "*"; importers: Set<string> }>();
+  for (const edge of counted.cuts.inbound) {
+    if (edge.relation !== "imports") continue;
+    const entry = byModule.get(edge.to) ?? { names: new Set<string>(), importers: new Set<string>() };
+    entry.importers.add(edge.from);
+    const taken = links.get(at(edge.from, edge.specifier, edge.location)) ?? [null];
+    for (const names of taken)
+      if (names === null) entry.names = "*";
+      else if (entry.names !== "*") for (const name of names) entry.names.add(name);
+    byModule.set(edge.to, entry);
+  }
+  return [...byModule]
+    .sort(([a], [b]) => compare(a, b))
+    .map(([module, { names, importers }]) => ({
+      module,
+      names: names === "*" ? "*" : [...names].sort(compare),
+      importers: [...importers].sort(compare),
+    }));
+}
+
+/** The runner of each test the walk brought, as it chose it: the runner a test imports, else Vitest's globals. */
+function testRunnersOf(walk: ReachResult, graph: SliceGraph): Record<string, TestRunner> {
+  const specifiers = new Map<string, string[]>();
+  for (const link of graph.links)
+    if (link.source.startsWith("file:") && link.target.startsWith("dependency:") && link.specifier !== null) {
+      const from = link.source.slice("file:".length);
+      specifiers.set(from, [...(specifiers.get(from) ?? []), link.specifier]);
+    }
+  const globals = new Set(walk.globalsTests);
+  const runners: Record<string, TestRunner> = {};
+  for (const file of walk.tests) {
+    const runner = globals.has(file) ? "vitest-globals" : testRunnerOf(specifiers.get(file) ?? []);
+    if (runner !== null) runners[file] = runner;
+  }
+  return runners;
+}
+
+/** What stops a plan's cut, one line each: entry points that name nothing, imports no slice can carry, credentials files. */
+export function planBlockers(plan: Plan): string[] {
+  const broken = plan.walk.dependencies.filter((dependency) => dependency.status !== "external");
+  const readsCut = plan.walk.cuts.outbound.filter((edge) => edge.relation === "reads");
+  return [
+    ...plan.walk.unknownEntryPoints.map((entry) => `${entry}: names no script file in the repository`),
+    ...broken.map(
+      (dependency) =>
+        `${dependency.file}${dependency.location === null ? "" : `:${dependency.location.slice(1)}`}: ${dependency.status === "dynamic" ? "dynamic import of a computed name" : dependency.status === "path" ? `reads ${dependency.specifier ?? ""} by path, which a slice cannot copy` : `${dependency.specifier ?? ""} resolves to no file`}`,
+    ),
+    ...readsCut.map(
+      (edge) => `${edge.from}${edge.location === null ? "" : `:${edge.location.slice(1)}`}: reads ${edge.to} by path, and it is outside the slice`,
+    ),
+    ...plan.secretFiles.map((path) => `${path}: a credentials file is never copied`),
+  ];
 }
 
 /** The walk's options for a settled request. */
@@ -869,6 +955,8 @@ export function planSlice(request: SliceRequest): Plan {
     private: settled.private,
     exposure,
     ...(budgetOf === null ? {} : { exposureBudget: budgetOf }),
+    surface: surfaceOf(repo, walk, built.graph, settled.followWorkspaces),
+    testRunners: testRunnersOf(walk, built.graph),
   };
 }
 
@@ -914,6 +1002,13 @@ export interface CutRequest extends SliceRequest {
    * when there is a receipt to hold them.
    */
   readonly receipt?: string | false;
+  /**
+   * Keep the receipt as data only (`CutResult.receiptData`), written to no
+   * file: the library's cut (`api.ts`), whose caller stores it.
+   */
+  readonly receiptInMemory?: boolean;
+  /** Where fetched package types are kept; by default `CARVEOUT_HOME/types`. */
+  readonly typesCache?: string;
   /**
    * More names a public folder must not carry (`--name`), joined with the
    * configuration's. See `pseudonyms/folder.ts`.
@@ -1049,8 +1144,10 @@ export interface CutResult {
   readonly contract: BoundaryContract;
   /** What would make the folder's tests run on real code, public cut or not. */
   readonly readiness: Readiness;
-  /** The receipt the cut wrote, or null when asked for none. */
+  /** The receipt the cut wrote, or null when asked for none or kept in memory. */
   readonly receipt: string | null;
+  /** The receipt as data, written or not; null when asked for none. */
+  readonly receiptData: Receipt | null;
   /**
    * A public folder's pseudonyms, as the receipt keeps them (the table and
    * the kept package names); null for a cut in the repository's names.
@@ -1456,7 +1553,7 @@ export async function computeCut(
       ? {}
       : {
           packageTypes: npmPackageTypes({
-            root: join(carveoutHome(), "types"),
+            root: request.typesCache ?? join(carveoutHome(), "types"),
           }),
         }),
   });
@@ -2228,7 +2325,9 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
     );
   const fresh = !existsSync(out);
   const cutId = newCutId();
-  const receipt = request.receipt === false ? null : resolve(request.receipt ?? receiptPathFor(cutId));
+  // Whether the cut keeps a receipt, and the file it goes to (none in memory).
+  const keepsReceipt = request.receipt !== false;
+  const receipt = !keepsReceipt || request.receiptInMemory === true ? null : resolve(request.receipt ?? receiptPathFor(cutId));
   // The receipt holds what the folder must not: never inside it, nor in
   // the checkout, where a commit could carry it.
   if (receipt !== null && [out, repo].some((dir) => receipt === dir || receipt.startsWith(`${dir}${sep}`)))
@@ -2278,7 +2377,7 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
       ...files.map((file) => ({ path: file.path, text: file.text })),
       ...textExtras.map((path) => ({ path, text: extraText.get(path) ?? "" })),
     ];
-    if (receipt !== null && request.pseudonyms !== false && vocabulary.length > 0) {
+    if (keepsReceipt && request.pseudonyms !== false && vocabulary.length > 0) {
       const sliceFiles = new Set([...computed.manifest.included.map((file) => file.path), ...extras]);
       const result = pseudonymize({
         files: texts,
@@ -2485,11 +2584,12 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
   // the paths and hashes the folder has. A leak's blocker there does not
   // say the name it is about.
   const folderRecord: CarveoutRecord =
-    receipt !== null && publicCut ? folderRecordFor(record, table ?? undefined, out) : record;
+    keepsReceipt && publicCut ? folderRecordFor(record, table ?? undefined, out) : record;
   // The maintainer's copy, outside the folder: what a folder that comes
   // back is judged by, with the pseudonyms' table.
-  if (receipt !== null)
-    writeReceipt(receipt, {
+  const receiptData: Receipt | null = !keepsReceipt
+    ? null
+    : {
       schemaVersion: RECEIPT_SCHEMA_VERSION,
       cutId,
       createdAt: new Date().toISOString(),
@@ -2503,9 +2603,10 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
       generatedText,
       ...(Object.keys(testText).length === 0 ? {} : { testText }),
       ...(request.unseen === undefined || request.unseen.length === 0 ? {} : { unseen: [...request.unseen] }),
-    });
+    };
+  if (receipt !== null && receiptData !== null) writeReceipt(receipt, receiptData);
   await writeFile(join(out, RECORD_PATH), `${JSON.stringify(folderRecord, null, 2)}\n`, "utf8");
-  return { out, record, contract, readiness, receipt, pseudonyms: table };
+  return { out, record, contract, readiness, receipt, receiptData, pseudonyms: table };
 }
 
 export function readRecord(dir: string): CarveoutRecord {
@@ -3409,6 +3510,11 @@ export interface PatchOptions {
   readonly allow?: readonly string[];
   /** The cut's receipt file; else the one `CARVEOUT_HOME` keeps for its id. */
   readonly receipt?: string;
+  /**
+   * The cut's receipt as data (`CutResult.receiptData`), in place of a
+   * file: no receipt is looked for under `CARVEOUT_HOME` (`api.ts`).
+   */
+  readonly receiptData?: Receipt;
   /** No receipt: judge the folder by its own record, checked against the repository. */
   readonly noReceipt?: boolean;
   /** Internal: the folder is a copy already put back in the repository's names. */
@@ -3569,7 +3675,10 @@ export async function patchProject(
   const root = resolve(dir);
   // The receipt's record when there is one: the folder's own came back
   // with the folder, and is checked against the repository instead.
-  const trusted = trustedCut(root, options.receipt, options.noReceipt === true ? { noReceipt: true } : {});
+  const trusted =
+    options.receiptData !== undefined
+      ? trustedCutWith(root, options.receiptData)
+      : trustedCut(root, options.receipt, options.noReceipt === true ? { noReceipt: true } : {});
   // A folder in pseudonyms is renamed back first; the patch is made from
   // that copy, in the repository's names.
   const table = trusted.receipt?.pseudonyms;
