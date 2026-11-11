@@ -2865,20 +2865,13 @@ export async function patchProject(
   const heldModules = new Set([...included.keys(), ...cutModules].map(bare));
   const holds = (path: string) => heldModules.has(bare(path));
   // A slice file only tests import is a test's helper: an edit to it is a
-  // test edit, wherever it is kept and whatever it is named. Not the code
-  // under change: what the entry points reach through code that is no test
-  // (an entry module imported only by its own test is the task's code).
-  const entries = record.request.entryPoints;
-  const isEntry = (path: string) => entries.some((entry) => path === entry || path.startsWith(`${entry}/`));
-  const code = new Set([...included.keys()].filter((path) => isEntry(path) && !isTestPath(path)));
-  for (let grew = true; grew; ) {
-    grew = false;
-    for (const edge of record.manifest.internalImports)
-      if (code.has(edge.from) && !isTestPath(edge.to) && !code.has(edge.to)) {
-        code.add(edge.to);
-        grew = true;
-      }
-  }
+  // test edit, wherever it is kept and whatever it is named. Not an entry
+  // file the cut was asked for by name, which is the task's code even when
+  // only its own test imports it. A folder given as an entry names no file:
+  // a file under it that only tests import is a helper like any other
+  // (else every helper there escapes the rule). A file code imports has an
+  // importer that is no test, so it is no helper either.
+  const code = new Set(record.request.entryPoints.filter((entry) => included.has(entry) && !isTestPath(entry)));
   const importersOf = new Map<string, string[]>();
   for (const edge of [...record.manifest.internalImports, ...record.manifest.cuts.inbound])
     importersOf.set(edge.to, [...(importersOf.get(edge.to) ?? []), edge.from]);

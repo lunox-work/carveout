@@ -459,3 +459,48 @@ test("an agent is told where new tests go and what the coverage gate measures, w
   const task = renderTask({ task: "Do it.", testsInFolder: [], surface: 0, testsAt: "packages/core/test/*.test.ts" });
   assert.match(task, /New tests are where the repository's test script runs them: `packages\/core\/test\/\*\.test\.ts`/);
 });
+
+test("a helper only tests import is held under a folder entry as under a file entry, and an entry file only its test imports is the task's code", async () => {
+  const helperRepo = join(scratch, "helper-repo");
+  cpSync(FIXTURE, helperRepo, { recursive: true });
+  write(join(helperRepo, "apps/shop/src/cart-cases.ts"), "export const CASES = [\n  { lines: [], expected: 0 },\n  { lines: [{ cents: 100, quantity: 2 }], expected: 200 },\n];\n");
+  write(
+    join(helperRepo, "apps/shop/src/cart.test.ts"),
+    'import assert from "node:assert/strict";\nimport { test } from "node:test";\nimport { subtotal } from "./cart";\nimport { CASES } from "./cart-cases";\n\ntest("subtotal", () => {\n  for (const c of CASES) assert.equal(subtotal(c.lines), c.expected);\n});\n',
+  );
+  write(join(helperRepo, "apps/shop/src/rounding.ts"), "export const round = (cents: number): number => Math.round(cents);\n");
+  write(
+    join(helperRepo, "apps/shop/src/rounding.test.ts"),
+    'import assert from "node:assert/strict";\nimport { test } from "node:test";\nimport { round } from "./rounding";\n\ntest("round", () => assert.equal(round(1.4), 1));\n',
+  );
+  git(helperRepo, ["init", "-q"]);
+  git(helperRepo, ["add", "-A"]);
+  git(helperRepo, ["commit", "-q", "-m", "fixture"]);
+  const cutOf = async (name: string, entryPoints: string[]) =>
+    (await cutSlice({ repo: helperRepo, out: join(scratch, name), entryPoints, budget: { maxFiles: 40, maxDepth: 1 }, offline: true, tests: true })).out;
+  const dropCase = (out: string) => {
+    const path = join(out, "apps/shop/src/cart-cases.ts");
+    writeFileSync(path, readFileSync(path, "utf8").replace("  { lines: [{ cents: 100, quantity: 2 }], expected: 200 },\n", ""));
+  };
+  for (const [name, entries] of [
+    ["helper-folder", ["apps/shop/src"]],
+    ["helper-file", [ENTRY]],
+  ] as const) {
+    const out = await cutOf(name, [...entries]);
+    assert.ok(existsSync(join(out, "apps/shop/src/cart-cases.ts")), name);
+    dropCase(out);
+    const patch = await patchProject(out);
+    assert.match(
+      patch.refused.find((refusal) => refusal.path === "apps/shop/src/cart-cases.ts")?.reason ?? "",
+      /test's helper/,
+      `${name}: ${JSON.stringify(patch.refused)}`,
+    );
+    assert.doesNotMatch(patch.diff, /cart-cases/);
+  }
+  const own = await cutOf("helper-own", ["apps/shop/src/rounding.ts"]);
+  const rounding = join(own, "apps/shop/src/rounding.ts");
+  writeFileSync(rounding, readFileSync(rounding, "utf8").replace("Math.round(cents)", "Math.round(cents + 0)"));
+  const patch = await patchProject(own);
+  assert.deepEqual(patch.refused, []);
+  assert.deepEqual(patch.changed, ["apps/shop/src/rounding.ts"]);
+});
