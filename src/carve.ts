@@ -1777,12 +1777,28 @@ export async function computeCut(
   // The formatter the repository's code is held to, when it is Prettier
   // with settings a file states (not a script, which may load plugins).
   const prettierVersion = lockedVersion(repo, "prettier");
+  // Only its formatting options, as JSON: plugins and overrides name other
+  // parts of the repository, and a config that is no JSON is left behind.
+  const PRETTIER_OPTIONS = new Set([
+    "printWidth", "tabWidth", "useTabs", "semi", "singleQuote", "quoteProps", "jsxSingleQuote", "trailingComma",
+    "bracketSpacing", "bracketSameLine", "objectWrap", "arrowParens", "endOfLine", "proseWrap",
+    "htmlWhitespaceSensitivity", "singleAttributePerLine", "experimentalTernaries", "experimentalOperatorPosition",
+  ]);
   const prettierConfig = (() => {
     if (prettierVersion === null) return null;
     for (const dir of [...new Set([packageDir ?? "", ""])])
-      for (const name of [".prettierrc", ".prettierrc.json", ".prettierrc.yaml", ".prettierrc.yml", ".prettierrc.json5"]) {
+      for (const name of [".prettierrc", ".prettierrc.json"]) {
         const at = join(repo, dir, name);
-        if (existsSync(at) && statSync(at).isFile()) return { name, text: readFileSync(at, "utf8") };
+        if (!existsSync(at) || !statSync(at).isFile()) continue;
+        try {
+          const parsed = JSON.parse(readFileSync(at, "utf8")) as Record<string, unknown>;
+          const kept = Object.fromEntries(
+            Object.entries(parsed).filter(([key, value]) => PRETTIER_OPTIONS.has(key) && ["string", "number", "boolean"].includes(typeof value)),
+          );
+          return { name: ".prettierrc.json", text: `${JSON.stringify(kept, null, 2)}\n` };
+        } catch {
+          return null;
+        }
       }
     return null;
   })();
@@ -2141,6 +2157,9 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
       [...new Set(computed.manifest.included.map((file) => packageOf(file.path)))],
       [...(config.names ?? []), ...(request.names ?? [])],
     );
+    for (const name of [...(config.names ?? []), ...(request.names ?? [])])
+      if (workspaceVocabulary([name]).length === 0)
+        log(`--name ${name}: too short to rename safely (fewer than four letters), so not renamed: the folder may hold it.`);
     // The owner's other repositories, by what the folder's text writes
     // after the owner's name.
     const owned = ownedNames(
