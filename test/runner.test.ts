@@ -376,6 +376,8 @@ test("the include check reads globs inside braces and extglobs as globs, and [!x
   assert.ok(!negated.test("src/_a.test.ts"));
   // A negated class stays within one folder, as a glob's characters do.
   assert.ok(!globRegExp("src/[!_]a.test.ts").test("src//a.test.ts"));
+  // One it cannot read holds nothing back, and the run goes on.
+  assert.ok(globRegExp("src/[\\]x.ts").test("anything"));
   const ext = globRegExp("**/*.test.?(c|m)[jt]s?(x)");
   assert.ok(ext.test("a/b.test.mts"));
   assert.ok(ext.test("a/b.test.tsx"));

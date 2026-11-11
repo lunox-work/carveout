@@ -1475,7 +1475,14 @@ export function testRunnerScript(
   if (/^\{.*\}$/.test(part)) return "(?:" + part.slice(1, -1).split(",").map(globSource).join("|") + ")";
   return escape(part);
 }).join("");
-const globRegExp = (glob) => new RegExp("^" + globSource(glob) + "$");`,
+// A pattern it cannot read (an unclosed class, say) holds nothing back rather than stopping the run.
+const globRegExp = (glob) => {
+  try {
+    return new RegExp("^" + globSource(glob) + "$");
+  } catch {
+    return /^/;
+  }
+};`,
           "const included = INCLUDE.map(globRegExp);",
           "const cutCopied = new Set(JSON.parse(readFileSync(\"carveout.json\", \"utf8\")).manifest.included.map((file) => file.path));",
           "const outside = vitest.filter((path) => !cutCopied.has(path) && !included.some((pattern) => pattern.test(path)));",
