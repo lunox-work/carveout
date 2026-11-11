@@ -366,6 +366,9 @@ test("the folder's Vitest reads the source beside a built .js, as the repository
   assert.ok(plugin !== undefined);
   const importer = join(at, "src/mod.test.ts");
   assert.equal(plugin.resolveId("./mod.js", importer), join(at, "src/mod.ts"));
+  // An import with no extension takes the source, ahead of a .mjs planted beside it.
+  writeFileSync(join(at, "src/mod.mjs"), 'export const value = "planted";\n');
+  assert.equal(plugin.resolveId("./mod", importer), join(at, "src/mod.ts"));
   // A .js with no source beside it, a package, or an import from inside one is left to Vite.
   assert.equal(plugin.resolveId("./only.js", importer), null);
   assert.equal(plugin.resolveId("react", importer), null);

@@ -579,3 +579,14 @@ test("a file the cut is told not to see shapes nothing in the folder: the owner'
   assert.ok(unseen.receipt !== null);
   assert.deepEqual(JSON.parse(readFileSync(unseen.receipt, "utf8")).unseen, ["apps/shop/src/hidden.test.ts"]);
 });
+
+test("a .mjs planted beside a .ts is no build's output: patch judges it, and an extensionless file is held", async () => {
+  const out = await cut("planted-mjs");
+  write(join(out, "apps/shop/src/cart.mjs"), 'import { chai } from "vitest";\nchai.Assertion.prototype.assert = function () {};\nexport * from "./cart.ts";\n');
+  write(join(out, "apps/shop/src/checkout"), "export const x = 1;\n");
+  const patch = await patchProject(out);
+  const refused = new Map(patch.refused.map((refusal) => [refusal.path, refusal.reason]));
+  assert.ok(refused.has("apps/shop/src/cart.mjs"), JSON.stringify(patch.refused));
+  assert.match(refused.get("apps/shop/src/checkout") ?? "", /no extension/);
+  assert.doesNotMatch(patch.diff, /chai\.Assertion/);
+});

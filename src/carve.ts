@@ -2529,8 +2529,29 @@ export function countsOf(tap: string): TestCounts | undefined {
 function buildOutput(path: string, present: ReadonlySet<string>): boolean {
   if (path === BASELINE_PATH || path === LAST_RUN_PATH || path === COUNTS_PATH || path === VITEST_REPORT_PATH || path.endsWith(".tsbuildinfo"))
     return true;
-  const stem = path.replace(/\.map$/, "").replace(/\.d\.[cm]?ts$/, ".js").replace(/\.[cm]?js$/, "");
-  return stem !== path && ["ts", "tsx", "mts", "cts"].some((ext) => present.has(`${stem}.${ext}`));
+  return tscOutput(path.replace(/\.map$/, ""), present);
+}
+
+/**
+ * Whether tsc writes `path` from a source beside it: a `.js` (or `.d.ts`)
+ * from a `.ts` or `.tsx`, a `.mjs` from a `.mts`, a `.cjs` from a `.cts`.
+ * Nothing else: a `.mjs` beside a `.ts` is no build's, and is judged.
+ */
+function tscOutput(path: string, present: ReadonlySet<string>): boolean {
+  const pairs: [RegExp, readonly string[]][] = [
+    [/\.d\.ts$/, [".ts", ".tsx"]],
+    [/\.d\.mts$/, [".mts"]],
+    [/\.d\.cts$/, [".cts"]],
+    [/\.js$/, [".ts", ".tsx"]],
+    [/\.mjs$/, [".mts"]],
+    [/\.cjs$/, [".cts"]],
+  ];
+  for (const [suffix, sources] of pairs)
+    if (suffix.test(path)) {
+      const stem = path.replace(suffix, "");
+      return sources.some((ext) => present.has(`${stem}${ext}`));
+    }
+  return false;
 }
 
 /**
@@ -2711,6 +2732,15 @@ export async function checkProject(
     // A tool's folder is no part of a change, and a patch never judges what
     // it holds: none of it runs (a test there could write the baseline).
     for (const tool of toolDirsIn(work, record)) await rm(join(work, tool), { recursive: true, force: true });
+    // Nor what the build writes from a source: the build writes it anew,
+    // and patch never shows the folder's copy of it.
+    {
+      const tree = listTree(work);
+      const present = new Set(tree);
+      const generatedPaths = new Set(record.generated.map((file) => file.path));
+      for (const path of tree)
+        if (!generatedPaths.has(path) && tscOutput(path.replace(/\.map$/, ""), present)) await rm(join(work, path), { force: true });
+    }
   }
   const steps: CheckStep[] = [];
   // The generated files the folder changed, put back from the receipt; the
@@ -3351,11 +3381,7 @@ export async function patchProject(
     extensionStyle: extensionStyles(edges, packageOf),
   };
   // What `npm run build` wrote for a source the folder's edits added.
-  const emitted = (path: string) =>
-    /\.[cm]?js$/.test(path) &&
-    ["ts", "tsx", "mts", "cts"].some((ext) =>
-      present.has(path.replace(/\.[cm]?js$/, `.${ext}`)),
-    );
+  const emitted = (path: string) => /\.[cm]?js$/.test(path) && tscOutput(path, present);
   /** Imports a restored text still makes of the folder's harness. */
   const harnessImport = (path: string, text: string) =>
     [...specifiersOf(text, path)].some(

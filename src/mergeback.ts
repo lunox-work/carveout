@@ -811,7 +811,11 @@ export async function refreshProject(
       continue;
     }
     const folderPath = table === undefined ? path : (exactToFolder(table, path, "")?.path ?? toFolder(table, path, "").path);
-    written.set(path, { folderPath, sha256: sha256(bytes), folderSha256: sha256(bytes) });
+    // The folder's record holds hashes in the folder's names, never the
+    // repository's (which would confirm a guess at a pseudonym).
+    const text = bytes.toString("utf8");
+    const folderText = table === undefined ? text : (exactToFolder(table, path, text)?.text ?? toFolder(table, path, text).text);
+    written.set(path, { folderPath, sha256: sha256(bytes), folderSha256: sha256(folderText) });
   }
   // The repository holds these commits: the folder's base moves to them, so
   // a patch of it carries the contributor's work alone, not the commits it

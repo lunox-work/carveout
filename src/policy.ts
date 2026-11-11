@@ -327,6 +327,10 @@ export function handoffPolicy(options: {
       return "adds a module mock (__mocks__) that the test runner picks up for every test: review it and pass --allow to carry it";
     if (change !== "deleted" && UNREAD_CODE.test(path))
       return "code in a language the policy does not read: review it and pass --allow to carry it";
+    // A file with no extension, which Node loads as code by its bare name
+    // (`./checkout`) and the policy cannot read as a script.
+    if (change === "added" && !/\.[^/.]+$/.test(path.split("/").pop() ?? path))
+      return "a file with no extension, which Node can load as code by its bare name: review it and pass --allow to carry it";
     if (change === "deleted" && isTestPath(path)) return `deletes ${noun}`;
     if (change === "deleted" && support)
       return "deletes a test's helper or fixture: review it and pass --allow to carry it";

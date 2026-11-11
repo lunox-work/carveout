@@ -37,7 +37,7 @@ import { impactOf, runImpactTests } from "./impact.js";
 import { applyPatch, mergeProject, refreshProject, widenProject } from "./mergeback.js";
 import { statusProject } from "./status.js";
 import { hasAdvice, renderReadiness } from "./readiness.js";
-import { trustedCut } from "./receipt.js";
+import { trustedCut, writeReceipt } from "./receipt.js";
 
 const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript repository.
 
@@ -809,6 +809,15 @@ async function main(argv: readonly string[]) {
       if (dir === undefined) fail("check needs the folder a cut wrote.");
       readRecord(dir);
       const accept = acceptOption(values.accept, values.repo);
+      // Every later cut of the folder (widen, apply, refresh) reads them as
+      // absent, as handoff --accept records them.
+      if (accept.length > 0) {
+        const held = trustedCut(dir, values.receipt, { optional: true });
+        if (held.receipt !== null && held.receiptPath !== null) {
+          const unseen = [...new Set([...(held.receipt.unseen ?? []), ...accept.map((test) => test.path)])].sort();
+          if (unseen.length !== (held.receipt.unseen ?? []).length) writeReceipt(held.receiptPath, { ...held.receipt, unseen });
+        }
+      }
       // What patch keeps out never reaches the acceptance run (a weakened
       // helper the acceptance tests import, say): read first, without
       // running anything of the folder's.
