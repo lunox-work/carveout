@@ -307,6 +307,15 @@ async function main(argv: readonly string[]) {
       entry: { type: "string", multiple: true },
     },
   });
+  // With negated flags read, `--no-receipt` comes back as `receipt: false`
+  // rather than as its own flag: the same thing, said one way.
+  {
+    const parsed = values as Record<string, unknown>;
+    if (parsed["receipt"] === false) {
+      delete parsed["receipt"];
+      parsed["no-receipt"] = true;
+    }
+  }
   const budget = {
     maxFiles: integer(
       values["max-files"],

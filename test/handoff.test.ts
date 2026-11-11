@@ -544,3 +544,16 @@ test("an agent is told the repository's formatter, at its locked version, and th
   assert.match(plain, /at its defaults/);
   assert.doesNotMatch(plain, /lint script/);
 });
+
+test("--no-receipt reaches every folder command as no receipt, with negated flags read", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const CLI = resolve(import.meta.dirname, "../src/cli.js");
+  const out = await cut("no-receipt-cli", { receipt: false });
+  const home = join(scratch, "no-receipt-home");
+  const env = { ...process.env, CARVEOUT_HOME: home };
+  for (const command of ["patch", "status"]) {
+    const result = spawnSync(process.execPath, [CLI, command, out, "--no-receipt"], { cwd: repo, encoding: "utf8", env });
+    assert.doesNotMatch(result.stderr + result.stdout, /must be of type string/, `${command}: ${result.stderr}`);
+    assert.equal(result.status, command === "patch" ? 3 : 0, `${command}: ${result.stdout}${result.stderr}`);
+  }
+});
