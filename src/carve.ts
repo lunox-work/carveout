@@ -21,6 +21,7 @@ import {
   BASELINE_PATH,
   HARNESS_DIR,
   LAST_RUN_PATH,
+  VITEST_REPORT_PATH,
   SLICE_BUDGET_DEFAULTS,
   coverageGateOf,
   declarationPath,
@@ -2111,8 +2112,12 @@ export interface CheckStep {
   readonly output: string;
   /** Tests that failed in an unedited folder, recorded as its baseline. */
   readonly baseline?: readonly string[];
-  /** The `npm test` step's node:test counts, read from its TAP. */
-  readonly counts?: { readonly tests: number; readonly pass: number; readonly fail: number };
+  /**
+   * The `npm test` step's counts of the folder's tests, read from its TAP:
+   * node:test's and Vitest's together, then each runner's, with carveout's
+   * own checks of the public surface (exports and types kept) apart.
+   */
+  readonly counts?: TestCounts;
   /**
    * Tests the folder's `carveout/baseline.json` names and the receipt's
    * does not: added since the check that recorded it, by whoever had the
@@ -2129,13 +2134,51 @@ export interface CheckStep {
   readonly receiptRead?: boolean;
 }
 
+/** How many of a folder's tests pass, as `npm test` counted them. */
+export interface TestCounts {
+  readonly tests: number;
+  readonly pass: number;
+  readonly fail: number;
+  /** Each runner's: `node:test`, `vitest`. */
+  readonly runners?: Readonly<Record<string, { readonly tests: number; readonly pass: number; readonly fail: number }>>;
+  /** carveout's own checks that the public surface keeps its exports and their types. */
+  readonly surface?: { readonly checks: number; readonly fail: number };
+}
+
+/**
+ * The counts in a run's TAP: the runner's `# carveout` lines, or, from a
+ * folder cut before they were written, node:test's own summary (which
+ * counts the interface test's checks among the tests).
+ */
+export function countsOf(tap: string): TestCounts | undefined {
+  const runners: Record<string, { tests: number; pass: number; fail: number }> = {};
+  for (const [, runner = "", tests, pass, fail] of tap.matchAll(/^# carveout (\S+) tests (\d+) pass (\d+) fail (\d+)$/gm)) {
+    const sum = runners[runner] ?? { tests: 0, pass: 0, fail: 0 };
+    runners[runner] = { tests: sum.tests + Number(tests), pass: sum.pass + Number(pass), fail: sum.fail + Number(fail) };
+  }
+  let surface: { checks: number; fail: number } | undefined;
+  for (const [, checks, fail] of tap.matchAll(/^# carveout surface checks (\d+) fail (\d+)$/gm))
+    surface = { checks: (surface?.checks ?? 0) + Number(checks), fail: (surface?.fail ?? 0) + Number(fail) };
+  const each = Object.values(runners);
+  if (each.length > 0 || surface !== undefined)
+    return {
+      tests: each.reduce((sum, { tests }) => sum + tests, 0),
+      pass: each.reduce((sum, { pass }) => sum + pass, 0),
+      fail: each.reduce((sum, { fail }) => sum + fail, 0),
+      runners,
+      ...(surface === undefined ? {} : { surface }),
+    };
+  const count = (key: string) => Number(new RegExp(`^# ${key} (\\d+)$`, "m").exec(tap)?.[1] ?? Number.NaN);
+  return Number.isNaN(count("tests")) ? undefined : { tests: count("tests"), pass: count("pass"), fail: count("fail") };
+}
+
 /**
  * Whether a path is what the folder's build or test run writes beside a
  * source (`cart.js` and `cart.js.map` beside `cart.ts`), or the run's own
  * records: neither is an edit.
  */
 function buildOutput(path: string, present: ReadonlySet<string>): boolean {
-  if (path === BASELINE_PATH || path === LAST_RUN_PATH || path.endsWith(".tsbuildinfo")) return true;
+  if (path === BASELINE_PATH || path === LAST_RUN_PATH || path === VITEST_REPORT_PATH || path.endsWith(".tsbuildinfo")) return true;
   const stem = path.replace(/\.map$/, "").replace(/\.d\.[cm]?ts$/, ".js").replace(/\.[cm]?js$/, "");
   return stem !== path && ["ts", "tsx", "mts", "cts"].some((ext) => present.has(`${stem}.${ext}`));
 }
@@ -2280,7 +2323,12 @@ export async function checkProject(
   if (texts !== undefined) {
     const tree = listTree(work);
     const extra = tree.filter(
-      (path) => path.startsWith(`${HARNESS_DIR}/`) && texts[path] === undefined && path !== BASELINE_PATH && path !== LAST_RUN_PATH,
+      (path) =>
+        path.startsWith(`${HARNESS_DIR}/`) &&
+        texts[path] === undefined &&
+        path !== BASELINE_PATH &&
+        path !== LAST_RUN_PATH &&
+        path !== VITEST_REPORT_PATH,
     );
     const changed = Object.entries(texts).filter(([path, text]) => {
       const at = join(work, path);
@@ -2325,6 +2373,7 @@ export async function checkProject(
     ["npm", "test"],
   ];
   await rm(join(work, LAST_RUN_PATH), { force: true });
+  await rm(join(work, VITEST_REPORT_PATH), { force: true });
   // The baseline the receipt holds is the one `npm test` reads; a folder's
   // own that the receipt does not know is not read at all.
   const folderBaseline = existsSync(join(source, BASELINE_PATH))
@@ -2412,7 +2461,7 @@ export async function checkProject(
   // how many pass before any edit.
   const tapPath = join(work, LAST_RUN_PATH);
   const tap = existsSync(tapPath) ? readFileSync(tapPath, "utf8") : "";
-  const count = (key: string) => Number(new RegExp(`^# ${key} (\\d+)$`, "m").exec(tap)?.[1] ?? Number.NaN);
+  const counts = countsOf(tap);
   const testStep = steps.findIndex((step) => step.command === "npm test");
   const edited = record.copied === undefined ? undefined : folderEdited(source, record);
   if (testStep !== -1) {
@@ -2420,9 +2469,7 @@ export async function checkProject(
     steps[testStep] = {
       ...step,
       ...(edited === undefined ? {} : { edited }),
-      ...(Number.isNaN(count("tests"))
-        ? {}
-        : { counts: { tests: count("tests"), pass: count("pass"), fail: count("fail") } }),
+      ...(counts === undefined ? {} : { counts }),
       ...(baselineEdited === undefined ? {} : { baselineEdited }),
       baselineInEffect: recorded ?? inEffect,
       ...(restored.length === 0 ? {} : { restored }),

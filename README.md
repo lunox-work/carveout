@@ -327,7 +327,11 @@ billing-slice/
   environment's package, `jsdom` or `happy-dom`, installed as the
   repository locks it), its `setupFiles` (brought along as entry points),
   `testTimeout` and `globals`, into the folder's `vitest.config.mjs`. A
-  component's tests run in the folder as in the repository.
+  component's tests run in the folder as in the repository. Vitest's
+  results join node:test's: a Vitest test that fails on the mocks before
+  any edit goes into the baseline and is not counted, and the counts `check`
+  prints are both runners' tests, with the interface test's and the type
+  checks of the public surface counted apart.
 - **The public surface.** Every export code outside the slice imports
   must stay exported (the interface test) and keep its type: `npm test`
   type-checks `carveout/surface/check.ts`, which holds each such value to

@@ -474,8 +474,9 @@ test("npm test does not count the tests that failed when the folder was checked"
   writeFileSync(join(out, "carveout/baseline.json"), JSON.stringify({ failing: ["a total is formatted"] }));
   const counted = run();
   assert.equal(counted.status, 0, counted.stdout);
-  // In short: the counts and the baseline's number, not its failures.
-  assert.match(counted.stdout, /^2 of 3 tests pass\.\n/);
+  // In short: the baseline's number, not its failures, then the counts:
+  // the folder's tests apart from the interface test's check.
+  assert.match(counted.stdout, /\nnpm test: 1 of 2 test\(s\) pass \(node:test\); 1 failure\(s\) as before any edit, on the mocks, not counted; 1 of 1 check\(s\) of the public surface hold\.\n$/);
   assert.match(counted.stdout, /1 test\(s\) fail on the mocks as they did when the folder was checked/);
   assert.doesNotMatch(counted.stdout, /not ok/);
   writeFileSync(

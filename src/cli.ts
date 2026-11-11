@@ -22,6 +22,7 @@ import {
   readRepoConfig,
   type CarveoutRecord,
   type CheckStep,
+  type TestCounts,
 } from "./carve.js";
 import {
   SLICE_BUDGET_DEFAULTS,
@@ -152,6 +153,33 @@ widened. --copy <dir> copies a folder the code reads by name (migrations).
 A carveout.config.json at the repository's root sets the same for every cut.
 `;
 
+/**
+ * A run's counts as a sentence: the folder's tests (node:test's and
+ * Vitest's), then carveout's own checks of the public surface, which are
+ * no test of the work's.
+ */
+function countsSentence(counts: TestCounts | undefined, edited: boolean): string {
+  if (counts === undefined) return "";
+  // A runner with no test of the folder's (node:test's only file the interface test) is left out.
+  const runners = Object.entries(counts.runners ?? {}).filter(([, each]) => each.tests > 0);
+  const label = (runner: string) => (runner === "vitest" ? "Vitest" : runner);
+  const by =
+    runners.length > 1
+      ? ` (${runners.map(([runner, each]) => `${label(runner)} ${each.pass} of ${each.tests}`).join(", ")})`
+      : runners.length === 1
+        ? ` (${label(runners[0]?.[0] ?? "")})`
+        : "";
+  const tests =
+    counts.tests === 0 && counts.surface !== undefined
+      ? ""
+      : ` ${counts.pass} of ${counts.tests} test(s) pass${edited ? "" : " before any edit"}${by}.`;
+  const surface =
+    counts.surface === undefined
+      ? ""
+      : ` ${counts.surface.checks - counts.surface.fail} of ${counts.surface.checks} check(s) that the public surface keeps its exports and types hold.`;
+  return `${tests}${surface}`;
+}
+
 /** What a check says of a folder as a hand-off: whether "make the tests pass" is a task someone can finish there. */
 function verdictOf(
   steps: readonly CheckStep[],
@@ -159,7 +187,7 @@ function verdictOf(
 ): {
   readonly ok: boolean;
   readonly handoff: "ready" | "red-baseline" | "no-tests" | "failed";
-  readonly counts?: { readonly tests: number; readonly pass: number; readonly fail: number };
+  readonly counts?: TestCounts;
   readonly baseline?: readonly string[];
   readonly carried: number;
 } {
@@ -542,7 +570,7 @@ async function main(argv: readonly string[]) {
                     ? "it builds, but no test of this code came with it: write the tests the work must pass"
                     : "it does not install, build or test on its own (carveout check names the step)"
           }`,
-          ...(verdict.counts === undefined ? [] : [`  Tests: ${verdict.counts.pass} of ${verdict.counts.tests} pass before any edit.`]),
+          ...(verdict.counts === undefined ? [] : [`  Tests:${countsSentence(verdict.counts, false)}`]),
           ...(record.exposure === undefined ? [] : [`  Shows ${renderExposure(record.exposure)}`]),
           `  Names: ${
             result.pseudonyms === null
@@ -771,10 +799,7 @@ async function main(argv: readonly string[]) {
               : `${name} is not installed: cut again with --install ${name} if the repository installs it, or --mock ${name}.\n`,
           );
         const edited = steps.some((step) => step.edited === true);
-        const passing =
-          counts === undefined
-            ? ""
-            : ` ${counts.pass} of ${counts.tests} test(s) pass${edited ? "" : " before any edit"}.`;
+        const passing = countsSentence(counts, edited);
         const readiness = checked.readiness ?? trustedCut(dir, values.receipt, { optional: true }).receipt?.readiness;
         const advice =
           readiness !== undefined && hasAdvice(readiness)
