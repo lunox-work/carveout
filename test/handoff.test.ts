@@ -580,6 +580,41 @@ test("a file the cut is told not to see shapes nothing in the folder: the owner'
   assert.deepEqual(JSON.parse(readFileSync(unseen.receipt, "utf8")).unseen, ["apps/shop/src/hidden.test.ts"]);
 });
 
+test("a new file where the repository holds one the slice did not: a test goes in beside it, any other file is held", async () => {
+  const ownerRepo = join(scratch, "owner-repo");
+  cpSync(FIXTURE, ownerRepo, { recursive: true });
+  // The owner's acceptance test and a module of theirs, both outside the cut.
+  write(join(ownerRepo, "apps/shop/src/accept.test.ts"), 'import assert from "node:assert/strict";\nimport { test } from "node:test";\nimport { subtotal } from "./cart";\ntest("owner", () => assert.equal(subtotal([]), 0));\n');
+  write(join(ownerRepo, "apps/shop/src/owner-only.ts"), "export const secret = 1;\n");
+  git(ownerRepo, ["init", "-q"]);
+  git(ownerRepo, ["add", "-A"]);
+  git(ownerRepo, ["commit", "-q", "-m", "fixture"]);
+  const { out } = await cutSlice({
+    repo: ownerRepo,
+    out: join(scratch, "owner-slice"),
+    entryPoints: [ENTRY],
+    budget: { maxFiles: 40, maxDepth: 1 },
+    offline: true,
+    unseen: ["apps/shop/src/accept.test.ts"],
+  });
+  assert.equal(existsSync(join(out, "apps/shop/src/accept.test.ts")), false);
+  assert.equal(existsSync(join(out, "apps/shop/src/owner-only.ts")), false);
+  // The contributor names their test as the owner did, and adds a file over the owner's module.
+  write(join(out, "apps/shop/src/accept.test.ts"), 'import assert from "node:assert/strict";\nimport { test } from "node:test";\nimport { subtotal } from "./cart";\ntest("mine", () => assert.equal(subtotal([]), 0));\n');
+  write(join(out, "apps/shop/src/owner-only.ts"), "export const secret = 2;\n");
+  const patch = await patchProject(out);
+  assert.deepEqual(patch.renamed, [{ from: "apps/shop/src/accept.test.ts", to: "apps/shop/src/accept-contributed.test.ts" }]);
+  assert.ok(patch.added.includes("apps/shop/src/accept-contributed.test.ts"));
+  assert.match(patch.refused.find((refusal) => refusal.path === "apps/shop/src/owner-only.ts")?.reason ?? "", /already holds a file at this path/);
+  assert.doesNotMatch(patch.diff, /owner-only|secret = 2/);
+  // It applies, the owner's test untouched.
+  const file = join(scratch, "owner.patch");
+  writeFileSync(file, patch.diff);
+  git(ownerRepo, ["apply", "--3way", file]);
+  assert.match(readFileSync(join(ownerRepo, "apps/shop/src/accept.test.ts"), "utf8"), /"owner"/);
+  assert.match(readFileSync(join(ownerRepo, "apps/shop/src/accept-contributed.test.ts"), "utf8"), /"mine"/);
+});
+
 test("a .mjs planted beside a .ts is no build's output: patch judges it, and an extensionless file is held", async () => {
   const out = await cut("planted-mjs");
   write(join(out, "apps/shop/src/cart.mjs"), 'import { chai } from "vitest";\nchai.Assertion.prototype.assert = function () {};\nexport * from "./cart.ts";\n');

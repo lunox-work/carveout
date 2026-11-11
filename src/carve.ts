@@ -12,7 +12,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, posix, relative, resolve, sep } from "node:path";
 import { command } from "./command.js";
@@ -2887,6 +2887,13 @@ export async function checkProject(
           },
         ];
       await mkdir(dirname(join(work, folder.path)), { recursive: true });
+      // A test the folder added at the same path moves aside, as patch
+      // carries it (`contributedPath`): it runs with the folder's tests,
+      // never in the owner's test's place.
+      if (existsSync(join(work, folder.path))) {
+        const aside = contributedPath(folder.path, (candidate) => existsSync(join(work, candidate)));
+        await rename(join(work, folder.path), join(work, aside));
+      }
       await writeFile(join(work, folder.path), folder.text);
       // A file planted to stand in for it (a twin the walk takes instead,
       // or one tsc would compile over it) is taken out.
@@ -3204,6 +3211,32 @@ export interface Patch {
    * folder's `.gitignore`. Named, since the folder's own tests run them.
    */
   readonly skipped: readonly string[];
+  /**
+   * New test files the folder added at a path the repository already holds
+   * outside the slice (the owner's acceptance test, kept out of the cut),
+   * carried at a free path beside it instead (`contributedPath`), so the
+   * patch applies without a conflict and both tests run.
+   */
+  readonly renamed?: readonly { readonly from: string; readonly to: string }[];
+}
+
+/**
+ * A free path beside `path` for a contributor's new file that would land on
+ * one the repository already holds (the owner's acceptance test, kept out of
+ * the cut): `-contributed` before the test suffix, or before the extension
+ * (`quote.test.ts` becomes `quote-contributed.test.ts`), numbered past any
+ * name `taken` says is in use. Same folder, so its relative imports hold,
+ * and the same suffix, so the test script still runs it.
+ */
+export function contributedPath(path: string, taken: (candidate: string) => boolean): string {
+  const slash = path.lastIndexOf("/");
+  const dir = path.slice(0, slash + 1);
+  const name = path.slice(slash + 1);
+  const at = /\.(test|spec)\.[^/]+$/.exec(name)?.index ?? /\.[^./]+$/.exec(name)?.index ?? name.length;
+  for (let n = 1; ; n += 1) {
+    const candidate = `${dir}${name.slice(0, at)}-contributed${n === 1 ? "" : `-${n}`}${name.slice(at)}`;
+    if (!taken(candidate)) return candidate;
+  }
 }
 
 export interface PatchOptions {
@@ -3604,6 +3637,11 @@ export async function patchProject(
   const crossPackage: { file: string; specifier: string }[] = [];
   const drifted: string[] = [];
   const noThreeWay: string[] = [];
+  const renamed: { from: string; to: string }[] = [];
+  /** Whether the repository holds `path`, in the checkout or at the cut's commit. */
+  const repositoryHolds = (path: string) =>
+    existsSync(join(repo, path)) ||
+    (record.manifest.sourceCommitSha !== null && gitShow(repo, record.manifest.sourceCommitSha, path) !== null);
   // A tool's folder (npm's cache, a coverage report) is named, not listed.
   const skipped: string[] = [...tools].map((dir) => `${dir}/`);
   /**
@@ -3679,9 +3717,26 @@ export async function patchProject(
         // the whole repository once the patch is applied.
         if (!admits(path, "added", isBinaryPath(path) ? undefined : { before: null, after: content.toString("utf8") }))
           continue;
-        added.push(path);
-        await mkdir(dirname(join(scratch, "b", path)), { recursive: true });
-        await writeFile(join(scratch, "b", path), content);
+        // A new file where the repository already holds one the slice did
+        // not (the owner's acceptance test, kept out of every cut): as a new
+        // file, `git apply --3way` stops on it. A test goes in beside it under
+        // a free name; any other file is held for the owner to place.
+        let target = path;
+        if (repositoryHolds(path)) {
+          if (!isTestPath(path)) {
+            refused.push({
+              path,
+              reason:
+                "the repository already holds a file at this path that the slice did not (one of the owner's, kept out of the cut); the folder's new file would overwrite it: rename it, or read both and pass --allow",
+            });
+            continue;
+          }
+          target = contributedPath(path, (candidate) => present.has(candidate) || added.includes(candidate) || repositoryHolds(candidate));
+          renamed.push({ from: path, to: target });
+        }
+        added.push(target);
+        await mkdir(dirname(join(scratch, "b", target)), { recursive: true });
+        await writeFile(join(scratch, "b", target), content);
         continue;
       }
       const rewrites = rewritesOf.get(path) ?? [];
@@ -3834,6 +3889,7 @@ export async function patchProject(
       refused,
       recordFrom: trusted.receipt === null ? "folder" : "receipt",
       skipped,
+      ...(renamed.length === 0 ? {} : { renamed }),
     };
   } finally {
     await rm(scratch, { recursive: true, force: true });

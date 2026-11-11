@@ -1043,6 +1043,10 @@ async function main(argv: readonly string[]) {
             `${path} was cut from uncommitted changes, so --3way cannot merge it; apply it by hand if git apply refuses.`,
         ),
         ...patch.deleted.map((path) => `deletes ${path}.`),
+        ...(patch.renamed ?? []).map(
+          ({ from, to }) =>
+            `${from} is a new test where the repository already holds a file the slice did not (an acceptance test of yours, say); the patch adds it as ${to}, so both run.`,
+        ),
         ...(patch.skipped.length === 0
           ? []
           : [
@@ -1237,6 +1241,8 @@ async function main(argv: readonly string[]) {
       else {
         for (const edit of merge.patch.boundary)
           process.stderr.write(`carveout: boundary: ${edit.detail}\n`);
+        for (const { from, to } of merge.patch.renamed ?? [])
+          process.stderr.write(`carveout: ${from} is a new test where the repository already holds a file; applied as ${to}.\n`);
         for (const step of merge.steps) {
           process.stdout.write(`${step.ok ? "ok  " : "FAIL"} ${step.step}: ${step.ok && step.step === "verify" ? "" : step.output}\n`);
         }
