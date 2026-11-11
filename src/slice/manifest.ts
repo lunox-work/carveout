@@ -423,12 +423,13 @@ export function boundarySummary(
  * them; repeating them here cost a session an eighth of everything it read
  * (E6c: BOUNDARY.md opened in 60 of 60 slice runs).
  */
-function renderModules(modules: readonly BoundaryModule[], empty: string) {
+function renderModules(modules: readonly BoundaryModule[], empty: string, rest = "") {
   if (modules.length === 0) return [empty];
   return modules.map((module) => {
     const names = module.symbols.map((symbol) => symbol.name);
     const shown = names.slice(0, 12).map((name) => `\`${name}\``).join(", ");
-    const more = names.length > 12 ? `, +${names.length - 12} more` : "";
+    // Where every name of a long list is, rather than all of them here.
+    const more = names.length > 12 ? `, +${names.length - 12} more${rest}` : "";
     // The folder writes each stub beside the module's path, not where the
     // contract files it.
     const stub =
@@ -475,13 +476,14 @@ export function renderBoundaryMarkdown(
     ...renderModules(
       contract.outbound,
       "The slice imports nothing outside itself.",
+      " (the stub declares each)",
     ),
     "",
     "## Public surface",
     "",
     "What outside code imports from the slice; a change must keep these exports to fit back.",
     "",
-    ...renderModules(contract.inbound, "Nothing outside the slice imports it."),
+    ...renderModules(contract.inbound, "Nothing outside the slice imports it.", " (`carveout/surface/check.ts` holds each, a line apiece)"),
     "",
     "## Externals to mock",
     "",
