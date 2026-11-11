@@ -458,6 +458,9 @@ test("an agent is told where new tests go and what the coverage gate measures, w
   assert.doesNotMatch(bare, /New tests go|requires coverage/);
   const task = renderTask({ task: "Do it.", testsInFolder: [], surface: 0, testsAt: "packages/core/test/*.test.ts" });
   assert.match(task, /New tests are where the repository's test script runs them: `packages\/core\/test\/\*\.test\.ts`/);
+  assert.doesNotMatch(task, /acceptance tests/);
+  // The owner's own acceptance tests are said to exist, never shown.
+  assert.match(renderTask({ task: "Do it.", testsInFolder: [], surface: 0, ownerTests: true }), /The owner's own acceptance tests of the behaviour above, which this folder does not hold, pass/);
 });
 
 test("a helper only tests import is held under a folder entry as under a file entry, and an entry file only its test imports is the task's code", async () => {

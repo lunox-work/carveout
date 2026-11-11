@@ -324,6 +324,8 @@ export function renderTask(input: {
   readonly ci?: readonly string[];
   /** Where the package's test script finds its tests, from the folder's root. */
   readonly testsAt?: string;
+  /** Whether the owner keeps acceptance tests of their own, which the folder does not hold. */
+  readonly ownerTests?: boolean;
 }): string {
   return `${[
     "# Task",
@@ -347,6 +349,9 @@ export function renderTask(input: {
           }. An addition old callers still accept (a new optional field, a new export) keeps a type.`,
         ]),
     "- The owner's \`carveout patch\` of the folder keeps nothing out (see AGENTS.md: what comes back, and what is held).",
+    ...(input.ownerTests === true
+      ? ["- The owner's own acceptance tests of the behaviour above, which this folder does not hold, pass on the folder that comes back."]
+      : []),
     `- The repository's own CI passes once the change is merged: a pass here is a pass against mocks.${
       input.ci === undefined || input.ci.length === 0
         ? ""
@@ -1807,6 +1812,7 @@ export async function computeCut(
                 (project.files.find((file) => file.path === "carveout/tests/interface.test.ts")?.text.match(/^test\(/gm)?.length ?? 0),
               ci: packageChecks(repo, packageDir),
               ...(testsAt === undefined ? {} : { testsAt }),
+              ...(request.unseen === undefined || request.unseen.length === 0 ? {} : { ownerTests: true }),
             }),
             class: "config" as const,
             public: true,
