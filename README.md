@@ -99,10 +99,13 @@ folder, and says whether it is ready to hand over (its tests pass before
 any edit; exit 0 only then), what it shows, the receipt to keep and what
 to send. `--task` writes `TASK.md`: the work in the owner's words, renamed
 with the folder, and when it is accepted (`npm test` passes, the tests
-handed over only grew, the exports outside code uses keep their types,
-`carveout patch` keeps nothing out, the repository's CI passes). The
-folder's `AGENTS.md` tells an agent working in it what comes back and what
-the hand-off policy holds. Step by step:
+handed over only grew, new tests are where the package's test script runs
+them, the exports outside code uses keep their types, `carveout patch`
+keeps nothing out, and the repository's CI passes, which it names by the
+package's check scripts, never their commands). The task text and the folder's documents are scanned for
+credentials as its code is. The folder's `AGENTS.md` tells an agent working
+in it what comes back and what the hand-off policy holds, where new tests go
+and what the package's coverage gate measures. Step by step:
 
 ```sh
 # maintainer, at the repository's root

@@ -504,3 +504,27 @@ test("a helper only tests import is held under a folder entry as under a file en
   assert.deepEqual(patch.refused, []);
   assert.deepEqual(patch.changed, ["apps/shop/src/rounding.ts"]);
 });
+
+test("TASK.md names the package's check scripts, never their commands, and a credential in the task text writes nothing", async () => {
+  const scripted = join(scratch, "scripted-repo");
+  cpSync(FIXTURE, scripted, { recursive: true });
+  const manifest = JSON.parse(readFileSync(join(scripted, "apps/shop/package.json"), "utf8")) as Record<string, unknown>;
+  manifest["scripts"] = {
+    test: "DATABASE_URL=postgres://ci:S3cretPassw0rd99@db.internal.example:5432/test node --test",
+    lint: "eslint . --rulesdir ../../tools/house-lint-rules",
+  };
+  writeFileSync(join(scripted, "apps/shop/package.json"), JSON.stringify(manifest, null, 2));
+  git(scripted, ["init", "-q"]);
+  git(scripted, ["add", "-A"]);
+  git(scripted, ["commit", "-q", "-m", "fixture"]);
+  const request = { repo: scripted, entryPoints: [ENTRY], budget: { maxFiles: 40, maxDepth: 1 }, offline: true, public: true };
+  const cut = await cutSlice({ ...request, out: join(scratch, "scripted"), task: "Add a discount to the cart." });
+  const task = readFileSync(join(cut.out, "TASK.md"), "utf8");
+  assert.match(task, /runs its own `test`, `lint` scripts/);
+  assert.doesNotMatch(task, /S3cret|postgres:|rulesdir|house-lint/);
+  await assert.rejects(
+    cutSlice({ ...request, out: join(scratch, "scripted-secret"), task: "Seed it from postgres://ci:S3cretPassw0rd99@db.internal.example:5432/test first." }),
+    /Nothing written: the cut would carry a credential[\s\S]*TASK\.md/,
+  );
+  assert.equal(existsSync(join(scratch, "scripted-secret")), false);
+});

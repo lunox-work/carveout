@@ -183,7 +183,12 @@ function coverageTerms(coverage: CoverageGate): string {
     .join(", ");
 }
 
-/** The checks a package's own scripts run (test, lint, typecheck), as commands: what its CI holds a change to. */
+/**
+ * The checks a package's own scripts run (test, lint, typecheck), by the
+ * scripts' names: what its CI holds a change to. Never their commands,
+ * which may carry a credential (`DATABASE_URL=postgres://user:pass@…`) or
+ * name the repository's tools and hosts.
+ */
 function packageChecks(repo: string, packageDir: string | null): string[] {
   if (packageDir === null) return [];
   try {
@@ -191,7 +196,7 @@ function packageChecks(repo: string, packageDir: string | null): string[] {
       (JSON.parse(readFileSync(join(repo, packageDir, "package.json"), "utf8")) as { scripts?: Record<string, unknown> }).scripts ?? {};
     return Object.entries(scripts)
       .filter(([name, command]) => typeof command === "string" && /^(test|lint|typecheck|type-check|check|format:check|check-types)$/.test(name))
-      .map(([, command]) => String(command));
+      .map(([name]) => name);
   } catch {
     return [];
   }
@@ -202,7 +207,7 @@ export function renderTask(input: {
   readonly task: string;
   readonly testsInFolder: readonly string[];
   readonly surface: number;
-  /** The commands the repository runs on the package (its own scripts), for what CI checks. */
+  /** The package's own check scripts, by name, for what CI checks. */
   readonly ci?: readonly string[];
   /** Where the package's test script finds its tests, from the folder's root. */
   readonly testsAt?: string;
@@ -226,7 +231,7 @@ export function renderTask(input: {
     `- The repository's own CI passes once the change is merged: a pass here is a pass against mocks.${
       input.ci === undefined || input.ci.length === 0
         ? ""
-        : ` For this package it runs: ${input.ci.map((command) => `\`${command}\``).join(", ")}.`
+        : ` For this package it runs its own ${input.ci.map((name) => `\`${name}\``).join(", ")} script${input.ci.length === 1 ? "" : "s"}.`
     }`,
   ].join("\n")}\n`;
 }
@@ -1629,6 +1634,9 @@ export async function computeCut(
     },
   ];
   const files = [...projectFiles, ...extra];
+  // The folder's own documents leave the repository too, the owner's task
+  // text among them: scanned as everything else the cut writes is.
+  const documentBlockers = secretBlockers(scanSecrets(extra)).map(({ code, file, detail }) => ({ code, file: file ?? null, detail }));
   // The `copy` folders, file by file, less what the slice already holds
   // and any credentials file, which stays behind and blocks the cut.
   const held = new Set([
@@ -1678,6 +1686,7 @@ export async function computeCut(
       detail,
     })),
     ...extraBlockers,
+    ...documentBlockers,
     ...scope.blockers
       .filter((blocker) => blocker.code === "dependency_unresolved")
       .map(({ code, detail }) => ({ code, file: null, detail })),
