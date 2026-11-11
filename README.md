@@ -196,7 +196,9 @@ What carveout holds to:
     `carveout.config.json`;
   - check configuration edited, deleted or, for what a runner picks up by
     being there (`vitest.config.*`, setup files, `babel`, `swc`, coverage),
-    added; a module mock added under `__mocks__`;
+    added; an edit to a setup file the package's Vitest config names,
+    whatever its name (a `vi.mock` there replaces the code under test in
+    every test); a module mock added under `__mocks__`;
   - deleted tests, helpers, fixtures and snapshots; edited fixtures and
     snapshots; edited tests and helpers (a helper by its folder, its name or
     because only tests import it) that remove or rewrite an assertion, put
@@ -231,7 +233,9 @@ describe`, `import.meta.vitest`, `NODE_ENV === "test"`, `process.argv`
   - code in a language the policy does not read (`.vue`, `.py`, `.node`).
 
   `--allow <path|glob>` lets a reviewed one through. `merge` applies
-  nothing while any is refused. The policy reads syntax, not intent: code
+  nothing while any is refused. A tool's folder at the root (npm's cache
+  kept in the folder with `--cache .npm-cache`, `coverage/`, `.turbo`) is
+  named and left out, never judged. The policy reads syntax, not intent: code
   that special-cases a test's own inputs, or does harm with only the reach
   its file already had, passes it.
 
@@ -319,18 +323,26 @@ billing-slice/
   code (`strict`, `noUnusedLocals` and the like) come from the
   repository's tsconfig, `noImplicitAny` included: where the stubs leave
   an implicit any the repository's types would give (a callback passed to
-  a mocked package), the folder's build (`carveout/build.js`) does not
-  count those, and counts every other error. Node's types come at the
+  a mocked package), the folder's build (`carveout/build.js`) and the
+  public surface's type check do not count those, in the files the cut
+  found them in, and count every other error (TS7027–7030 among them),
+  and a compiler that did not run. Node's types come at the
   repository's version. When the package's own test sets coverage
   thresholds, `npm test` holds the source files you add to them, and
   fails, as the package's script does, on a file you add that no test
   loads (`assert-all-covered`).
 - **The package's Vitest settings.** A cut that brings Vitest tests reads
-  the package's `vitest.config.*` (never runs it): its `environment` (the
-  environment's package, `jsdom` or `happy-dom`, installed as the
-  repository locks it), its `setupFiles` (brought along as entry points),
-  `testTimeout` and `globals`, into the folder's `vitest.config.mjs`. A
-  component's tests run in the folder as in the repository. Vitest's
+  the package's `vitest.config.*` (or the repository's root one; never runs
+  it, and follows the default export through `defineConfig`, a function or
+  a name): its `environment` (the environment's package, `jsdom`,
+  `happy-dom` or `@edge-runtime/vm`, installed as the repository locks it;
+  so is one a test file asks for with `@vitest-environment`), its
+  `setupFiles` (walked from with what they import, but no entry point; one
+  named by a package's specifier is installed and run as named), `root`,
+  `testTimeout` and `globals`, into the folder's `vitest.config.mjs`, with
+  an alias for each module that is no package (`virtual:…`, its subpaths
+  too). A component's tests run in the folder as in the repository.
+  Projects (`test.projects`) are not read. Vitest's
   results join node:test's: a Vitest test that fails on the mocks before
   any edit goes into the baseline and is not counted, and the counts `check`
   prints are both runners' tests, with the interface test's and the type
@@ -400,18 +412,18 @@ are found by name first, and the compiler confirms each one.
 
 ## Commands
 
-| Command                                   | Does                                                                                                                                                                                                                                                                                                                                                |
-| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `carveout handoff <entry>... --out <dir>` | A cut for someone outside with the hand-off's defaults, and its check, in one step: ready or not, what it shows, the receipt to keep, what to send. `--task` writes `TASK.md`.                                                                                                                                                                      |
-| `carveout plan <entry>...`                | Lists the files, cuts, importers, packages, environment and blockers; the lines the cut shows, by why each file is there; every test that runs the code, in the folder or left behind and why. Writes nothing.                                                                                                                                      |
-| `carveout cut <entry>... --out <dir>`     | Writes the folder. Exits 2 if it was written with blockers; writes nothing if it would carry a credential.                                                                                                                                                                                                                                          |
-| `carveout check <dir>`                    | Runs `npm ci`, `npm run build` and `npm test` in a scratch copy; records the tests that fail on the mocks, and says whether the folder is ready to hand over (its tests pass before any edit) or what would make it so. `--isolated` for a folder that came back.                                                                                   |
-| `carveout status <dir>`                   | Says whether a cut now would write the same folder, and names what changed. Exits 4 if stale.                                                                                                                                                                                                                                                       |
-| `carveout patch <dir>`                    | Prints the edits as a patch for the repository (`--output <file>`), with full blob ids for `git apply --3way`. Runs none of the folder's code; keeps out what the hand-off policy refuses (exit 6).                                                                                                                                                 |
-| `carveout merge <dir> --into <checkout>`  | Patches, applies with `--3way` in the checkout you name, and runs `--verify <cmd>` there with a scratch HOME and only the `--verify-env` variables. Applies nothing on a refusal (exit 6).                                                                                                                                                          |
-| `carveout refresh <dir>`                  | Brings the repository's commits since the cut into the folder (the slice's packages and the modules it stubs), merged into the folder's own edits; an overlap is left as the folder had it and named (exit 7). For a job long enough that the repository moves.                                                                                     |
-| `carveout widen <dir> --entry <path>...`  | Cuts the folder again with more entry points, every other bound as it was, and carries the contributor's work so far into it (a public folder keeps its names): for a change that needs a module the slice cut.                                                                                                                                     |
-| `carveout apply <dir> <patch>`            | Brings a patch for the repository into the folder, imports rewritten; `--stubs` adds the stubs it needs. A module the patch adds past the cut's reach joins the folder as an entry, with its tests. A slice file the folder edited gets the change merged in (three-way); where the two overlap it is left as the folder had it and named (exit 7). |
+| Command                                   | Does                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `carveout handoff <entry>... --out <dir>` | A cut for someone outside with the hand-off's defaults, and its check, in one step: ready or not, what it shows, the receipt to keep, what to send. `--task` writes `TASK.md`.                                                                                                                                                                                                                                                                                          |
+| `carveout plan <entry>...`                | Lists the files, cuts, importers, packages, environment and blockers; the lines the cut shows, by why each file is there; every test that runs the code, in the folder or left behind and why. Writes nothing.                                                                                                                                                                                                                                                          |
+| `carveout cut <entry>... --out <dir>`     | Writes the folder. Exits 2 if it was written with blockers; writes nothing if it would carry a credential.                                                                                                                                                                                                                                                                                                                                                              |
+| `carveout check <dir>`                    | Runs `npm ci`, `npm run build` and `npm test` in a scratch copy; records the tests that fail on the mocks, and says whether the folder is ready to hand over (its tests pass before any edit) or what would make it so. `--isolated` for a folder that came back.                                                                                                                                                                                                       |
+| `carveout status <dir>`                   | Says whether a cut now would write the same folder, and names what changed. Exits 4 if stale.                                                                                                                                                                                                                                                                                                                                                                           |
+| `carveout patch <dir>`                    | Prints the edits as a patch for the repository (`--output <file>`), with full blob ids for `git apply --3way`. Runs none of the folder's code; keeps out what the hand-off policy refuses (exit 6).                                                                                                                                                                                                                                                                     |
+| `carveout merge <dir> --into <checkout>`  | Patches, applies with `--3way` in the checkout you name, and runs `--verify <cmd>` there with a scratch HOME and only the `--verify-env` variables. Applies nothing on a refusal (exit 6).                                                                                                                                                                                                                                                                              |
+| `carveout refresh <dir>`                  | Brings the repository's commits since the cut into the folder (the slice's packages and the modules it stubs), merged into the folder's own edits; an overlap is left as the folder had it and named (exit 7). For a job long enough that the repository moves.                                                                                                                                                                                                         |
+| `carveout widen <dir> --entry <path>...`  | Cuts the folder again with more entry points, every other bound as it was, and carries the contributor's work so far into it (a public folder keeps its names): for a change that needs a module the slice cut.                                                                                                                                                                                                                                                         |
+| `carveout apply <dir> <patch>`            | Brings a patch for the repository into the folder, imports rewritten; `--stubs` adds the stubs it needs. A module the patch adds past the cut's reach joins the folder as an entry, with its tests. A slice file the folder edited gets the change merged in (three-way); where the two overlap it is left as the folder had it and named (exit 7). In a folder in pseudonyms, a name the cut never saw takes its term's placeholder; one still left is named (exit 2). |
 
 Options for `plan` and `cut`:
 

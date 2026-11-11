@@ -282,9 +282,14 @@ sandbox, so run an untrusted folder's tests in a container with no
 secrets and no network instead. A branch pushed to the repository is not
 that: its CI has the repository's secrets and network.
 
-`npm test` in a checked folder reports in short: the counts, then in full
-only the failures that are not the baseline's, with the baseline's number.
-Read it as it is; there is nothing more in `carveout/test.js`.
+`npm test` in a checked folder reports in short: in full only the failures
+that are not the baseline's (node:test's and Vitest's alike), with the
+baseline's number, then a last line that counts the tests that pass by
+runner, and apart from them the checks that the public surface keeps its
+exports and types. Read it as it is; there is nothing more in
+`carveout/test.js`. A Vitest setup file the package's config names comes
+with the folder whatever its name, and an edit to it is held as the test
+runner's configuration is.
 
 The first check of an unedited folder records the tests that fail with
 nothing changed: they fail on the mocks, because they need the real
