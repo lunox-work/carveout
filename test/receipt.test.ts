@@ -715,3 +715,24 @@ test("refresh follows a copied file the repository deleted: gone here when unedi
   writeFileSync(join(scratch, "copied-deleted.patch"), patch.diff);
   git(moving, ["apply", "--check", join(scratch, "copied-deleted.patch")]);
 });
+
+test("refresh goes on when the repository deletes a copied folder whole", async () => {
+  const { refreshProject } = await import("../src/mergeback.js");
+  const moving = join(scratch, "copied-folder-gone");
+  git(scratch, ["clone", "-q", repo, moving]);
+  const first = "apps/shop/migrations/0001.sql";
+  mkdirSync(join(moving, "apps/shop/migrations"), { recursive: true });
+  writeFileSync(join(moving, first), "create table carts (id int);\n");
+  git(moving, ["add", "-A"]);
+  git(moving, ["commit", "-qm", "migrations"]);
+  const cut = await cutSlice({ repo: moving, out: join(scratch, "copied-folder-gone-out"), entryPoints: [ENTRY], budget: { maxFiles: 40, maxDepth: 1 }, offline: true, copy: ["apps/shop/migrations"] });
+  git(moving, ["rm", "-q", "-r", "apps/shop/migrations"]);
+  git(moving, ["commit", "-qm", "upstream drops the folder"]);
+  const refreshed = await refreshProject(cut.out);
+  assert.ok(refreshed !== null);
+  assert.deepEqual(refreshed.copiedTaken, [first]);
+  assert.ok(!existsSync(join(cut.out, first)));
+  const record = JSON.parse(readFileSync(join(cut.out, "carveout.json"), "utf8")) as { extras?: { path: string }[]; manifest: { sourceCommitSha: string } };
+  assert.deepEqual(record.extras ?? [], []);
+  assert.equal(record.manifest.sourceCommitSha, git(moving, ["rev-parse", "HEAD"]).trim());
+});

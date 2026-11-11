@@ -218,7 +218,9 @@ export async function applyPatch(
       followWorkspaces: record.request.followWorkspaces === true,
       copyPure: record.request.copyPure === true,
       private: record.request.private ?? [],
-      copy: record.request.copy ?? [],
+      // A copied folder the change deleted whole is copied no more: its
+      // files go as any deleted file does.
+      copy: (record.request.copy ?? []).filter((dir) => existsSync(join(repo, dir))),
       public: record.request.public === true,
       // The owner's acceptance tests stay unread in every later cut.
       ...(trusted.receipt?.unseen === undefined ? {} : { unseen: trusted.receipt.unseen }),
