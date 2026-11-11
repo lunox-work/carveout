@@ -760,8 +760,9 @@ export async function refreshProject(
   // The repository holds these commits: the folder's base moves to them, so
   // a patch of it carries the contributor's work alone, not the commits it
   // was brought (and `git apply` takes it at the new HEAD). Not past an
-  // overlap, which leaves a file at the old base for a person to merge.
-  if (applied.conflicts.length === 0) {
+  // overlap, nor past a file left unwritten (one that would not map back to
+  // the folder's names): either holds a file at the old base.
+  if (applied.conflicts.length === 0 && applied.unmapped.length === 0) {
     const now = trustedCut(root, options.receipt, options.noReceipt === true ? { noReceipt: true } : {});
     const gone = new Set(applied.deleted);
     const known = new Set(now.record.manifest.included.map((file) => file.path));
