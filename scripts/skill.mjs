@@ -25,8 +25,9 @@
 // folder, and on main that folder is the whole repository (CLI source,
 // lockfile, tests, experiments). The directory tracks the claude-plugin
 // branch instead, which holds only PLUGIN_FILES as of HEAD and a README.md
-// written from plugin.json and each skill's frontmatter (the directory
-// requires one), one commit per change on top of origin's branch. Builds the commit without touching the
+// written from plugin.json, each skill's frontmatter and .claude-plugin/data.md
+// (what is sent where, for the directory's data-handling review; the
+// directory requires a README), one commit per change on top of origin's branch. Builds the commit without touching the
 // working tree or index; --push sends it to origin. CI runs it on push to main.
 
 import { spawnSync } from "node:child_process";
@@ -186,6 +187,8 @@ function pluginReadme() {
   lines.push("## Install", "", "```sh", `claude plugin marketplace add ${plugin.repository.replace(/^https:\/\/github\.com\//, "")}`);
   lines.push(`claude plugin install ${plugin.name}@${market.name}`, "```", "");
   if (needs.length > 0) lines.push("## Requirements", "", ...needs);
+  const data = spawnSync("git", ["show", "HEAD:.claude-plugin/data.md"], { cwd: ROOT, encoding: "utf8" });
+  if (data.status === 0) lines.push("## Data", "", data.stdout.trim(), "");
   lines.push("## Source", "", `This branch holds only the plugin's files. The CLI, its documentation and the`);
   lines.push(`skills' source are on the main branch of ${plugin.repository}. License: ${plugin.license}.`, "");
   return lines.join("\n");
