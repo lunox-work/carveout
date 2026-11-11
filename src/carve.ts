@@ -641,7 +641,8 @@ function withTestSetup(
   const settings = dirs.map((dir) => vitestSettings(repo, dir)).find((found) => found !== null) ?? null;
   // Walked from, never entry points: the package, the project's name and
   // the interface test are the caller's entries' alone.
-  return { setup: [...new Set(settings?.setupFiles ?? [])].filter((file) => !entries.includes(file)).sort(compare), settings };
+  const setup = [...(settings?.setupFiles ?? []), ...(settings?.projects ?? []).flatMap((project) => project.setupFiles)];
+  return { setup: [...new Set(setup)].filter((file) => !entries.includes(file)).sort(compare), settings };
 }
 
 export interface Plan {
@@ -1375,6 +1376,7 @@ export async function computeCut(
   // (`@testing-library/jest-dom/vitest`).
   const environments = new Set([
     ...(vitest?.environment === undefined ? [] : [vitest.environment]),
+    ...(vitest?.projects ?? []).flatMap((project) => (project.environment === undefined ? [] : [project.environment])),
     ...analysis.walk.tests.flatMap((test) => {
       try {
         return fileEnvironments(readFileSync(join(repo, test), "utf8"));
@@ -1389,7 +1391,7 @@ export async function computeCut(
         choices[name] = "approved-package";
         log(`Installs ${name}: the package's Vitest tests run in the ${environment} environment.`);
       }
-  for (const specifier of vitest?.setupPackages ?? []) {
+  for (const specifier of [...(vitest?.setupPackages ?? []), ...(vitest?.projects ?? []).flatMap((project) => project.setupPackages ?? [])]) {
     const name = packageNameOf(specifier);
     if (choices[name] === undefined && lockedVersion(repo, name) !== null) {
       choices[name] = "approved-package";

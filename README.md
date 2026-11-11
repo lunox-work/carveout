@@ -342,7 +342,8 @@ billing-slice/
   `testTimeout` and `globals`, into the folder's `vitest.config.mjs`, with
   an alias for each module that is no package (`virtual:…`, its subpaths
   too). A component's tests run in the folder as in the repository.
-  Projects (`test.projects`) are not read. Vitest's
+  Inline projects (`test.projects`) come along each with its environment,
+  setup files and `include`, extending the folder's config. Vitest's
   results join node:test's: a Vitest test that fails on the mocks before
   any edit goes into the baseline and is not counted, and the counts `check`
   prints are both runners' tests, with the interface test's and the type

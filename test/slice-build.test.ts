@@ -408,3 +408,42 @@ test("what a setup file loads is held as the setup is, a setup file named as an 
   assert.equal(third.refused.some((refusal) => refusal.path === "apps/shop/src/rounding.ts"), false, JSON.stringify(third.refused));
   assert.ok(third.changed.includes("apps/shop/src/rounding.ts"));
 });
+
+test("a config's inline projects are read, each with its paths, and carried extending the folder's config", async () => {
+  const repo = join(scratch, "projects");
+  write(repo, {
+    "apps/web/vitest.config.ts": [
+      'import { defineConfig, defineProject } from "vitest/config";',
+      "export default defineConfig({",
+      "  test: {",
+      "    projects: [",
+      '      { test: { name: "unit", include: ["src/**/*.unit.test.ts"], environment: "node" } },',
+      '      defineProject({ test: { name: "dom", include: ["src/**/*.dom.test.ts"], environment: "jsdom", setupFiles: ["./test/dom-setup.ts"] } }),',
+      "    ],",
+      "  },",
+      "});",
+      "",
+    ].join("\n"),
+    "apps/web/test/dom-setup.ts": "export {};\n",
+  });
+  const settings = vitestSettings(repo, "apps/web");
+  assert.deepEqual(settings, {
+    setupFiles: [],
+    projects: [
+      { name: "unit", include: ["apps/web/src/**/*.unit.test.ts"], environment: "node", setupFiles: [] },
+      { name: "dom", include: ["apps/web/src/**/*.dom.test.ts"], environment: "jsdom", setupFiles: ["apps/web/test/dom-setup.ts"] },
+    ],
+  });
+  assert.ok(settings !== null);
+  write(repo, { "out/vitest.config.mjs": vitestConfigText(settings) });
+  const config = (await import(join(repo, "out/vitest.config.mjs"))).default as {
+    test: { projects: { extends: boolean; test: { name: string; include: string[]; environment: string; setupFiles?: string[] } }[] };
+  };
+  assert.deepEqual(
+    config.test.projects.map((project) => [project.extends, project.test.name, project.test.environment, project.test.include, project.test.setupFiles ?? []]),
+    [
+      [true, "unit", "node", ["apps/web/src/**/*.unit.test.ts"], []],
+      [true, "dom", "jsdom", ["apps/web/src/**/*.dom.test.ts"], ["./apps/web/test/dom-setup.ts"]],
+    ],
+  );
+});

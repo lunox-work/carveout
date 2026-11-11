@@ -25,6 +25,23 @@ export interface VitestSettings {
   readonly setupPackages?: readonly string[];
   readonly testTimeout?: number;
   readonly globals?: boolean;
+  /**
+   * The config's inline projects (`test.projects`), each with what it
+   * sets: Vitest runs a test under the project whose `include` matches it.
+   */
+  readonly projects?: readonly VitestProject[];
+}
+
+/** One inline project of a Vitest config, its paths from the repository's root. */
+export interface VitestProject {
+  readonly name?: string;
+  /** Globs from the repository's root. */
+  readonly include?: readonly string[];
+  readonly environment?: string;
+  readonly setupFiles: readonly string[];
+  readonly setupPackages?: readonly string[];
+  readonly testTimeout?: number;
+  readonly globals?: boolean;
 }
 
 const CONFIG_NAMES = ["vitest.config", "vite.config"].flatMap((name) =>
@@ -143,46 +160,72 @@ export function vitestSettings(repo: string, dir: string): VitestSettings | null
   }
   if (test === null) return null;
   const found = test as ts.ObjectLiteralExpression;
-  const property = (key: string): ts.Expression | undefined => {
-    const value = propertyOf(found, key);
-    return value === undefined ? undefined : bare(value);
+  const read = (object: ts.ObjectLiteralExpression, base: string): VitestProject => {
+    const property = (key: string): ts.Expression | undefined => {
+      const value = propertyOf(object, key);
+      return value === undefined ? undefined : bare(value);
+    };
+    const strings = (node: ts.Expression | undefined): string[] =>
+      node === undefined
+        ? []
+        : ts.isStringLiteralLike(node)
+          ? [node.text]
+          : ts.isArrayLiteralExpression(node)
+            ? node.elements.flatMap((element) => (ts.isStringLiteralLike(element) ? [element.text] : []))
+            : [];
+    const root = property("root");
+    // Relative to the config's folder, or to the `root` it sets.
+    const from = root !== undefined && ts.isStringLiteralLike(root) ? posix.normalize(posix.join(base, root.text)) : base;
+    const named = strings(property("setupFiles"));
+    const setupFiles = named
+      .filter((file) => !isBareSpecifier(file))
+      .map((file) => posix.normalize(posix.join(from, file.replace(/^\.\//, ""))))
+      // As Vitest finds one: as written, or with a script's extension.
+      .flatMap((file) => ["", ".ts", ".tsx", ".mts", ".js", ".mjs"].map((ext) => `${file}${ext}`).find((path) => existsSync(join(repo, path)) && statSync(join(repo, path)).isFile()) ?? [])
+      .filter((file) => !file.startsWith(".."));
+    const setupPackages = named.filter(isBareSpecifier);
+    const include = strings(property("include")).map((glob) => (from === "" ? glob.replace(/^\.\//, "") : posix.join(from, glob.replace(/^\.\//, ""))));
+    const environment = property("environment");
+    const name = property("name");
+    const timeout = property("testTimeout");
+    const timeoutText = timeout !== undefined ? timeout.getText(source).replace(/_/g, "") : "";
+    const globals = property("globals");
+    return {
+      ...(name !== undefined && ts.isStringLiteralLike(name) ? { name: name.text } : {}),
+      ...(include.length === 0 ? {} : { include }),
+      ...(environment !== undefined && ts.isStringLiteralLike(environment) ? { environment: environment.text } : {}),
+      setupFiles,
+      ...(setupPackages.length === 0 ? {} : { setupPackages }),
+      ...(/^\d+$/.test(timeoutText) ? { testTimeout: Number(timeoutText) } : {}),
+      ...(globals?.kind === ts.SyntaxKind.TrueKeyword ? { globals: true } : {}),
+    };
   };
-  const environment = property("environment");
-  const setup = property("setupFiles");
-  const timeout = property("testTimeout");
-  const globals = property("globals");
-  const root = property("root");
-  const strings = (node: ts.Expression | undefined): string[] =>
-    node === undefined
-      ? []
-      : ts.isStringLiteralLike(node)
-        ? [node.text]
-        : ts.isArrayLiteralExpression(node)
-          ? node.elements.flatMap((element) => (ts.isStringLiteralLike(element) ? [element.text] : []))
-          : [];
-  // Relative to the config's folder, or to the `root` it sets.
-  const base = root !== undefined && ts.isStringLiteralLike(root) ? posix.normalize(posix.join(folder, root.text)) : folder;
-  const named = strings(setup);
-  const setupFiles = named
-    .filter((file) => file.startsWith(".") || file.startsWith("/") === false && /\.[cm]?[jt]sx?$/.test(file) && !isBareSpecifier(file))
-    .map((file) => posix.normalize(posix.join(base, file.replace(/^\.\//, ""))))
-    // As Vitest finds one: as written, or with a script's extension.
-    .flatMap((file) => ["", ".ts", ".tsx", ".mts", ".js", ".mjs"].map((ext) => `${file}${ext}`).find((path) => existsSync(join(repo, path)) && statSync(join(repo, path)).isFile()) ?? [])
-    .filter((file) => !file.startsWith(".."));
-  const setupPackages = named.filter(isBareSpecifier);
-  const timeoutText = timeout !== undefined ? timeout.getText(source).replace(/_/g, "") : "";
+  const top = read(found, folder);
+  // Inline projects: each its own `test`, under its own `root` if it sets one.
+  const listed = propertyOf(found, "projects");
+  const projects =
+    listed !== undefined && ts.isArrayLiteralExpression(bare(listed))
+      ? (bare(listed) as ts.ArrayLiteralExpression).elements.flatMap((element) => {
+          if (!ts.isExpression(element)) return [];
+          const project = objectOf(element, source);
+          const projectTest = project === null ? null : objectOf(propertyOf(project, "test"), source);
+          return projectTest === null ? [] : [read(projectTest, folder)];
+        })
+      : [];
   const settings: VitestSettings = {
-    ...(environment !== undefined && ts.isStringLiteralLike(environment) ? { environment: environment.text } : {}),
-    setupFiles,
-    ...(setupPackages.length === 0 ? {} : { setupPackages }),
-    ...(/^\d+$/.test(timeoutText) ? { testTimeout: Number(timeoutText) } : {}),
-    ...(globals?.kind === ts.SyntaxKind.TrueKeyword ? { globals: true } : {}),
+    ...(top.environment === undefined ? {} : { environment: top.environment }),
+    setupFiles: top.setupFiles,
+    ...(top.setupPackages === undefined ? {} : { setupPackages: top.setupPackages }),
+    ...(top.testTimeout === undefined ? {} : { testTimeout: top.testTimeout }),
+    ...(top.globals === true ? { globals: true } : {}),
+    ...(projects.length === 0 ? {} : { projects }),
   };
   return settings.environment === undefined &&
     settings.setupFiles.length === 0 &&
-    setupPackages.length === 0 &&
+    (settings.setupPackages ?? []).length === 0 &&
     settings.testTimeout === undefined &&
-    settings.globals !== true
+    settings.globals !== true &&
+    projects.length === 0
     ? null
     : settings;
 }
@@ -242,7 +285,32 @@ export function vitestConfigText(
     "",
     "export default {",
     "  plugins: [sourceFirst],",
-    `  test: ${JSON.stringify(test, null, 2).replace(/\n/g, "\n  ")},`,
+    `  test: ${JSON.stringify(
+      {
+        ...test,
+        // Each inline project as the repository's config sets it, extending
+        // this one (its resolver and aliases) with its paths at the folder's.
+        ...(settings.projects === undefined || settings.projects.length === 0
+          ? {}
+          : {
+              projects: settings.projects.map((project) => ({
+                extends: true,
+                test: {
+                  ...(project.name === undefined ? {} : { name: project.name }),
+                  ...(project.include === undefined ? {} : { include: project.include.map(folderPath) }),
+                  ...(project.environment === undefined ? {} : { environment: project.environment }),
+                  ...(project.setupFiles.length === 0 && (project.setupPackages ?? []).length === 0
+                    ? {}
+                    : { setupFiles: [...(project.setupPackages ?? []), ...project.setupFiles.map((file) => `./${folderPath(file)}`)] }),
+                  ...(project.testTimeout === undefined ? {} : { testTimeout: project.testTimeout }),
+                  ...(project.globals === true ? { globals: true } : {}),
+                },
+              })),
+            }),
+      },
+      null,
+      2,
+    ).replace(/\n/g, "\n  ")},`,
     ...(aliases.length === 0
       ? []
       : [
