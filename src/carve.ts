@@ -136,6 +136,8 @@ export function renderSliceAgents(input: {
   readonly testsAt?: string;
   /** The coverage the package's test script holds it to, which the folder's `npm test` holds added files to. */
   readonly coverage?: CoverageGate;
+  /** The runner the package's own tests run on, by its test script. */
+  readonly runner?: "vitest" | "node:test";
 }): string {
   const tests =
     input.testsInFolder === 0
@@ -157,6 +159,13 @@ export function renderSliceAgents(input: {
     "- If `carveout/baseline.json` is there, the tests it lists failed on the mocks before any edit and are not counted; with none, every test counts.",
     "- The build writes a `.js` beside each `.ts`, a new file's too: leave them. Only the `.ts` comes back.",
     `- ${tests}${left} A pass here is a pass against mocks.`,
+    ...(input.runner === undefined
+      ? []
+      : [
+          input.runner === "vitest"
+            ? '- The package\'s tests run on Vitest: write new ones with it (`import { expect, test } from "vitest"`); `npm test` runs them as the repository does. A node:test test runs here but not in the repository.'
+            : "- The package's tests run on node:test: write new ones with it (`import { test } from \"node:test\"`); `npm test` runs them as the repository does.",
+        ]),
     ...(input.testsAt === undefined
       ? []
       : [
@@ -252,6 +261,26 @@ export function packagesTypingLines(
       if (statement.getStart(source) <= end && at < statement.getEnd()) typesIn(statement, false);
   }
   return found;
+}
+
+/**
+ * The runner the entry points' package's tests run on, by its test script:
+ * `vitest` (Vitest), `node --test` (node:test), or null when the script
+ * says neither or there is none.
+ */
+export function packageTestRunner(repo: string, entryPoints: readonly string[]): "vitest" | "node:test" | null {
+  const first = entryPoints[0];
+  if (first === undefined) return null;
+  const dir = packageFolder(resolve(repo))(`${first}/x`);
+  try {
+    const script = (JSON.parse(readFileSync(join(repo, dir, "package.json"), "utf8")) as { scripts?: Record<string, unknown> }).scripts?.["test"];
+    if (typeof script !== "string") return null;
+    if (/(^|[\s;&|(])vitest(\s|$)/.test(script)) return "vitest";
+    if (/(^|[\s;&|(])(node|tsx)\s+(--[\w-]+(=\S+)?\s+)*--test(\s|$)/.test(script)) return "node:test";
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1254,6 +1283,7 @@ export async function computeCut(
   const budget = request.budget ?? SLICE_BUDGET_DEFAULTS;
   const entryPoints = entriesOf(request);
   const { setup, settings: vitest } = withTestSetup(repo, entryPoints, request.tests === true);
+  const testRunner = request.tests === true ? packageTestRunner(repo, entryPoints) : null;
   const { built } = walkGraph(repo, entryPoints, budget, {
     ...walkOptions(settled, repo),
     ...(setup.length === 0 ? {} : { roots: setup }),
@@ -1271,6 +1301,7 @@ export async function computeCut(
       budget,
       tests: request.tests === true,
       ...(setup.length === 0 ? {} : { setupFiles: setup }),
+      ...(testRunner === "vitest" ? { testRunner } : {}),
       ...(live.length === 0 ? {} : { live }),
       ...(settled.wholePackage ? { wholePackage: true } : {}),
       ...(settled.followWorkspaces ? { followWorkspaces: true } : {}),
@@ -1538,6 +1569,7 @@ export async function computeCut(
     keepsImplicitAny: analysis.keepsImplicitAny,
     implicitAnyFiles: analysis.implicitAnyFiles,
     ...(vitest === null ? {} : { vitest }),
+    ...(testRunner === "vitest" ? { testRunner } : {}),
     hasNodeTypes: nodeTypes !== null,
   });
   // Peers the installed packages need, and packages asked for by name
@@ -1692,6 +1724,7 @@ export async function computeCut(
         ...(request.task === undefined || request.task.trim() === "" ? {} : { task: true }),
         ...(testsAt === undefined ? {} : { testsAt }),
         ...(coverage === null ? {} : { coverage }),
+        ...(testRunner === null ? {} : { runner: testRunner }),
       }),
       class: "config",
       public: true,

@@ -27,6 +27,12 @@ export interface SliceParams {
    */
   readonly setupFiles?: readonly string[];
   /**
+   * The runner the package's own tests run on, when it is Vitest: the
+   * folder installs it, pinned as the package pins it, for the tests the
+   * contributor writes, whether or not a test of the slice came along.
+   */
+  readonly testRunner?: "vitest";
+  /**
    * Service packages kept real rather than mocked: installed and typed as
    * the repository has them, with the environment their importers read
    * left to the shell. Absent when none.

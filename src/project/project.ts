@@ -306,6 +306,8 @@ export interface ProjectInput {
   readonly implicitAnyFiles?: readonly string[];
   /** The package's Vitest settings, for the folder's `vitest.config.mjs`; see `vitest-config.ts`. */
   readonly vitest?: VitestSettings;
+  /** The runner the package's own tests run on, when it is Vitest: the folder is set up for it with no test of it carried. */
+  readonly testRunner?: "vitest";
   /** The folder installs Node's own types instead of the fallback globals. */
   readonly hasNodeTypes?: boolean;
   /** Service packages kept real rather than mocked, sorted. */
@@ -1987,7 +1989,7 @@ export function generateProject(input: ProjectInput): GeneratedProject {
     add({ path: VIRTUAL_MAP_PATH, text: `${JSON.stringify(virtualModules, null, 2)}\n`, class: "harness", public: true });
   // Vitest resolves by Vite's rules, which know neither tsc's paths nor the
   // loader's map: the virtual modules go to it as aliases.
-  if (vitestTests.length > 0)
+  if (vitestTests.length > 0 || (input.testRunner === "vitest" && vitestInstalled))
     add({
       path: "vitest.config.mjs",
       text: vitestConfigText(input.vitest ?? { setupFiles: [] }, undefined, virtualModules),

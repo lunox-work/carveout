@@ -477,6 +477,14 @@ export async function analyseSlice(input: {
     for (const test of walk.globalsTests) files.add(test);
     packageFiles.set("vitest", files);
   }
+  // So does a package whose tests run on Vitest when no test of the slice
+  // came along: the tests the contributor writes run on it, as the
+  // repository's do. Pinned as the entry points' package pins it.
+  if (params.tests && params.testRunner === "vitest") {
+    const files = packageFiles.get("vitest") ?? new Set<string>();
+    for (const entry of walk.entries) files.add(entry);
+    packageFiles.set("vitest", files);
+  }
   // A file read by path must be there itself; a stub at its path is not it.
   for (const edge of walk.cuts.outbound)
     if (edge.relation === "reads" && !copied(edge.to))
