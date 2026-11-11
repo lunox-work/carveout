@@ -159,7 +159,7 @@ Step 1 rerun on the fixed build (`results/e4-after-fix.json`, median of 3):
 The procedure is in [README.md](README.md#e5-replaying-real-commits), and
 the bars are in [PLAN-benchmark.md](PLAN-benchmark.md). The runs used CLI
 `e407a46` on the eleven commits of `e5-cases.json`, and the raw data is in
-`results/e5.jsonl` (newest line per case and mode).
+`results/e5.jsonl.gz` plus any newer lines in `results/e5.jsonl` (newest line per case and mode).
 
 **Usable cases.** The oracle, B plus the commit's whole package change,
 passes the package's tests on 8 of 11. The other three fail even then:

@@ -25,6 +25,7 @@
 
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { gunzipSync } from "node:zlib";
 import {
   changesOf,
   log as logAs,
@@ -42,6 +43,9 @@ import { HERE, WORK, carveout, checkout, cloneOf, frozenCli, git } from "./lib.m
 
 const CASES = JSON.parse(readFileSync(join(HERE, "e5-cases.json"), "utf8")).cases;
 const RESULTS = join(HERE, "results", "e5.jsonl");
+// Lines up to 2026-11-11, gzipped to keep every file under the Claude plugin
+// directory's 5 MiB limit. Read first; new lines still go to RESULTS.
+const ARCHIVE = join(HERE, "results", "e5.jsonl.gz");
 const E5 = join(WORK, "e5");
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(name);
@@ -179,8 +183,9 @@ function oracle(item) {
 
 function results() {
   const out = new Map();
-  if (!existsSync(RESULTS)) return out;
-  for (const text of readFileSync(RESULTS, "utf8").split("\n").filter(Boolean)) {
+  const archive = existsSync(ARCHIVE) ? gunzipSync(readFileSync(ARCHIVE)).toString("utf8") : "";
+  const recent = existsSync(RESULTS) ? readFileSync(RESULTS, "utf8") : "";
+  for (const text of `${archive}\n${recent}`.split("\n").filter(Boolean)) {
     const item = JSON.parse(text);
     out.set(`${item.slug}/${item.mode}`, item);
   }
