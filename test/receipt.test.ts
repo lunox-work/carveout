@@ -272,3 +272,53 @@ test("refresh brings the repository's commits since the cut into a folder that h
   assert.match(readFileSync(held, "utf8"), /the contributor's note[\s\S]*the repository's note/);
   assert.match(readFileSync(join(cut.out, "apps/shop/src/tax.ts"), "utf8"), /0\.2/);
 });
+
+test("apply into a folder in pseudonyms names what the cut never saw by the same words, and names what it cannot", async () => {
+  const named = join(scratch, "named-repo");
+  cpSync(FIXTURE, named, { recursive: true });
+  writeFileSync(join(named, "apps/shop/src/acme-cases.ts"), "// Acme fixtures\nexport const ACME_CASES = [1, 2];\n");
+  const tax = join(named, "apps/shop/src/tax.ts");
+  writeFileSync(tax, `import { ACME_CASES } from "./acme-cases";\n${readFileSync(tax, "utf8")}export const cases = ACME_CASES.length;\n`);
+  git(named, ["init", "-q"]);
+  git(named, ["add", "-A"]);
+  git(named, ["commit", "-q", "-m", "fixture"]);
+  const cut = await cutSlice({
+    repo: named,
+    out: join(scratch, "named"),
+    entryPoints: ["apps/shop/src/tax.ts"],
+    budget: { maxFiles: 40, maxDepth: 1 },
+    offline: true,
+    public: true,
+    names: ["acme"],
+  });
+  assert.ok(cut.receipt !== null);
+  const placeholder = readReceipt(cut.receipt).pseudonyms?.words?.find((word) => word.term === "acme")?.placeholder ?? "";
+  assert.ok(placeholder !== "" && placeholder !== "acme", JSON.stringify(readReceipt(cut.receipt).pseudonyms?.words));
+  // The repository adds a file whose name and first line spell the term
+  // where no rule of the cut's reaches, and a picture that spells it.
+  const work = join(scratch, "named-up");
+  git(scratch, ["clone", "-q", named, work]);
+  writeFileSync(join(work, "apps/shop/src/acme-cases-v2.ts"), "// Acme checkout fixtures, v2\nexport const ACME_V2 = [3];\n");
+  writeFileSync(join(work, "apps/shop/src/acme-logo.svg"), "<svg xmlns=\"http://www.w3.org/2000/svg\"><title>Acme Corp</title></svg>\n");
+  const upTax = join(work, "apps/shop/src/tax.ts");
+  writeFileSync(
+    upTax,
+    `import { ACME_V2 } from "./acme-cases-v2";\nimport logo from "./acme-logo.svg";\n${readFileSync(upTax, "utf8")}export const v2 = ACME_V2.length + String(logo).length;\n`,
+  );
+  git(work, ["add", "-A"]);
+  const applied = await applyPatch(cut.out, git(work, ["diff", "--cached"]), { stubs: true });
+  assert.ok(applied.added.includes("apps/shop/src/acme-cases-v2.ts"), JSON.stringify(applied));
+  // Written under the placeholder, where the renamed import looks for it.
+  assert.equal(existsSync(join(cut.out, "apps/shop/src/acme-cases-v2.ts")), false);
+  const renamed = join(cut.out, `apps/shop/src/${placeholder}-cases-v2.ts`);
+  assert.ok(existsSync(renamed), `expected ${renamed}`);
+  assert.doesNotMatch(readFileSync(renamed, "utf8"), /acme/i);
+  const folderTax = readFileSync(join(cut.out, "apps/shop/src/tax.ts"), "utf8");
+  assert.match(folderTax, new RegExp(`from "\\./${placeholder}-cases-v2(\\.js)?"`));
+  assert.doesNotMatch(folderTax, /acme/i);
+  // What no word reaches (a picture copied as it is) is named, not sent.
+  const logo = [`apps/shop/src/${placeholder}-logo.svg`, "apps/shop/src/acme-logo.svg"].find((path) => existsSync(join(cut.out, path)));
+  if (logo !== undefined && /acme/i.test(readFileSync(join(cut.out, logo), "utf8")))
+    assert.ok(applied.leaks.some((leak) => leak.files.includes(logo)), JSON.stringify(applied.leaks));
+  else assert.deepEqual(applied.leaks, []);
+});

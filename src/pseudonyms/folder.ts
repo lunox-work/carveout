@@ -387,6 +387,26 @@ export function looseLeaks(
   return leaks;
 }
 
+/**
+ * Each term the table's rules left in a path or a text, given its
+ * placeholder, spelled as the term was (`AcmeDiscount` → `ZorvexDiscount`,
+ * `acme-cases-v2.ts` → `zorvex-cases-v2.ts`): what the cut never saw, as
+ * `apply` writes it. The rules match what the cut found, file by file; a
+ * file the repository added since, or a line it wrote, may spell a term
+ * where no rule reaches. `fromFolder` puts each back by the same words. A
+ * kept package's name stays as it is, and a term the cut gave no
+ * placeholder (it found none) is left for the leak scan to name.
+ */
+export function wordsToFolder(table: FolderPseudonyms, text: string): string {
+  let out = maskKept(text, table.kept);
+  for (const { term, placeholder } of table.words ?? [])
+    for (const match of [...termMatches(out, term)].reverse()) {
+      const surface = out.slice(match.start, match.end);
+      out = `${out.slice(0, match.start)}${restyle(placeholder.split("-"), surface)}${out.slice(match.end)}`;
+    }
+  return unmaskKept(out, table.kept);
+}
+
 /** A path or text in the repository's names, put in the folder's. */
 export function toFolder(table: FolderPseudonyms, path: string, text: string): AliasedFile {
   const out = renameFile({ path, text: maskKept(text, table.kept) }, table.rules);

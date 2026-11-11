@@ -205,6 +205,13 @@ function verdictOf(
   };
 }
 
+/** What a command wrote into a folder in pseudonyms that still names the repository: for the maintainer, in full. */
+function leaksText(leaks: readonly { readonly term: string; readonly files: readonly string[] }[]): string {
+  return `The folder now holds names the repository goes by; do not send it as it is (rename them, or cut again):\n${list(
+    leaks.map(({ term, files }) => `${term}: ${files.join(", ")}`),
+  )}\n`;
+}
+
 function fail(message: string): never {
   process.stderr.write(`carveout: ${message}\n`);
   process.exit(1);
@@ -979,8 +986,10 @@ async function main(argv: readonly string[]) {
               applied.stubs.map((stub) => `${stub.path}: ${stub.detail}`),
             )}\n`,
           );
+        if (applied.leaks.length > 0) process.stdout.write(leaksText(applied.leaks));
       }
       if (applied.stubs.some((stub) => !stub.written)) process.exitCode = 5;
+      if (applied.leaks.length > 0) process.exitCode = 2;
       if (applied.conflicts.length > 0) process.exitCode = 7;
       return;
     }
@@ -1011,7 +1020,9 @@ async function main(argv: readonly string[]) {
             "",
           ].join("\n"),
         );
+        if (applied.leaks.length > 0) process.stdout.write(leaksText(applied.leaks));
       }
+      if (refreshed !== null && refreshed.applied.leaks.length > 0) process.exitCode = 2;
       if (refreshed !== null && refreshed.applied.conflicts.length > 0) process.exitCode = 7;
       return;
     }

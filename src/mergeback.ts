@@ -40,7 +40,7 @@ import {
 import { symbolDiff } from "./status.js";
 import { trustedRepo } from "./policy.js";
 import { folderView, saveRecord, trustedCut } from "./receipt.js";
-import { fromFolder, toFolder, type FolderPseudonyms } from "./pseudonyms/index.js";
+import { fromFolder, looseLeaks, toFolder, wordsToFolder, type FolderPseudonyms } from "./pseudonyms/index.js";
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const sha256 = (data: string | Buffer) =>
@@ -74,6 +74,13 @@ export interface Applied {
    * folder had them, for a person to merge.
    */
   readonly conflicts: readonly string[];
+  /**
+   * Names the repository goes by that what the command wrote into a folder
+   * in pseudonyms still holds (a term the cut found nowhere, so has no
+   * placeholder for; a binary file): the folder must not go out as it is.
+   * By term, with the folder paths it is in.
+   */
+  readonly leaks: readonly { readonly term: string; readonly files: readonly string[] }[];
 }
 
 /** `theirs` merged into `ours` from `base`, as `git merge-file` does; conflicts when they overlap. */
@@ -240,6 +247,8 @@ export async function applyPatch(
     const conflicts: string[] = [];
     const grown: IncludedFile[] = [];
     const rewrites: ImportRewrite[] = [];
+    /** Folder paths the command wrote, for the leak scan. */
+    const wrote: string[] = [];
     for (const [path, status] of [...touched.entries()].sort(([a], [b]) => compare(a, b))) {
       if (status === "D") {
         if (included.has(path)) {
@@ -281,6 +290,7 @@ export async function applyPatch(
         merged.push(path);
       } else if (text === null) await copyFile(join(repo, path), join(root, folderPath));
       else await writeFile(join(root, folderPath), names.text(path, text));
+      wrote.push(folderPath);
       if (!included.has(path) && status === "M") {
         // A repository file the slice did not hold: it joins the slice at
         // the bytes of the cut's commit, so `patch` diffs it from there.
@@ -290,6 +300,7 @@ export async function applyPatch(
       (included.has(path) || status === "M" ? changed : added).push(path);
     }
     const stubs = await neededStubs(root, record, cuts, options.stubs === true, names, (updated, written) => {
+      wrote.push(...Object.keys(written));
       trusted = saveRecord(root, trusted, updated, written);
     });
     if (grown.length > 0) {
@@ -306,7 +317,7 @@ export async function applyPatch(
       };
       trusted = saveRecord(root, trusted, updated);
     }
-    return { changed, added, deleted, outside, stubs, merged, conflicts };
+    return { changed, added, deleted, outside, stubs, merged, conflicts, leaks: leaksIn(root, wrote, trusted.receipt?.pseudonyms) };
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }
@@ -322,11 +333,26 @@ interface Names {
 /** The folder's names for a cut in pseudonyms (its table), or the repository's own. */
 function namesOf(table: FolderPseudonyms | undefined): Names {
   if (table === undefined) return { path: (path) => path, text: (_path, text) => text, back: (_path, text) => text };
+  // The table's rules, then a placeholder for each term they did not reach:
+  // a file the repository added since the cut, or a line it wrote, spells
+  // a term where no rule of the cut's matches.
   return {
-    path: (path) => toFolder(table, path, "").path,
-    text: (path, text) => toFolder(table, path, text).text,
+    path: (path) => wordsToFolder(table, toFolder(table, path, "").path),
+    text: (path, text) => wordsToFolder(table, toFolder(table, path, text).text),
     back: (path, text) => fromFolder(table, path, text).text,
   };
+}
+
+/** The names a folder in pseudonyms must not hold, in the files a command wrote there. */
+function leaksIn(root: string, paths: readonly string[], table: FolderPseudonyms | undefined): Applied["leaks"] {
+  if (table === undefined || paths.length === 0) return [];
+  const files = [...new Set(paths)].sort(compare).flatMap((path) => {
+    const at = join(root, path);
+    if (!existsSync(at)) return [];
+    const bytes = readFileSync(at);
+    return [{ path, text: bytes.includes(0) ? bytes.toString("latin1") : bytes.toString("utf8") }];
+  });
+  return looseLeaks(files, table.vocabulary, table.kept).map(({ term, files: found }) => ({ term, files: found }));
 }
 
 /** A file as the slice's record holds it, at the clone's HEAD (the cut's commit). */
