@@ -1573,7 +1573,7 @@ function readme(input: {
     "",
     ...list(input.tests, "None."),
     "",
-    `\`${SANDBOX_COMMANDS.test}\` builds the folder, then runs every \`*.test.ts\` in it on the runner it imports (\`node:test\` on the compiled \`.js\`, Vitest on the source), the tests above and any you add. Tests that failed on the mocks before any edit, on either runner, are listed in \`${BASELINE_PATH}\` once the folder has been checked; the run prints in full only the failures that are not among them, and does not count them. Its last line counts the tests that pass, by runner, and apart from them the checks that the public surface keeps its exports and types. There is nothing to read in \`${TEST_RUNNER_PATH}\` beyond this.`,
+    `\`${SANDBOX_COMMANDS.test}\` builds the folder, then runs every test file in it (\`*.test.*\`, \`*.spec.*\`) on the runner it imports (\`node:test\` on the compiled \`.js\`, so run it through \`npm test\`; Vitest on the source, as the repository's does), the tests above and any you add. Tests that failed on the mocks before any edit, on either runner, are listed in \`${BASELINE_PATH}\` once the folder has been checked; the run prints in full only the failures that are not among them, and does not count them. Its last line counts the tests that pass, by runner, and apart from them the checks that the public surface keeps its exports and types. There is nothing to read in \`${TEST_RUNNER_PATH}\` beyond this.`,
     "",
     "`BOUNDARY.md` is an index of the modules the slice imports from outside and of the exports outside code takes from it; the types are in the `.d.ts` stubs beside the mocks. `carveout.json` records the cut.",
   ].join("\n")}\n`;
@@ -1969,7 +1969,7 @@ export function generateProject(input: ProjectInput): GeneratedProject {
     add({ path: VIRTUAL_MAP_PATH, text: `${JSON.stringify(virtualModules, null, 2)}\n`, class: "harness", public: true });
   // Vitest resolves by Vite's rules, which know neither tsc's paths nor the
   // loader's map: the virtual modules go to it as aliases.
-  if (vitestTests.length > 0 && (input.vitest !== undefined || Object.keys(virtualModules).length > 0))
+  if (vitestTests.length > 0)
     add({
       path: "vitest.config.mjs",
       text: vitestConfigText(input.vitest ?? { setupFiles: [] }, undefined, virtualModules),
@@ -1985,7 +1985,7 @@ export function generateProject(input: ProjectInput): GeneratedProject {
   });
   add({
     path: ".npmrc",
-    text: "engine-strict=true\nignore-scripts=true\nfund=false\naudit=false\n",
+    text: "engine-strict=true\nignore-scripts=true\nfund=false\naudit=false\nupdate-notifier=false\n",
     class: "config",
     public: true,
   });

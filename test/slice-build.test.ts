@@ -350,3 +350,24 @@ test("a file read by path is a path to copy, never a package named for its first
   assert.ok(existsSync(join(copied.out, "apps/shop/python/run.py")));
   assert.equal(copied.record.blockers.some((each) => each.code === "path_read"), false, JSON.stringify(copied.record.blockers));
 });
+
+test("the folder's Vitest reads the source beside a built .js, as the repository's does", async () => {
+  const at = join(scratch, "source-first");
+  write(at, {
+    "src/mod.ts": 'export const value = "source";\n',
+    "src/mod.js": 'export const value = "the last build";\n',
+    "src/only.js": "export {};\n",
+    "vitest.config.mjs": vitestConfigText({ setupFiles: [] }),
+  });
+  const config = (await import(join(at, "vitest.config.mjs"))).default as {
+    plugins: { resolveId: (source: string, importer?: string) => string | null }[];
+  };
+  const [plugin] = config.plugins;
+  assert.ok(plugin !== undefined);
+  const importer = join(at, "src/mod.test.ts");
+  assert.equal(plugin.resolveId("./mod.js", importer), join(at, "src/mod.ts"));
+  // A .js with no source beside it, a package, or an import from inside one is left to Vite.
+  assert.equal(plugin.resolveId("./only.js", importer), null);
+  assert.equal(plugin.resolveId("react", importer), null);
+  assert.equal(plugin.resolveId("./mod.js", join(at, "node_modules/x/index.js")), null);
+});

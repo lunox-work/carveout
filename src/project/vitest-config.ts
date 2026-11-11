@@ -194,8 +194,13 @@ function isBareSpecifier(name: string): boolean {
 
 /**
  * The folder's `vitest.config.mjs`: the settings, with the setup files at
- * their folder paths, and an alias for each module that is no package
- * (`virtual:build-info`, and its subpaths) to its mock under `carveout/`.
+ * their folder paths; an alias for each module that is no package
+ * (`virtual:build-info`, and its subpaths) to its mock under `carveout/`;
+ * and a resolver that reads the source beside a built `.js`. The folder's
+ * build writes a `.js` beside each `.ts` for node:test, and a relative
+ * `./x.js` would otherwise be that file to Vitest: `vitest` run on its own
+ * after an edit tested the code as it was at the last build, where the
+ * repository's Vitest reads the source.
  */
 export function vitestConfigText(
   settings: VitestSettings,
@@ -212,24 +217,44 @@ export function vitestConfigText(
     ...(settings.globals === true ? { globals: true } : {}),
   };
   const aliases = Object.entries(virtualModules).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  if (aliases.length === 0)
-    return `// The repository's Vitest settings for the tests this folder carries, as the cut read them.\nexport default ${JSON.stringify({ test }, null, 2)};\n`;
   const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
   return [
     "// The repository's Vitest settings for the tests this folder carries, as the cut read them,",
-    "// and the modules that are no package, found at their mocks.",
+    "// the modules that are no package found at their mocks, and the source read beside a built .js.",
+    'import { existsSync } from "node:fs";',
+    'import { dirname, resolve } from "node:path";',
     'import { fileURLToPath } from "node:url";',
     "",
-    "export default {",
-    `  test: ${JSON.stringify(test, null, 2).replace(/\n/g, "\n  ")},`,
-    "  resolve: {",
-    "    alias: [",
-    ...aliases.map(
-      ([name, dir]) =>
-        `      { find: /^${escape(name)}(?:\\/.*)?$/, replacement: fileURLToPath(new URL(${JSON.stringify(`./${dir}/index.js`)}, import.meta.url)) },`,
-    ),
-    "    ],",
+    "const SOURCES = { js: [\".ts\", \".tsx\"], mjs: [\".mts\"], cjs: [\".cts\"] };",
+    "/** `./x.js` from the folder's own code is `./x.ts` when that is there, as in the repository. */",
+    "const sourceFirst = {",
+    '  name: "carveout-source-first",',
+    '  enforce: "pre",',
+    "  resolveId(source, importer) {",
+    '    if (importer === undefined || importer.includes("/node_modules/") || !/^\\.{1,2}\\//.test(source)) return null;',
+    "    const match = /^(.*)\\.([cm]?js)$/.exec(source);",
+    "    if (match === null) return null;",
+    '    const stem = resolve(dirname(importer.split("?")[0]), match[1]);',
+    "    for (const ext of SOURCES[match[2]]) if (existsSync(stem + ext)) return stem + ext;",
+    "    return null;",
     "  },",
+    "};",
+    "",
+    "export default {",
+    "  plugins: [sourceFirst],",
+    `  test: ${JSON.stringify(test, null, 2).replace(/\n/g, "\n  ")},`,
+    ...(aliases.length === 0
+      ? []
+      : [
+          "  resolve: {",
+          "    alias: [",
+          ...aliases.map(
+            ([name, dir]) =>
+              `      { find: /^${escape(name)}(?:\\/.*)?$/, replacement: fileURLToPath(new URL(${JSON.stringify(`./${dir}/index.js`)}, import.meta.url)) },`,
+          ),
+          "    ],",
+          "  },",
+        ]),
     "};",
     "",
   ].join("\n");

@@ -170,7 +170,7 @@ export function renderSliceAgents(input: {
     "## What comes back, and what is held for the owner",
     "",
     "- Edits to the source files here, and new files beside them in the same packages, come back.",
-    "- A test you were handed may only grow: a new test or a new assertion. Changing an assertion, the data or setup it rests on, or a helper or fixture; skipping or focusing a test; or mocking, spying on or rewriting the code under test is held for the owner to read.",
+    "- A test you were handed may only grow: a new test or a new assertion, a new import or a name added to one, a new helper of your own. Changing an assertion, the data or setup it rests on, or a helper or fixture you were handed; skipping or focusing a test; or mocking, spying on or rewriting the code under test is held for the owner to read.",
     "- New code may not reach what the slice does not: no new package (package.json is generated), no new disk, network, process or environment access, no code built from text (`eval`, `Function`), no module outside these packages.",
     "- No code that tells a test run from a real one, ends the run early, or rewrites the assertion library or a built-in; no new `@ts-ignore`, `eslint-disable` or coverage ignore; no edit to check or test-runner configuration.",
     "- Generated files (the stubs, everything under `carveout/`, `package.json`, the lockfile, the root configuration) do not come back: when the change needs one changed, say so.",
@@ -295,12 +295,12 @@ export function renderTask(input: {
     ...(input.testsAt === undefined ? [] : [`- New tests are where the repository's test script runs them: \`${input.testsAt}\`.`]),
     ...(input.surface === 0
       ? []
-      : [`- The ${input.surface} export(s) code outside this folder uses keep their names and types (\`npm test\` checks them).`]),
+      : [`- The ${input.surface} export(s) code outside this folder uses keep their names and types: \`npm test\` checks them, and its last line counts those checks.`]),
     "- The owner's \`carveout patch\` of the folder keeps nothing out (see AGENTS.md: what comes back, and what is held).",
     `- The repository's own CI passes once the change is merged: a pass here is a pass against mocks.${
       input.ci === undefined || input.ci.length === 0
         ? ""
-        : ` For this package it runs its own ${input.ci.map((name) => `\`${name}\``).join(", ")} script${input.ci.length === 1 ? "" : "s"}.`
+        : ` For this package it runs its own ${input.ci.map((name) => `\`${name}\``).join(", ")} script${input.ci.length === 1 ? "" : "s"}; here \`npm test\` runs its tests and its build, and the rest run in the repository.`
     }`,
   ].join("\n")}\n`;
 }
