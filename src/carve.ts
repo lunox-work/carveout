@@ -74,7 +74,7 @@ import { moduleSpecifiers, parseSource } from "./specifiers.js";
 import { scanSecrets, secretBlockers } from "./project/secrets.js";
 import { checkRecordPaths, handoffPolicy, trustedRepo, type Refusal } from "./policy.js";
 
-export const CARVEOUT_VERSION = "0.1.0";
+export const CARVEOUT_VERSION = "0.1.1";
 export const RECORD_PATH = "carveout.json";
 export const RECORD_SCHEMA_VERSION = 1;
 /** Blockers that stop a cut before it writes anything. */
