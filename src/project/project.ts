@@ -173,9 +173,16 @@ const ASSETS_LOADER = [
   "    return {};",
   "  }",
   "})();",
+  "/** The mock of a virtual module, or of one of its subpaths (`virtual:pwa-register/react`). */",
+  "const virtualOf = (specifier) => {",
+  "  if (Object.hasOwn(VIRTUAL, specifier)) return VIRTUAL[specifier];",
+  "  const name = Object.keys(VIRTUAL).find((each) => specifier.startsWith(`${each}/`));",
+  "  return name === undefined ? null : VIRTUAL[name];",
+  "};",
   "export async function resolve(specifier, context, nextResolve) {",
-  "  if (Object.hasOwn(VIRTUAL, specifier))",
-  "    return { url: new URL(`../${VIRTUAL[specifier]}/index.js`, import.meta.url).href, shortCircuit: true };",
+  "  const virtual = virtualOf(specifier);",
+  "  if (virtual !== null)",
+  "    return { url: new URL(`../${virtual}/index.js`, import.meta.url).href, shortCircuit: true };",
   "  try {",
   "    return await nextResolve(specifier, context);",
   "  } catch (error) {",
@@ -1906,15 +1913,28 @@ export function generateProject(input: ProjectInput): GeneratedProject {
       },
       globals && vitestInstalled ? ["vitest/globals"] : [],
       [],
-      Object.fromEntries(Object.entries(virtualModules).map(([name, dir]) => [name, [`./${dir}/index.d.ts`]])),
+      // A module's subpaths (`virtual:pwa-register/react`) answer from its mock too.
+      Object.fromEntries(
+        Object.entries(virtualModules).flatMap(([name, dir]) => [
+          [name, [`./${dir}/index.d.ts`]],
+          [`${name}/*`, [`./${dir}/index.d.ts`]],
+        ]),
+      ),
     ),
     class: "config",
     public: true,
   });
   if (Object.keys(virtualModules).length > 0)
     add({ path: VIRTUAL_MAP_PATH, text: `${JSON.stringify(virtualModules, null, 2)}\n`, class: "harness", public: true });
-  if (input.vitest !== undefined && vitestTests.length > 0)
-    add({ path: "vitest.config.mjs", text: vitestConfigText(input.vitest), class: "config", public: true });
+  // Vitest resolves by Vite's rules, which know neither tsc's paths nor the
+  // loader's map: the virtual modules go to it as aliases.
+  if (vitestTests.length > 0 && (input.vitest !== undefined || Object.keys(virtualModules).length > 0))
+    add({
+      path: "vitest.config.mjs",
+      text: vitestConfigText(input.vitest ?? { setupFiles: [] }, undefined, virtualModules),
+      class: "config",
+      public: true,
+    });
 
   add({
     path: ".nvmrc",

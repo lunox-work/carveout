@@ -93,13 +93,43 @@ export function vitestSettings(repo: string, dir: string): VitestSettings | null
     : settings;
 }
 
-/** The folder's `vitest.config.mjs`: the settings, with the setup files at their folder paths. */
-export function vitestConfigText(settings: VitestSettings, folderPath: (path: string) => string = (path) => path): string {
+/**
+ * The folder's `vitest.config.mjs`: the settings, with the setup files at
+ * their folder paths, and an alias for each module that is no package
+ * (`virtual:build-info`, and its subpaths) to its mock under `carveout/`.
+ */
+export function vitestConfigText(
+  settings: VitestSettings,
+  folderPath: (path: string) => string = (path) => path,
+  /** Module name → the folder of its mock, from the folder's root. */
+  virtualModules: Readonly<Record<string, string>> = {},
+): string {
   const test: Record<string, unknown> = {
     ...(settings.environment === undefined ? {} : { environment: settings.environment }),
     ...(settings.setupFiles.length === 0 ? {} : { setupFiles: settings.setupFiles.map((file) => `./${folderPath(file)}`) }),
     ...(settings.testTimeout === undefined ? {} : { testTimeout: settings.testTimeout }),
     ...(settings.globals === true ? { globals: true } : {}),
   };
-  return `// The repository's Vitest settings for the tests this folder carries, as the cut read them.\nexport default ${JSON.stringify({ test }, null, 2)};\n`;
+  const aliases = Object.entries(virtualModules).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  if (aliases.length === 0)
+    return `// The repository's Vitest settings for the tests this folder carries, as the cut read them.\nexport default ${JSON.stringify({ test }, null, 2)};\n`;
+  const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&");
+  return [
+    "// The repository's Vitest settings for the tests this folder carries, as the cut read them,",
+    "// and the modules that are no package, found at their mocks.",
+    'import { fileURLToPath } from "node:url";',
+    "",
+    "export default {",
+    `  test: ${JSON.stringify(test, null, 2).replace(/\n/g, "\n  ")},`,
+    "  resolve: {",
+    "    alias: [",
+    ...aliases.map(
+      ([name, dir]) =>
+        `      { find: /^${escape(name)}(?:\\/.*)?$/, replacement: fileURLToPath(new URL(${JSON.stringify(`./${dir}/index.js`)}, import.meta.url)) },`,
+    ),
+    "    ],",
+    "  },",
+    "};",
+    "",
+  ].join("\n");
 }

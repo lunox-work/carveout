@@ -7,7 +7,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { after, before, test } from "node:test";
@@ -190,8 +190,10 @@ test("a module that is no package (a Vite virtual module) is mocked in the folde
   const repo = join(scratch, "virtual");
   cpSync(FIXTURE, repo, { recursive: true });
   write(repo, {
-    "apps/shop/src/version.ts": 'import build from "virtual:build-info";\n\nexport const version = (): string => String(build.version ?? "dev");\n',
-    "apps/shop/src/virtual.d.ts": 'declare module "virtual:build-info" {\n  const build: { version?: string };\n  export default build;\n}\n',
+    "apps/shop/src/version.ts":
+      'import build from "virtual:build-info";\nimport { useRegisterSW } from "virtual:build-info/react";\n\nexport const version = (): string => String(build.version ?? "dev");\nexport const register = () => useRegisterSW();\n',
+    "apps/shop/src/virtual.d.ts":
+      'declare module "virtual:build-info" {\n  const build: { version?: string };\n  export default build;\n}\ndeclare module "virtual:build-info/react" {\n  export function useRegisterSW(): unknown;\n}\n',
   });
   const git = (args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, stdio: "ignore" });
   git(["init", "-q"]);
@@ -204,10 +206,34 @@ test("a module that is no package (a Vite virtual module) is mocked in the folde
   assert.deepEqual(Object.keys(map), ["virtual:build-info"]);
   const tsconfig = JSON.parse(readFileSync(join(cut.out, "tsconfig.json"), "utf8"));
   assert.ok(tsconfig.compilerOptions.paths["virtual:build-info"]);
-  // The folder's loader finds it at runtime: a recording mock.
-  const run = spawnSync(process.execPath, ["--import", "./carveout/assets.js", "--input-type=module", "-e", 'const m = await import("virtual:build-info"); console.log(typeof m.default);'], { cwd: cut.out, encoding: "utf8" });
+  assert.ok(tsconfig.compilerOptions.paths["virtual:build-info/*"], "a subpath answers from the module's mock");
+  // The folder's loader finds it, and its subpath, at runtime: a recording mock.
+  const run = spawnSync(
+    process.execPath,
+    ["--import", "./carveout/assets.js", "--input-type=module", "-e", 'const m = await import("virtual:build-info"); const r = await import("virtual:build-info/react"); console.log(typeof m.default, typeof r.useRegisterSW);'],
+    { cwd: cut.out, encoding: "utf8" },
+  );
   assert.equal(run.status, 0, run.stderr);
-  assert.match(run.stdout, /function|object/);
+  assert.match(run.stdout, /^(function|object) (function|object)/);
+});
+
+test("Vitest finds a module that is no package, and its subpaths, at the mock the folder holds", async () => {
+  const at = join(scratch, "virtual-config");
+  mkdirSync(at, { recursive: true });
+  writeFileSync(
+    join(at, "vitest.config.mjs"),
+    vitestConfigText({ environment: "jsdom", setupFiles: [] }, undefined, { "virtual:pwa-register": "carveout/virtual/virtual-pwa-register" }),
+  );
+  const config = (await import(join(at, "vitest.config.mjs"))).default as {
+    test: { environment: string };
+    resolve: { alias: { find: RegExp; replacement: string }[] };
+  };
+  assert.equal(config.test.environment, "jsdom");
+  const [alias] = config.resolve.alias;
+  assert.ok(alias !== undefined);
+  assert.ok(alias.find.test("virtual:pwa-register") && alias.find.test("virtual:pwa-register/react"));
+  assert.ok(!alias.find.test("virtual:pwa-registered"));
+  assert.equal(alias.replacement, join(realpathSync(at), "carveout/virtual/virtual-pwa-register/index.js"));
 });
 
 test("a git clone of a folder keeps the stubs' runtime mocks the build output's ignore would hide", async () => {
