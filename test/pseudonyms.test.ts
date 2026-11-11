@@ -184,7 +184,7 @@ test("a placeholder the inputs already use is passed over, and no vocabulary dra
   const result = applied(files, vocabulary, rules);
   assert.equal(
     result.files[0]?.text,
-    "// Acme Corp's globex, built on initech.\n",
+    "// Acme Corp's globex-labs, built on initech.\n",
   );
   assert.deepEqual(draftPseudonyms({ files, vocabulary: [], imports: [] }), []);
 });

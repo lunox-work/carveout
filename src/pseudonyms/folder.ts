@@ -26,10 +26,11 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { applyAliases, invertAliasRules, renameFile, type AliasRule, type AliasedFile } from "./aliases.js";
-import { draftPseudonyms } from "./draft.js";
+import { draftPseudonyms, restyle } from "./draft.js";
 import {
   emailNames,
   termMatches,
+  termWords,
   vocabularyLeaks,
   type VocabularyLeak,
   type VocabularyName,
@@ -64,7 +65,7 @@ function manifestNames(path: string): VocabularyName[] {
   const name = manifest["name"];
   if (typeof name === "string") {
     const slash = name.indexOf("/");
-    if (name.startsWith("@") && slash > 1) names.push({ name: name.slice(1, slash), kind: "organization" });
+    if (name.startsWith("@") && slash > 1) names.push(ownerName(name.slice(1, slash)));
     else names.push({ name, kind: "name" });
   }
   const people = [manifest["author"], ...(Array.isArray(manifest["contributors"]) ? manifest["contributors"] : [])];
@@ -94,10 +95,21 @@ function manifestNames(path: string): VocabularyName[] {
   return names;
 }
 
+/**
+ * A package scope: one word is scanned as an organization's (`acme`),
+ * several as one name (`sandbox-factory`), since a scope is often named
+ * after what the code is about, and those words (`sandbox`) are the code's.
+ */
+function ownerName(name: string): VocabularyName {
+  return termWords(name).length > 1 ? { name, kind: "name" } : { name, kind: "organization" };
+}
+
 /** The account and repository a hosted URL names: `github.com/acme/shop`. */
 function hostedNames(url: string): VocabularyName[] {
   const match = /(?:github\.com|gitlab\.com|bitbucket\.org)[/:]([^/\s]+)\/([^/\s#?]+?)(?:\.git)?(?:[/#?]|$)/i.exec(url);
   if (match === null) return [];
+  // The account is the organization itself: its distinctive words are its
+  // own (`lunox` of `lunox-work`), whatever the code is about.
   return [
     { name: match[1] ?? "", kind: "organization" },
     { name: match[2] ?? "", kind: "name" },
@@ -250,28 +262,13 @@ export function toFolder(table: FolderPseudonyms, path: string, text: string): A
   return { path: out.path, text: unmaskKept(out.text, table.kept) };
 }
 
-/**
- * `term` (its words joined by `-`) spelled as `surface` spells its
- * placeholder: `LUNOX_WORK` for `ACME`, `LunoxWork` for `Acme`, and for
- * `acme`, `lunox-work` beside a `-`, `/` or `.` (a path, a package name)
- * and `lunoxWork` anywhere else (an identifier).
- */
-function spelled(term: string, surface: string, kebab: boolean): string {
-  const words = term.split("-").filter(Boolean);
-  const capital = (word: string) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`;
-  if (!/\p{Ll}/u.test(surface)) return words.join("_").toUpperCase();
-  if (/^\P{L}*\p{Lu}/u.test(surface)) return words.map(capital).join("");
-  return kebab ? words.join("-") : words.map((word, index) => (index === 0 ? word : capital(word))).join("");
-}
-
-/** `text` with each placeholder still in it put back as its term. */
+/** `text` with each placeholder still in it put back as its term, spelled as the placeholder was. */
 function restoreWords(text: string, words: FolderPseudonyms["words"]): string {
   let out = text;
   for (const { term, placeholder } of words ?? []) {
     for (const match of [...termMatches(out, placeholder)].reverse()) {
       const surface = out.slice(match.start, match.end);
-      const kebab = /[-/.]/.test(out[match.start - 1] ?? "") || /[-/.]/.test(out[match.end] ?? "");
-      out = `${out.slice(0, match.start)}${spelled(term, surface, kebab)}${out.slice(match.end)}`;
+      out = `${out.slice(0, match.start)}${restyle(term.split("-"), surface)}${out.slice(match.end)}`;
     }
   }
   return out;

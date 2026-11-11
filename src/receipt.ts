@@ -25,6 +25,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSy
 import { dirname, join, resolve } from "node:path";
 import { RECORD_PATH, carveoutHome, readRecord, type CarveoutRecord } from "./carve.js";
 import type { FolderPseudonyms } from "./pseudonyms/index.js";
+import type { Readiness } from "./readiness.js";
 
 export const RECEIPT_SCHEMA_VERSION = 1;
 
@@ -56,6 +57,8 @@ export interface Receipt {
    * folder that came back on these, not on what it brought.
    */
   readonly generatedText?: Readonly<Record<string, string>>;
+  /** What would make the folder's tests run on real code (`readinessOf`), public cut or not. */
+  readonly readiness?: Readiness;
 }
 
 /** The record as the folder holds it: what its files are measured against. */

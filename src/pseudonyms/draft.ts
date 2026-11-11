@@ -69,6 +69,52 @@ function styled(word: string, surface: string): string {
   return word;
 }
 
+/**
+ * The words a multi-word term's placeholder adds after its own: a term of
+ * two words (`sandbox-factory`) becomes two (`contoso-labs`), so every
+ * spelling of it (`sandboxFactory`, `SANDBOX_FACTORY`, `sandbox factory`)
+ * has a spelling of its own, and maps back.
+ */
+const PLACEHOLDER_TAILS: readonly string[] = ["labs", "group", "works", "systems", "partners", "ventures"];
+
+/** A term's placeholder as words: its base, and a tail word for each word more the term has. */
+export function placeholderWords(term: string, base: string): string[] {
+  const count = term.split("-").filter(Boolean).length;
+  return [base, ...PLACEHOLDER_TAILS.slice(0, Math.max(0, count - 1))];
+}
+
+/**
+ * `words` spelled as `surface` spells its own: each word in the case of the
+ * surface's word in its place, joined as they are (`contosoLabs` for
+ * `sandboxFactory`, `CONTOSO_LABS` for `SANDBOX_FACTORY`, `contoso-labs`
+ * for `sandbox-factory`). A surface whose words run together with no mark
+ * between them (`sandboxfactory`) gets the words run together too.
+ */
+export function restyle(words: readonly string[], surface: string): string {
+  if (words.length <= 1) return styled(words[0] ?? "", surface);
+  const segments: string[] = [];
+  const joins: string[] = [];
+  surface.split(/([\s_\-./]+)/).forEach((part, index) => {
+    if (index % 2 === 1) {
+      joins.push(part);
+      return;
+    }
+    const pieces = part
+      .replace(/(\p{Ll}|\p{N})(\p{Lu})/gu, "$1\u0000$2")
+      .replace(/(\p{Lu})(\p{Lu}\p{Ll})/gu, "$1\u0000$2")
+      .split("\u0000")
+      .filter(Boolean);
+    pieces.forEach((piece, at) => {
+      if (at > 0) joins.push("");
+      segments.push(piece);
+    });
+  });
+  if (segments.length === words.length)
+    return words.map((word, index) => `${index === 0 ? "" : (joins[index - 1] ?? "")}${styled(word, segments[index] ?? surface)}`).join("");
+  const upper = !/\p{Ll}/u.test(surface);
+  return words.map((word, index) => (index === 0 ? styled(word, surface) : upper ? word.toUpperCase() : word)).join("");
+}
+
 /** A pseudo-file's leaves (`base#pointer`) have no path to rename. */
 const isRealPath = (path: string) => !path.includes("#");
 
@@ -128,7 +174,7 @@ export function draftPseudonyms(input: {
       const word = placeholderOf(match.term);
       if (word === null) return null;
       out += text.slice(at, match.start);
-      out += styled(word, text.slice(match.start, match.end));
+      out += restyle(placeholderWords(match.term, word), text.slice(match.start, match.end));
       at = match.end;
     }
     return out + text.slice(at);
@@ -232,6 +278,6 @@ export function draftPseudonyms(input: {
       texts.set(before, { before, after, kind: "text", paths: [] });
     }
   }
-  for (const [term, word] of placeholders) input.placeholders?.set(term, word);
+  for (const [term, word] of placeholders) input.placeholders?.set(term, placeholderWords(term, word).join("-"));
   return [...settled, ...identifiers.values(), ...texts.values()];
 }

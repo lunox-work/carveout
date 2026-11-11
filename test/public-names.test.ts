@@ -185,10 +185,10 @@ test("a placeholder's spelling maps back as the term's, in a path, an identifier
     vocabulary: ["lunox", "lunox-work"],
     words: [
       { term: "lunox", placeholder: "acme" },
-      { term: "lunox-work", placeholder: "globex" },
+      { term: "lunox-work", placeholder: "globex-labs" },
     ],
   };
-  const back = fromFolder(table, "src/acme-totals.ts", 'import { Button } from "@lunox/ui";\nconst acmeTotal = 1; const ACME_KEY = 2;\n// Globex ships it: globex.\nconst GLOBEX = 3; const globexId = 4;\n');
+  const back = fromFolder(table, "src/acme-totals.ts", 'import { Button } from "@lunox/ui";\nconst acmeTotal = 1; const ACME_KEY = 2;\n// GlobexLabs ships it: globex-labs.\nconst GLOBEX_LABS = 3; const globexLabsId = 4;\n');
   assert.equal(back.path, "src/lunox-totals.ts");
   assert.equal(
     back.text,

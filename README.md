@@ -117,7 +117,13 @@ What carveout holds to:
   keeps (`LunoxCart` becomes `AcmeCart`), and a name left in the folder is
   a `vocabulary_leaked` blocker. `patch` renames the folder back, names
   the contributor made in the placeholders included (`AcmeDiscount` comes
-  back as `LunoxDiscount`). `--keep-names` writes the repository's names.
+  back as `LunoxDiscount`). A name of several words takes a placeholder of
+  as many (`sandboxFactory` becomes `vandelayLabs`, `SANDBOX_FACTORY`
+  `VANDELAY_LABS`), and a scope of several words is hidden only whole, so
+  the words a codebase is about stay. A test that computes on a hidden
+  name's spelling (splits it into its words) can fail in pseudonyms: on
+  sandbox-factory, 2 of 415 tests did. `--keep-names` writes the
+  repository's names.
   `--private <path>` keeps a module
   out even when the walk reaches it, `--copy-pure` included. `--copy-pure`
   copies more of the repository (the pure code the slice runs) so the

@@ -1642,7 +1642,9 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
     throw new Error(
       `Nothing written: the cut would carry a credential.\n${credentials
         .map((blocker) => `  ${blocker.code}${blocker.file === null ? "" : ` ${blocker.file}`}: ${blocker.detail}`)
-        .join("\n")}`,
+        .join("\n")}\nOr keep a file out of the slice: ${[
+        ...new Set(credentials.flatMap((blocker) => (blocker.file === null ? [] : [`--private ${blocker.file}`]))),
+      ].join(" ")}`,
     );
   const fresh = !existsSync(out);
   const cutId = newCutId();
@@ -1879,6 +1881,8 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
       record,
       ...(folderRecord === record ? {} : { folderRecord }),
       ...(table === null ? {} : { pseudonyms: table }),
+      // The advice a public folder keeps out of its own record.
+      readiness,
       generatedText,
     });
   await writeFile(join(out, RECORD_PATH), `${JSON.stringify(folderRecord, null, 2)}\n`, "utf8");

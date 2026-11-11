@@ -608,12 +608,15 @@ async function main(argv: readonly string[]) {
           counts === undefined
             ? ""
             : ` ${counts.pass} of ${counts.tests} test(s) pass${edited ? "" : " before any edit"}.`;
+        const readiness = checked.readiness ?? trustedCut(dir, values.receipt, { optional: true }).receipt?.readiness;
         const advice =
-          checked.readiness !== undefined && hasAdvice(checked.readiness)
-            ? ["To run them on real code instead, cut again with:", ...renderReadiness(checked.readiness)]
-            : checked.request.public === true
-              ? ["The cut printed what would run them on real code (--copy-pure, --live, --copy); cut again with it."]
-              : [];
+          readiness !== undefined && hasAdvice(readiness)
+            ? ["To run them on real code instead, cut again with:", ...renderReadiness(readiness)]
+            : readiness !== undefined
+              ? [
+                  "Nothing a cut's flags change runs them on real code: they test what the slice cuts. Leave them out of the task, or widen the cut (more entries, or --depth) to hold what they test.",
+                ]
+              : ["Cut again, on this machine, to see what would run them on real code (--copy-pure, --live, --copy)."];
         process.stdout.write(
           `${[
             handoff === "failed"
