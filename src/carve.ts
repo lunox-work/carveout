@@ -2968,6 +2968,11 @@ export async function checkProject(
         const report = join(work, HARNESS_DIR, ".accept.json");
         await rm(report, { force: true });
         const bin = join(work, "node_modules", ".bin", "vitest");
+        if (!existsSync(bin)) {
+          passed = false;
+          lines.push(`FAIL ${path}: it runs on Vitest, which the folder does not install (cut again with --install vitest)`);
+          continue;
+        }
         const result = spawnSync(bin, ["run", "--config", "vitest.config.mjs", "--reporter=json", `--outputFile.json=${report}`, path], {
           cwd: work,
           encoding: "utf8",
