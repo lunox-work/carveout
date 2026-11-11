@@ -95,6 +95,10 @@ export async function applyPatch(
 ): Promise<Applied> {
   const root = resolve(dir);
   let trusted = trustedCut(root, options.receipt);
+  if (trusted.receipt?.pseudonyms !== undefined)
+    throw new Error(
+      "apply does not write into a folder in pseudonyms yet: cut again from the repository as it is now, with the same flags.",
+    );
   const record = trusted.record;
   const source = trustedRepo(record, options.repo);
   checkRecordFiles(record, source);

@@ -24,6 +24,7 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { RECORD_PATH, carveoutHome, readRecord, type CarveoutRecord } from "./carve.js";
+import type { FolderPseudonyms } from "./pseudonyms/index.js";
 
 export const RECEIPT_SCHEMA_VERSION = 1;
 
@@ -41,6 +42,14 @@ export interface Receipt {
   readonly record: CarveoutRecord;
   /** The tests that failed on the mocks before any edit, once a check recorded them. */
   readonly baseline?: readonly string[];
+  /**
+   * The record as the folder holds it, when that differs from `record`: a
+   * public folder's, scrubbed, and in pseudonyms by its own paths and
+   * hashes. What an edit in the folder is measured against.
+   */
+  readonly folderRecord?: CarveoutRecord;
+  /** A public folder's pseudonyms: the table and the kept names. */
+  readonly pseudonyms?: FolderPseudonyms;
 }
 
 /** A new cut id: 128 random bits, as hex. */
@@ -151,6 +160,7 @@ export function publicRecord(record: CarveoutRecord): CarveoutRecord {
       ...record.manifest,
       sourceCommitSha: null,
       graphSha256: "",
+      boundaryContractSha256: "",
       params,
       internalImports: record.manifest.internalImports.map(unnamed),
       cuts: {
@@ -176,10 +186,15 @@ export function saveRecord(dir: string, trusted: TrustedCut, updated: CarveoutRe
   const folder = scrub ? publicRecord(updated) : updated;
   writeFileSync(join(resolve(dir), RECORD_PATH), `${JSON.stringify(folder, null, 2)}\n`);
   if (trusted.receipt === null || trusted.receiptPath === null) return { ...trusted, record: updated, folder };
-  // The receipt keeps the record as the cut makes it, checkout included.
+  // The receipt keeps the record as the cut makes it, checkout included,
+  // and the folder's own when it differs.
   const { repo: _repo, ...kept } = updated;
   const record = (trusted.receipt.record.repo === undefined ? kept : updated) as CarveoutRecord;
-  const receipt = { ...trusted.receipt, record };
+  const receipt = {
+    ...trusted.receipt,
+    record,
+    ...(trusted.receipt.folderRecord === undefined ? {} : { folderRecord: folder }),
+  };
   writeReceipt(trusted.receiptPath, receipt);
   return { ...trusted, record: updated, folder, receipt };
 }

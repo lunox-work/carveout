@@ -354,7 +354,8 @@ export interface ProjectBlocker {
     | "mock_unsupported"
     | "path_conflict"
     | "secret_found"
-    | "test_runner_mocked";
+    | "test_runner_mocked"
+    | "vocabulary_leaked";
   readonly file: string | null;
   readonly detail: string;
 }

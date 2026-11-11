@@ -409,6 +409,23 @@ the person's own checkout only when they ask.
 
 ## 8. Someone outside the repository
 
+A public cut writes the folder in pseudonyms: the names the repository
+goes by (its packages' names and scopes, the account and repository its
+`origin` remote names, its authors, the maintainer's Git name and address,
+`--name`, and `names` in `carveout.config.json`) are renamed in paths,
+identifiers, strings and comments (`LunoxCart` becomes `AcmeCart`) under
+a table the receipt keeps, proved to map back byte for byte. A name the
+table could not hide is a `vocabulary_leaked` blocker: show it to the
+person and add a rename for it (`pseudonyms` in the configuration), or a
+`--name`. Packages the folder installs from the registry keep their names
+(npm needs them); the cut names those that carry a hidden name, and
+`--mock` renames one. `patch` renames the folder back before anything
+else, so the maintainer reads the change, and the policy judges it, in the
+repository's names; a name the contributor made in a placeholder
+(`AcmeDiscount`) comes back as the term (`LunoxDiscount`). `apply` does
+not write into a folder in pseudonyms yet: cut again. `--keep-names`
+writes the repository's names.
+
 To let a contributor work on one part of a closed repository: `plan`,
 agree the entries and `--private` paths with the maintainer, `cut
 --public` (with `--with-tests --whole-package --copy-pure` so the folder's

@@ -46,7 +46,8 @@ const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript r
                  [--copy-pure] [--private <path>]... [--copy <dir>]...
                  [--mock <package>]...
                  [--install <package>]... [--live <package>]... [--offline]
-                 [--widen-literals] [--public] [--receipt <file> | --no-receipt] [--json]
+                 [--widen-literals] [--public] [--name <word>]... [--keep-names]
+                 [--receipt <file> | --no-receipt] [--json]
       Copies the slice to <dir> at its repository paths, with a .d.ts stub and a
       recording mock for every module it imports from outside, mock packages for
       what it does not install, package.json, tsconfig.json and a lockfile.
@@ -56,6 +57,11 @@ const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript r
       Writes the maintainer's receipt to ~/.carveout/receipts/<cut id>.json
       (or --receipt <file>): the record the folder that comes back is judged
       by, which a public folder's own record leaves the repository's names to.
+      A public folder is written in pseudonyms: the names the repository goes
+      by (its packages', its owner's, its remote's, --name and "names" in the
+      configuration) renamed under a table the receipt keeps, and patch
+      renames the folder back. --keep-names writes it in the repository's
+      names; a name left in the folder is a blocker either way.
 
   carveout check <dir> [--in-place] [--isolated] [--receipt <file>] [--json]
       npm ci, npm run build and npm test in a scratch copy of <dir>. --isolated,
@@ -187,6 +193,8 @@ async function main(argv: readonly string[]) {
       json: { type: "boolean" },
       receipt: { type: "string" },
       "no-receipt": { type: "boolean" },
+      name: { type: "string", multiple: true },
+      "keep-names": { type: "boolean" },
     },
   });
   const budget = {
@@ -425,6 +433,8 @@ async function main(argv: readonly string[]) {
         ...bounds,
         ...(values.copy === undefined ? {} : { copy: values.copy }),
         ...(values["no-receipt"] === true ? { receipt: false as const } : receiptOption),
+        ...(values.name === undefined ? {} : { names: values.name }),
+        ...(values["keep-names"] === true ? { pseudonyms: false } : {}),
         log: (line) => {
           if (values.json !== true) process.stderr.write(`${line}\n`);
         },
@@ -442,6 +452,10 @@ async function main(argv: readonly string[]) {
           tests: record.tests,
           readiness: result.readiness,
           receipt: result.receipt,
+          pseudonyms:
+            result.pseudonyms === null
+              ? null
+              : { renames: result.pseudonyms.rules.length, kept: result.pseudonyms.kept },
         });
       else {
         const mocked = record.dependencies
@@ -486,6 +500,12 @@ async function main(argv: readonly string[]) {
                       (b) => `${b.code}${b.file === null ? "" : ` ${b.file}`}: ${b.detail}`,
                     ),
                   ),
+                ]),
+            ...(result.pseudonyms === null
+              ? []
+              : [
+                  "",
+                  `Pseudonyms: the folder holds the slice under ${result.pseudonyms.rules.length} rename(s) that hide the names the repository goes by (the receipt keeps the table; patch renames the folder back).${result.pseudonyms.kept.length === 0 ? "" : ` Kept, as npm installs them: ${result.pseudonyms.kept.join(", ")}.`}`,
                 ]),
             ...(result.readiness.tests === 0
               ? [
@@ -563,8 +583,11 @@ async function main(argv: readonly string[]) {
               ? `${name} is an optional peer the repository installs: cut again with --install ${name}.\n`
               : `${name} is not installed: cut again with --install ${name} if the repository installs it, or --mock ${name}.\n`,
           );
+        const edited = steps.some((step) => step.edited === true);
         const passing =
-          counts === undefined ? "" : ` ${counts.pass} of ${counts.tests} test(s) pass before any edit.`;
+          counts === undefined
+            ? ""
+            : ` ${counts.pass} of ${counts.tests} test(s) pass${edited ? "" : " before any edit"}.`;
         const advice =
           checked.readiness !== undefined && hasAdvice(checked.readiness)
             ? ["To run them on real code instead, cut again with:", ...renderReadiness(checked.readiness)]
@@ -579,7 +602,9 @@ async function main(argv: readonly string[]) {
                 ? `The slice installs, builds and tests on its own, but ${baselineOf?.length ?? 0} test(s) fail on the mocks before any edit (carveout/baseline.json): a contributor cannot make those pass here, so a fixed task should not rest on them.${passing}`
                 : handoff === "no-tests"
                   ? `The slice installs, builds and tests on its own, but no test of this code came with it: a pass means it builds and keeps its exports. Cut with --with-tests, or write the tests the work must pass before handing it over.${passing}`
-                  : `Ready to hand over: the slice installs, builds, and its ${carried} test(s) of this code pass before any edit.${passing}`,
+                  : edited
+                    ? `The edited folder installs, builds and passes its tests, ${carried} of them the repository's tests of this code. A pass here is a pass against mocks: the repository's CI decides.${passing}`
+                    : `Ready to hand over: the slice installs, builds, and its ${carried} test(s) of this code pass before any edit.${passing}`,
             ...(handoff === "red-baseline" ? advice : []),
           ].join("\n")}\n`,
         );

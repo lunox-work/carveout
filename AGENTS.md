@@ -56,6 +56,12 @@ What to tell them, accurately:
 - `--copy-pure` copies the pure code the slice runs instead of mocking
   it, so the folder's tests pass before any change; it shows the
   contributor more of the repository, which `plan` lists.
+- `--public` also writes the folder in pseudonyms: the names the
+  repository goes by (packages, remote, authors, the maintainer's Git
+  identity, `--name`) are renamed under a table only the maintainer's
+  receipt holds, and `patch` renames the work back. A name left behind
+  blocks the cut; report it, and add it with `--name` or `pseudonyms` in
+  the configuration. Never send the receipt.
 - For someone outside the repository, cut with `--public`, take the folder
   back with `carveout patch` (it runs none of the folder's code and keeps
   out CI, hook, manifest and lockfile files, new files in other packages,

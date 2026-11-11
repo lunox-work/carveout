@@ -76,6 +76,20 @@ import { scanSecrets, secretBlockers } from "./project/secrets.js";
 import { checkRecordPaths, handoffPolicy, trustedRepo, type Refusal } from "./policy.js";
 import { configuredFolders, liveCandidates, type Readiness } from "./readiness.js";
 import {
+  fromFolder,
+  keptNames,
+  maskKept,
+  pseudonymize,
+  recordToFolder,
+  vocabularyBlockers,
+  vocabularyLeaks,
+  workspaceNames,
+  workspaceVocabulary,
+  type AliasRule,
+  type FolderPseudonyms,
+  type VocabularyLeak,
+} from "./pseudonyms/index.js";
+import {
   RECEIPT_SCHEMA_VERSION,
   newCutId,
   publicRecord,
@@ -154,6 +168,18 @@ export interface RepoConfig {
   readonly public?: boolean;
   /** Copy pure code rather than mock it; see `SliceRequest.copyPure`. */
   readonly copyPure?: boolean;
+  /**
+   * Names a public folder must not carry, beyond those carveout finds
+   * (the organization's, its products', its customers'): scanned word by
+   * word and given pseudonyms. See `pseudonyms/folder.ts`.
+   */
+  readonly names?: readonly string[];
+  /**
+   * Renames the owner chooses, applied to a public folder before the ones
+   * carveout drafts: `{ "before": "Acme", "after": "Shop", "kind": "text" }`
+   * (kind `identifier`, `text` or `path`).
+   */
+  readonly pseudonyms?: readonly AliasRule[];
 }
 
 /** The owner's settings at the repository's root; empty when there are none. */
@@ -196,6 +222,31 @@ export function readRepoConfig(repo: string): RepoConfig {
   set("copyPure", flag("copyPure"));
   set("private", paths("private"));
   set("copy", paths("copy"));
+  set("names", paths("names"));
+  const pseudonyms = record["pseudonyms"];
+  if (pseudonyms !== undefined) {
+    if (
+      !Array.isArray(pseudonyms) ||
+      pseudonyms.some(
+        (rule) =>
+          rule === null ||
+          typeof rule !== "object" ||
+          typeof (rule as Record<string, unknown>)["before"] !== "string" ||
+          typeof (rule as Record<string, unknown>)["after"] !== "string" ||
+          !["identifier", "text", "path"].includes(String((rule as Record<string, unknown>)["kind"] ?? "text")),
+      )
+    )
+      throw new Error(`${CONFIG_PATH}: pseudonyms must be a list of { "before", "after", "kind" } with kind identifier, text or path.`);
+    set(
+      "pseudonyms",
+      (pseudonyms as Record<string, unknown>[]).map((rule) => ({
+        before: rule["before"] as string,
+        after: rule["after"] as string,
+        kind: (rule["kind"] ?? "text") as AliasRule["kind"],
+        paths: [],
+      })),
+    );
+  }
   return config;
 }
 
@@ -498,6 +549,16 @@ export interface CutRequest extends SliceRequest {
    * when there is a receipt to hold them.
    */
   readonly receipt?: string | false;
+  /**
+   * More names a public folder must not carry (`--name`), joined with the
+   * configuration's. See `pseudonyms/folder.ts`.
+   */
+  readonly names?: readonly string[];
+  /**
+   * False writes a public folder in the repository's own names (the leak
+   * scan still runs). On by default for a public cut with a receipt.
+   */
+  readonly pseudonyms?: boolean;
   readonly log?: (line: string) => void;
 }
 
@@ -603,6 +664,11 @@ export interface CutResult {
   readonly readiness: Readiness;
   /** The receipt the cut wrote, or null when asked for none. */
   readonly receipt: string | null;
+  /**
+   * A public folder's pseudonyms, as the receipt keeps them (the table and
+   * the kept package names); null for a cut in the repository's names.
+   */
+  readonly pseudonyms: FolderPseudonyms | null;
 }
 
 /**
@@ -666,7 +732,16 @@ export function readinessOf(
 function projectName(repo: string | null, entries: readonly string[]): string {
   const words = [
     ...(repo === null ? [] : [basename(repo)]),
-    ...entries.map((entry) => basename(entry)),
+    // A public folder's name keeps each word of an entry's name apart
+    // (`acme-cart`, not `acmecart`): a name the folder must not carry is
+    // found, and renamed, only on its word's edges.
+    ...entries.map((entry) =>
+      repo === null
+        ? basename(entry)
+            .replace(/(\p{Ll}|\p{N})(\p{Lu})/gu, "$1-$2")
+            .replace(/(\p{Lu})(\p{Lu}\p{Ll})/gu, "$1-$2")
+        : basename(entry),
+    ),
   ]
     .join("-")
     .toLowerCase()
@@ -1563,14 +1638,87 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
         .join("\n")}`,
     );
   const fresh = !existsSync(out);
-  for (const file of files) {
-    const path = join(out, file.path);
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, file.text, "utf8");
+  const cutId = newCutId();
+  const receipt = request.receipt === false ? null : resolve(request.receipt ?? receiptPathFor(cutId));
+  // A public folder is written in pseudonyms (pseudonyms/folder.ts): the
+  // names the repository goes by, hidden under a table only the receipt
+  // keeps. Without a receipt there is nowhere to keep it: the names stay,
+  // and the scan says where.
+  const config = readRepoConfig(repo);
+  const publicCut = computed.request.public === true;
+  const textExtras = extras.filter((path) => !isBinaryPath(path));
+  const binaryPaths = [...binaries, ...extras.filter((path) => isBinaryPath(path))];
+  const extraText = new Map(textExtras.map((path) => [path, readFileSync(join(repo, path), "utf8")]));
+  let table: FolderPseudonyms | null = null;
+  let pathOf = (path: string) => path;
+  let folderText = (_path: string, text: string) => text;
+  let leaks: VocabularyLeak[] = [];
+  if (publicCut) {
+    const packageOf = packageFolder(repo);
+    const vocabulary = workspaceVocabulary(
+      workspaceNames(
+        repo,
+        [...new Set(computed.manifest.included.map((file) => packageOf(file.path)))],
+        [...(config.names ?? []), ...(request.names ?? [])],
+      ),
+    );
+    // What the folder installs from the registry keeps its name: npm needs it.
+    const manifestJson = JSON.parse(files.find((file) => file.path === "package.json")?.text ?? "{}") as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
+    const installed = Object.entries({ ...manifestJson.dependencies, ...manifestJson.devDependencies })
+      .filter(([, version]) => !version.startsWith("file:"))
+      .map(([name]) => name);
+    const kept = keptNames(installed, vocabulary);
+    const texts = [
+      ...files.map((file) => ({ path: file.path, text: file.text })),
+      ...textExtras.map((path) => ({ path, text: extraText.get(path) ?? "" })),
+    ];
+    if (receipt !== null && request.pseudonyms !== false && vocabulary.length > 0) {
+      const result = pseudonymize({ files: texts, binaries: binaryPaths, vocabulary, owner: config.pseudonyms ?? [], kept });
+      if (!result.ok)
+        throw new Error(
+          `Nothing written: the public folder's pseudonyms would not map back byte for byte.\n${result.problems
+            .map((problem) => `  ${problem}`)
+            .join("\n")}\nSet pseudonyms in ${CONFIG_PATH} for the names it could not rename, or cut with --keep-names.`,
+        );
+      table = result.table;
+      pathOf = result.pathOf;
+      const renamedFiles = result.files;
+      folderText = (path, text) => renamedFiles.get(path)?.text ?? text;
+      leaks = [...result.leaks];
+      log(
+        `Pseudonyms: ${table.rules.length} rename(s) hide ${vocabulary.length} name(s) the repository goes by; the receipt keeps the table.`,
+      );
+      if (kept.length > 0)
+        log(`Kept as the registry names them (npm installs them so), though they carry a hidden name: ${kept.join(", ")}. --mock one to rename it.`);
+    } else
+      leaks = vocabularyLeaks(
+        texts.map((file) => ({ path: file.path, text: maskKept(file.text, kept) })),
+        vocabulary,
+      );
   }
-  for (const path of [...binaries, ...extras]) {
+  // What each file hashes to as the folder holds it, by its folder path.
+  const folderHash = new Map<string, string>();
+  for (const file of files) {
+    const path = pathOf(file.path);
+    const text = folderText(file.path, file.text);
     await mkdir(dirname(join(out, path)), { recursive: true });
-    await copyFile(join(repo, path), join(out, path));
+    await writeFile(join(out, path), text, "utf8");
+    folderHash.set(path, sha256(text));
+  }
+  for (const path of [...binaryPaths, ...textExtras]) {
+    const target = pathOf(path);
+    await mkdir(dirname(join(out, target)), { recursive: true });
+    if (table !== null && extraText.has(path)) {
+      const text = folderText(path, extraText.get(path) ?? "");
+      await writeFile(join(out, target), text, "utf8");
+      folderHash.set(target, sha256(text));
+    } else {
+      await copyFile(join(repo, path), join(out, target));
+      folderHash.set(target, sha256(readFileSync(join(repo, path))));
+    }
   }
   log(`Wrote ${files.length + binaries.length + extras.length} files to ${out}.`);
   let lockfile = false;
@@ -1631,16 +1779,11 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
         .join(" ")}`,
     );
   }
+  const lockText = lockfile ? readFileSync(join(out, "package-lock.json"), "utf8") : null;
+  if (lockText !== null) folderHash.set("package-lock.json", sha256(lockText));
   const generated = [
     ...files.filter((file) => file.class !== "source"),
-    ...(lockfile
-      ? [
-          {
-            path: "package-lock.json",
-            text: readFileSync(join(out, "package-lock.json"), "utf8"),
-          },
-        ]
-      : []),
+    ...(lockText === null ? [] : [{ path: "package-lock.json", text: lockText }]),
   ]
     .map((file) => ({ path: file.path, sha256: sha256(file.text) }))
     .sort((a, b) => compare(a.path, b.path));
@@ -1649,7 +1792,8 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
     .map((file) => ({ path: file.path, sha256: sha256(file.text) }))
     .sort((a, b) => compare(a.path, b.path));
   const readiness = readinessOf(request, computed);
-  const cutId = newCutId();
+  // A name the table left is a blocker, named in full to the maintainer.
+  const leakBlockers = vocabularyBlockers(leaks).map(({ code, file, detail }) => ({ code, file, detail }));
   const record: CarveoutRecord = {
     ...computed,
     cutId,
@@ -1660,15 +1804,54 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
       ? {}
       : {
           extras: extras
-            .map((path) => ({ path, sha256: sha256(readFileSync(join(out, path))) }))
+            .map((path) => ({ path, sha256: sha256(readFileSync(join(repo, path))) }))
             .sort((a, b) => compare(a.path, b.path)),
         }),
     lockfile,
+    blockers: [...computed.blockers, ...leakBlockers],
+    ready: computed.ready && leakBlockers.length === 0,
   };
+  // The folder's own record: a public one leaves out what names the
+  // repository beyond the slice, and one in pseudonyms holds its files by
+  // the paths and hashes the folder has. A leak's blocker there does not
+  // say the name it is about.
+  let folderRecord: CarveoutRecord = record;
+  if (receipt !== null && publicCut) {
+    const scrubbed = publicRecord(record);
+    const quiet: CarveoutRecord = {
+      ...scrubbed,
+      blockers: scrubbed.blockers.map((blocker) =>
+        blocker.code === "vocabulary_leaked"
+          ? { code: blocker.code, file: null, detail: "A name the repository goes by is still in the folder; the maintainer has the list." }
+          : blocker,
+      ),
+    };
+    if (table === null) folderRecord = quiet;
+    else {
+      const renamed = recordToFolder(table, quiet);
+      const asWritten = (entry: { readonly path: string; readonly sha256: string }) => ({
+        path: pathOf(entry.path),
+        sha256: folderHash.get(pathOf(entry.path)) ?? "",
+      });
+      folderRecord = {
+        ...renamed,
+        manifest: {
+          ...renamed.manifest,
+          included: record.manifest.included.map((file) => ({
+            ...file,
+            path: pathOf(file.path),
+            blobId: "",
+            sha256: folderHash.get(pathOf(file.path)) ?? "",
+          })),
+        },
+        generated: record.generated.map(asWritten),
+        ...(record.copied === undefined ? {} : { copied: record.copied.map(asWritten) }),
+        ...(record.extras === undefined ? {} : { extras: record.extras.map(asWritten) }),
+      };
+    }
+  }
   // The maintainer's copy, outside the folder: what a folder that comes
-  // back is judged by. A public folder's own record then leaves out what
-  // names the repository beyond the slice.
-  const receipt = request.receipt === false ? null : resolve(request.receipt ?? receiptPathFor(cutId));
+  // back is judged by, with the pseudonyms' table.
   if (receipt !== null)
     writeReceipt(receipt, {
       schemaVersion: RECEIPT_SCHEMA_VERSION,
@@ -1677,13 +1860,11 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
       repo,
       out,
       record,
+      ...(folderRecord === record ? {} : { folderRecord }),
+      ...(table === null ? {} : { pseudonyms: table }),
     });
-  await writeFile(
-    join(out, RECORD_PATH),
-    `${JSON.stringify(receipt !== null && record.request.public === true ? publicRecord(record) : record, null, 2)}\n`,
-    "utf8",
-  );
-  return { out, record, contract, readiness, receipt };
+  await writeFile(join(out, RECORD_PATH), `${JSON.stringify(folderRecord, null, 2)}\n`, "utf8");
+  return { out, record, contract, readiness, receipt, pseudonyms: table };
 }
 
 export function readRecord(dir: string): CarveoutRecord {
@@ -1743,6 +1924,8 @@ export interface CheckStep {
    * folder. They were counted.
    */
   readonly baselineEdited?: readonly string[];
+  /** Whether the folder holds an edit since the cut (a folder that came back). */
+  readonly edited?: boolean;
 }
 
 /**
@@ -1847,7 +2030,10 @@ export async function checkProject(
   // came back may have edited its own, to look unedited or to leave a
   // failing test uncounted.
   const trusted = trustedCut(dir, options.receipt, { optional: true });
-  const record = trusted.record;
+  // What the folder's files are measured against: the record as the folder
+  // holds it (a public folder in pseudonyms has its own paths and hashes),
+  // as the receipt keeps it.
+  const record = trusted.receipt?.folderRecord ?? trusted.record;
   const source = resolve(dir);
   let work = source;
   const scratch =
@@ -1940,9 +2126,11 @@ export async function checkProject(
   const tap = existsSync(tapPath) ? readFileSync(tapPath, "utf8") : "";
   const count = (key: string) => Number(new RegExp(`^# ${key} (\\d+)$`, "m").exec(tap)?.[1] ?? Number.NaN);
   const last = steps.at(-1);
+  const edited = record.copied === undefined ? undefined : folderEdited(source, record);
   if (last !== undefined && last.command === "npm test")
     steps[steps.length - 1] = {
       ...last,
+      ...(edited === undefined ? {} : { edited }),
       ...(Number.isNaN(count("tests"))
         ? {}
         : { counts: { tests: count("tests"), pass: count("pass"), fail: count("fail") } }),
@@ -2012,6 +2200,38 @@ export interface PatchOptions {
   readonly allow?: readonly string[];
   /** The cut's receipt file; else the one `CARVEOUT_HOME` keeps for its id. */
   readonly receipt?: string;
+  /** Internal: the folder is a copy already put back in the repository's names. */
+  readonly unaliased?: boolean;
+}
+
+/**
+ * A folder in pseudonyms, renamed back into the repository's names, path
+ * and text, in a scratch copy with the receipt's record: what a patch is
+ * made from, as from a folder cut in those names. Two files that would
+ * land on one path are refused, never merged.
+ */
+async function unaliasFolder(root: string, table: FolderPseudonyms, record: CarveoutRecord): Promise<string> {
+  const scratch = mkdtempSync(join(tmpdir(), "carveout-names-"));
+  const folder = join(scratch, "folder");
+  const from = new Map<string, string>();
+  for (const path of listTree(root)) {
+    if (path === RECORD_PATH) continue;
+    const bytes = readFileSync(join(root, path));
+    const binary = isBinaryPath(path);
+    const back = fromFolder(table, path, binary ? "" : bytes.toString("utf8"));
+    const earlier = from.get(back.path);
+    if (earlier !== undefined) {
+      await rm(scratch, { recursive: true, force: true });
+      throw new Error(
+        `${earlier} and ${path} both map back to one file of the repository; rename one of them in the folder.`,
+      );
+    }
+    from.set(back.path, path);
+    await mkdir(dirname(join(folder, back.path)), { recursive: true });
+    await writeFile(join(folder, back.path), binary ? bytes : back.text);
+  }
+  await writeFile(join(folder, RECORD_PATH), `${JSON.stringify(record, null, 2)}\n`);
+  return folder;
 }
 
 function listTree(root: string, dir = "", into: string[] = []): string[] {
@@ -2112,6 +2332,21 @@ export async function patchProject(
   // The receipt's record when there is one: the folder's own came back
   // with the folder, and is checked against the repository instead.
   const trusted = trustedCut(root, options.receipt);
+  // A folder in pseudonyms is renamed back first; the patch is made from
+  // that copy, in the repository's names.
+  const table = trusted.receipt?.pseudonyms;
+  if (table !== undefined && options.unaliased !== true) {
+    const folder = await unaliasFolder(root, table, trusted.receipt?.record ?? trusted.record);
+    try {
+      return await patchProject(folder, {
+        ...options,
+        ...(trusted.receiptPath === null ? {} : { receipt: trusted.receiptPath }),
+        unaliased: true,
+      });
+    } finally {
+      await rm(dirname(folder), { recursive: true, force: true });
+    }
+  }
   const record = trusted.record;
   const repo = trustedRepo(record, options.repo);
   checkRecordFiles(record, repo);

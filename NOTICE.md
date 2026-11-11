@@ -1,6 +1,7 @@
 # Provenance
 
-The slicing core (`src/slice`, `src/extract`, `src/project`) is carved out of
+The slicing core (`src/slice`, `src/extract`, `src/project`) and the
+pseudonyms (`src/pseudonyms`: aliases, vocabulary, draft) are carved out of
 [sandbox-factory](https://github.com/lunox-work/sandbox-factory) (MIT), from
 `packages/core/src/slice`, `packages/core/src/sandbox` and
 `apps/worker/src/tools/slice`. The import graph (`src/graph.ts`) replaces the

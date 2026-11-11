@@ -109,7 +109,16 @@ What carveout holds to:
   (a one-line barrel included), never their bodies or comments. With
   `--public` (or `"public": true` in the configuration), literal values are
   widened and the folder names neither the maintainer's checkout nor the
-  files outside the slice that import it. `--private <path>` keeps a module
+  files outside the slice that import it, nor whose code it is: the names
+  the repository goes by (its packages' names and scopes, the account and
+  repository its remote names, its authors, the maintainer's Git name and
+  address, and `--name` or `names` in the configuration) are renamed, in
+  paths, identifiers, strings and comments, under a table only the receipt
+  keeps (`LunoxCart` becomes `AcmeCart`), and a name left in the folder is
+  a `vocabulary_leaked` blocker. `patch` renames the folder back, names
+  the contributor made in the placeholders included (`AcmeDiscount` comes
+  back as `LunoxDiscount`). `--keep-names` writes the repository's names.
+  `--private <path>` keeps a module
   out even when the walk reaches it, `--copy-pure` included. `--copy-pure`
   copies more of the repository (the pure code the slice runs) so the
   contributor's tests run against it rather than against mocks: leave it
@@ -349,9 +358,14 @@ A `carveout.config.json` at the repository's root sets the same for every
 cut, so the owner decides once where a slice may follow and what it keeps
 out: `{"wholePackage": true, "followWorkspaces": true, "private":
 ["packages/core/src/pricing/**"], "copy": ["packages/db/drizzle"],
-"widenLiterals": true, "public": true, "copyPure": true}`. A flag overrides a boolean; the
-lists are joined. With any `private` path, or `public`, `widenLiterals` is
-on unless the file says otherwise.
+"widenLiterals": true, "public": true, "copyPure": true, "names": ["Acme
+Corp", "Roadrunner"], "pseudonyms": [{"before": "LNX", "after": "CUR",
+"kind": "text"}]}`. A flag overrides a boolean; the lists are joined. With
+any `private` path, or `public`, `widenLiterals` is on unless the file
+says otherwise. `names` are hidden in every public folder, word by word
+(a customer, a product); `pseudonyms` are renames the owner chooses
+(`identifier`, `text` or `path`), applied before the ones carveout drafts,
+for what is too short or too generic to scan for.
 
 Options for `cut` only:
 
@@ -378,9 +392,12 @@ KINDS)[number]`) keeps its name-like strings (`"github"`, `"draft"`):
 - `--public`, for a folder handed to someone outside: literals widened,
   and neither the checkout's path or folder name nor the files outside the
   slice that import it written (each importer is named by its package
-  folder; compiler messages name files from the repository's root). The
-  commands that need the repository then take `--repo`, defaulting to the
-  current directory;
+  folder; compiler messages name files from the repository's root), and
+  the folder written in pseudonyms (above). The commands that need the
+  repository then take `--repo`, defaulting to the current directory;
+- `--name <word>`, a name a public folder must not carry, beyond those
+  carveout finds; `--keep-names`, a public folder in the repository's own
+  names (the scan still blocks on them);
 - `--offline`.
 
 Options for `patch`, `status`, `apply` and `merge`: `--repo <checkout>`,
@@ -637,6 +654,12 @@ What to tell them, accurately:
 - `--copy-pure` copies the pure code the slice runs instead of mocking
   it, so the folder's tests pass before any change; it shows the
   contributor more of the repository, which `plan` lists.
+- `--public` also writes the folder in pseudonyms: the names the
+  repository goes by (packages, remote, authors, the maintainer's Git
+  identity, `--name`) are renamed under a table only the maintainer's
+  receipt holds, and `patch` renames the work back. A name left behind
+  blocks the cut; report it, and add it with `--name` or `pseudonyms` in
+  the configuration. Never send the receipt.
 - For someone outside the repository, cut with `--public`, take the folder
   back with `carveout patch` (it runs none of the folder's code and keeps
   out CI, hook, manifest and lockfile files, new files in other packages,
