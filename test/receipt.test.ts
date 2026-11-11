@@ -376,3 +376,16 @@ test("refresh into a folder in pseudonyms brings the commits in its names, and i
   assert.match(text, /the contributor's note[\s\S]*keep \w+ in cents/);
   assert.doesNotMatch(text, /subtotal/i);
 });
+
+test("apply and refresh bring no credential into the folder, as a cut of the same commit would not", async () => {
+  const { refreshProject } = await import("../src/mergeback.js");
+  const moving = join(scratch, "moving-secret");
+  git(scratch, ["clone", "-q", repo, moving]);
+  const cut = await cutSlice({ repo: moving, out: join(scratch, "refresh-secret"), entryPoints: [ENTRY], budget: { maxFiles: 40, maxDepth: 1 }, offline: true });
+  const tax = join(moving, "apps/shop/src/tax.ts");
+  const key = ["AKIA", "Z7QXW4B9", "TNRLK2PM"].join("");
+  writeFileSync(tax, `${readFileSync(tax, "utf8")}export const AWS_KEY = "${key}";\n`);
+  git(moving, ["commit", "-qam", "upstream: a key"]);
+  await assert.rejects(refreshProject(cut.out), /Nothing applied: the change would bring a credential/);
+  assert.doesNotMatch(readFileSync(join(cut.out, "apps/shop/src/tax.ts"), "utf8"), new RegExp(key));
+});

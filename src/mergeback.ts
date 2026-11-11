@@ -245,6 +245,17 @@ export async function applyPatch(
           },
         }),
       );
+    // A credential the change brings never reaches the folder, as a cut of
+    // the same commit would write nothing: refused before anything is.
+    const credentials = cuts.flatMap((cut) =>
+      cut.record.blockers.filter((blocker) => blocker.code === "secret_found" || blocker.code === "secret_file"),
+    );
+    if (credentials.length > 0)
+      throw new Error(
+        `Nothing applied: the change would bring a credential into the folder.\n${[
+          ...new Set(credentials.map((blocker) => `  ${blocker.code}${blocker.file === null ? "" : ` ${blocker.file}`}: ${blocker.detail}`)),
+        ].join("\n")}`,
+      );
     const included = new Set(record.manifest.included.map((file) => file.path));
     const changed: string[] = [];
     const added: string[] = [];
