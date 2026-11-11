@@ -267,6 +267,19 @@ and the check reports them. From then on `npm test` names them but does
 not count them, and still fails on any other test, on the coverage gate,
 or on the build. Tell the person how many there are.
 
+The check ends with a verdict on the hand-off (`handoff` in `--json`):
+`ready` (the slice's tests pass before any edit), `red-baseline` (some
+fail on the mocks: a contributor cannot make those pass, so a fixed task
+should not rest on them), `no-tests` (a pass means it builds) or
+`failed`. On `red-baseline` it names what would run them on real code,
+which the cut also printed: `--copy-pure` with the modules it would copy
+and their lines, `--live <package>` for a mocked database, cache or queue
+client (the tests then need that service), `--copy <dir>` for a folder a
+package reads by a configured name (drizzle's or knex's migrations,
+Prisma's schema). Each shows the contributor more of the repository: agree
+it with the person, cut again, and check again. A public cut prints the
+advice and keeps it out of the folder.
+
 `npm test` finds the folder's tests when it runs, so tests written after
 the cut run too. When the package's own test sets coverage thresholds
 (`--test-coverage-lines` and the like), it holds the source files added

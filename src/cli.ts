@@ -31,6 +31,7 @@ import { gateRepository } from "./gate.js";
 import { impactOf, runImpactTests } from "./impact.js";
 import { applyPatch, mergeProject } from "./mergeback.js";
 import { statusProject } from "./status.js";
+import { hasAdvice, renderReadiness } from "./readiness.js";
 
 const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript repository.
 
@@ -420,6 +421,8 @@ async function main(argv: readonly string[]) {
           dependencies: record.dependencies,
           optionalPeers: record.optionalPeers,
           importRewrites: record.importRewrites,
+          tests: record.tests,
+          readiness: result.readiness,
         });
       else {
         const mocked = record.dependencies
@@ -465,6 +468,18 @@ async function main(argv: readonly string[]) {
                     ),
                   ),
                 ]),
+            ...(result.readiness.tests === 0
+              ? [
+                  "",
+                  "No test of this code is in the folder: a pass means it installs, builds and keeps its exports. Cut with --with-tests, or write the tests the work must pass before handing it over.",
+                ]
+              : hasAdvice(result.readiness)
+                ? [
+                    "",
+                    "If check finds tests that fail on the mocks before any edit, these turn them toward real code:",
+                    ...renderReadiness(result.readiness),
+                  ]
+                : []),
             "",
             `Next: carveout check ${values.out}`,
             "",
@@ -484,7 +499,19 @@ async function main(argv: readonly string[]) {
         ...(values.isolated === true ? { isolated: true } : {}),
       });
       const ok = steps.length === 3 && steps.every((step) => step.ok);
-      if (values.json === true) print({ ok, steps });
+      const checked = readRecord(dir);
+      const baselineOf = steps.find((step) => step.baseline !== undefined)?.baseline;
+      const counts = steps.find((step) => step.counts !== undefined)?.counts;
+      const carried = checked.tests?.carried.length ?? 0;
+      // Whether "make the tests pass" is a task someone can finish here.
+      const handoff: "ready" | "red-baseline" | "no-tests" | "failed" = !ok
+        ? "failed"
+        : baselineOf !== undefined
+          ? "red-baseline"
+          : carried === 0
+            ? "no-tests"
+            : "ready";
+      if (values.json === true) print({ ok, handoff, counts: counts ?? null, steps });
       else {
         for (const step of steps) {
           process.stdout.write(`${step.ok ? "ok  " : "FAIL"} ${step.command}\n`);
@@ -507,13 +534,25 @@ async function main(argv: readonly string[]) {
               ? `${name} is an optional peer the repository installs: cut again with --install ${name}.\n`
               : `${name} is not installed: cut again with --install ${name} if the repository installs it, or --mock ${name}.\n`,
           );
-        const baseline = steps.find((step) => step.baseline !== undefined)?.baseline;
+        const passing =
+          counts === undefined ? "" : ` ${counts.pass} of ${counts.tests} test(s) pass before any edit.`;
+        const advice =
+          checked.readiness !== undefined && hasAdvice(checked.readiness)
+            ? ["To run them on real code instead, cut again with:", ...renderReadiness(checked.readiness)]
+            : checked.request.public === true
+              ? ["The cut printed what would run them on real code (--copy-pure, --live, --copy); cut again with it."]
+              : [];
         process.stdout.write(
-          !ok
-            ? "The slice does not stand on its own yet.\n"
-            : baseline === undefined
-              ? "The slice installs, builds and tests on its own.\n"
-              : `The slice installs, builds and tests on its own, but for ${baseline.length} test(s) that fail on the mocks (carveout/baseline.json).\n`,
+          `${[
+            handoff === "failed"
+              ? "The slice does not stand on its own yet."
+              : handoff === "red-baseline"
+                ? `The slice installs, builds and tests on its own, but ${baselineOf?.length ?? 0} test(s) fail on the mocks before any edit (carveout/baseline.json): a contributor cannot make those pass here, so a fixed task should not rest on them.${passing}`
+                : handoff === "no-tests"
+                  ? `The slice installs, builds and tests on its own, but no test of this code came with it: a pass means it builds and keeps its exports. Cut with --with-tests, or write the tests the work must pass before handing it over.${passing}`
+                  : `Ready to hand over: the slice installs, builds, and its ${carried} test(s) of this code pass before any edit.${passing}`,
+            ...(handoff === "red-baseline" ? advice : []),
+          ].join("\n")}\n`,
         );
       }
       if (!ok) process.exitCode = 2;

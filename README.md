@@ -172,6 +172,13 @@ What it does not promise:
   repository, and why (not asked for, another package's, Jest, the file
   limit). When none is in the folder, a pass means the code builds and
   keeps its exports, nothing more.
+- **A folder is ready when its tests pass before any edit.** `check` says
+  so, or names the tests that fail on the mocks and what would run them on
+  real code: `--copy-pure` (the pure modules it would copy, with their
+  lines), `--live <package>` for a mocked database, cache or queue client,
+  `--copy <dir>` for a migrations folder no import names. `cut` prints the
+  same before the check. A fixed task should rest only on tests that pass
+  in the folder.
 - **Passing in the slice is a pre-check, not the merge gate.** The slice's
   tests run against mocks of everything it cuts. A test that needs a cut
   module's real behaviour fails at the slice's baseline and is not counted,
@@ -297,15 +304,15 @@ are found by name first, and the compiler confirms each one.
 
 ## Commands
 
-| Command                                  | Does                                                                                                                                                                                                           |
-| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `carveout plan <entry>...`               | Lists the files, cuts, importers, packages, environment and blockers; the lines the cut shows, by why each file is there; every test that runs the code, in the folder or left behind and why. Writes nothing. |
-| `carveout cut <entry>... --out <dir>`    | Writes the folder. Exits 2 if it was written with blockers; writes nothing if it would carry a credential.                                                                                                     |
-| `carveout check <dir>`                   | Runs `npm ci`, `npm run build` and `npm test` in a scratch copy; records the tests that fail on the mocks. `--isolated` for a folder that came back.                                                           |
-| `carveout status <dir>`                  | Says whether a cut now would write the same folder, and names what changed. Exits 4 if stale.                                                                                                                  |
-| `carveout patch <dir>`                   | Prints the edits as a patch for the repository (`--output <file>`), with full blob ids for `git apply --3way`. Runs none of the folder's code; keeps out what the hand-off policy refuses (exit 6).            |
-| `carveout merge <dir> --into <checkout>` | Patches, applies with `--3way` in the checkout you name, and runs `--verify <cmd>` there with a scratch HOME and only the `--verify-env` variables. Applies nothing on a refusal (exit 6).                     |
-| `carveout apply <dir> <patch>`           | Brings a patch for the repository into the folder, imports rewritten; `--stubs` adds the stubs it needs. A module the patch adds past the cut's reach joins the folder as an entry, with its tests.            |
+| Command                                  | Does                                                                                                                                                                                                                                                              |
+| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `carveout plan <entry>...`               | Lists the files, cuts, importers, packages, environment and blockers; the lines the cut shows, by why each file is there; every test that runs the code, in the folder or left behind and why. Writes nothing.                                                    |
+| `carveout cut <entry>... --out <dir>`    | Writes the folder. Exits 2 if it was written with blockers; writes nothing if it would carry a credential.                                                                                                                                                        |
+| `carveout check <dir>`                   | Runs `npm ci`, `npm run build` and `npm test` in a scratch copy; records the tests that fail on the mocks, and says whether the folder is ready to hand over (its tests pass before any edit) or what would make it so. `--isolated` for a folder that came back. |
+| `carveout status <dir>`                  | Says whether a cut now would write the same folder, and names what changed. Exits 4 if stale.                                                                                                                                                                     |
+| `carveout patch <dir>`                   | Prints the edits as a patch for the repository (`--output <file>`), with full blob ids for `git apply --3way`. Runs none of the folder's code; keeps out what the hand-off policy refuses (exit 6).                                                               |
+| `carveout merge <dir> --into <checkout>` | Patches, applies with `--3way` in the checkout you name, and runs `--verify <cmd>` there with a scratch HOME and only the `--verify-env` variables. Applies nothing on a refusal (exit 6).                                                                        |
+| `carveout apply <dir> <patch>`           | Brings a patch for the repository into the folder, imports rewritten; `--stubs` adds the stubs it needs. A module the patch adds past the cut's reach joins the folder as an entry, with its tests.                                                               |
 
 Options for `plan` and `cut`:
 

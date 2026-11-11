@@ -49,6 +49,7 @@ import {
   type SliceTestLeft,
   exposureOf,
   renderTestsMarkdown,
+  serviceOf,
   testsVerdict,
 } from "./core.js";
 import { analyseSlice } from "./cut.js";
@@ -73,6 +74,7 @@ import {
 import { moduleSpecifiers, parseSource } from "./specifiers.js";
 import { scanSecrets, secretBlockers } from "./project/secrets.js";
 import { checkRecordPaths, handoffPolicy, trustedRepo, type Refusal } from "./policy.js";
+import { configuredFolders, liveCandidates, type Readiness } from "./readiness.js";
 
 export const CARVEOUT_VERSION = "0.1.1";
 export const RECORD_PATH = "carveout.json";
@@ -558,12 +560,77 @@ export interface CarveoutRecord {
   };
   /** What the folder shows of the repository; see `exposureOf`. */
   readonly exposure?: SliceExposure;
+  /**
+   * What would make the folder's tests run on real code (`readinessOf`).
+   * Absent from a public cut, whose advice may name paths the folder does
+   * not show, and from records made before it.
+   */
+  readonly readiness?: Readiness;
 }
 
 export interface CutResult {
   readonly out: string;
   readonly record: CarveoutRecord;
   readonly contract: BoundaryContract;
+  /** What would make the folder's tests run on real code, public cut or not. */
+  readonly readiness: Readiness;
+}
+
+/**
+ * What a cut could change so the folder's tests run on the repository's
+ * code instead of mocks (see `readiness.ts`): the pure modules
+ * `--copy-pure` would copy, read from a second walk with it on; the mocked
+ * database, cache and queue clients `--live` could keep real; the folders
+ * the slice's packages read by a configured name, for `--copy`. Only for a
+ * cut that carries tests: a folder without them has nothing to turn green.
+ */
+export function readinessOf(
+  request: SliceRequest & { readonly copy?: readonly string[]; readonly public?: boolean },
+  record: Pick<CarveoutRecord, "manifest" | "dependencies" | "tests" | "request">,
+): Readiness {
+  const tests = record.tests?.carried.length ?? 0;
+  if (tests === 0) return { tests, copyPure: null, live: [], copy: [] };
+  const repo = resolve(request.repo);
+  const included = new Set(record.manifest.included.map((file) => file.path));
+  let copyPure: Readiness["copyPure"] = null;
+  if (record.request.copyPure !== true) {
+    const settled = settle({ ...request, copyPure: true });
+    const { walk } = walkGraph(
+      repo,
+      entriesOf(request),
+      request.budget ?? SLICE_BUDGET_DEFAULTS,
+      walkOptions(settled, repo),
+    );
+    // What the walk with it holds and this one does not: pure code copied
+    // past the depth, and the workspaces' source it follows to get there.
+    // Its tests are not counted: they are a cut's `--with-tests` choice.
+    const files = walk.included
+      .filter((file) => !included.has(file) && !isTestPath(file) && !walk.helpers.includes(file))
+      .sort(compare);
+    let lines = 0;
+    for (const file of files)
+      try {
+        lines += readFileSync(join(repo, file), "utf8").split("\n").length;
+      } catch {
+        // Gone since the walk: not counted.
+      }
+    copyPure = { files, lines };
+  }
+  const packageOf = packageFolder(repo);
+  const copied = record.request.copy ?? [];
+  const held = (path: string) =>
+    copied.some((dir) => path === dir || path.startsWith(`${dir}/`) || dir.startsWith(`${path}/`)) ||
+    [...included].some((file) => file.startsWith(`${path}/`));
+  return {
+    tests,
+    copyPure,
+    live: liveCandidates(record.dependencies, (name) => serviceOf(name)),
+    copy: configuredFolders(
+      repo,
+      [...included].map((file) => packageOf(file)),
+      held,
+    ),
+  };
 }
 
 /** A name npm accepts for the folder's package. */
@@ -1552,8 +1619,10 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
     .filter((file) => file.class === "source")
     .map((file) => ({ path: file.path, sha256: sha256(file.text) }))
     .sort((a, b) => compare(a.path, b.path));
+  const readiness = readinessOf(request, computed);
   const record: CarveoutRecord = {
     ...computed,
+    ...(computed.request.public === true ? {} : { readiness }),
     generated,
     copied,
     ...(extras.length === 0
@@ -1570,7 +1639,7 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
     `${JSON.stringify(record, null, 2)}\n`,
     "utf8",
   );
-  return { out, record, contract };
+  return { out, record, contract, readiness };
 }
 
 export function readRecord(dir: string): CarveoutRecord {
@@ -1622,6 +1691,8 @@ export interface CheckStep {
   readonly output: string;
   /** Tests that failed in an unedited folder, recorded as its baseline. */
   readonly baseline?: readonly string[];
+  /** The `npm test` step's node:test counts, read from its TAP. */
+  readonly counts?: { readonly tests: number; readonly pass: number; readonly fail: number };
 }
 
 /**
@@ -1778,6 +1849,17 @@ export async function checkProject(
       if (baseline === null) break;
     }
   }
+  // The run's counts, for the verdict: how many tests the folder runs and
+  // how many pass before any edit.
+  const tapPath = join(work, LAST_RUN_PATH);
+  const tap = existsSync(tapPath) ? readFileSync(tapPath, "utf8") : "";
+  const count = (key: string) => Number(new RegExp(`^# ${key} (\\d+)$`, "m").exec(tap)?.[1] ?? Number.NaN);
+  const last = steps.at(-1);
+  if (last !== undefined && last.command === "npm test" && !Number.isNaN(count("tests")))
+    steps[steps.length - 1] = {
+      ...last,
+      counts: { tests: count("tests"), pass: count("pass"), fail: count("fail") },
+    };
   if (scratch !== null) await rm(scratch, { recursive: true, force: true });
   return steps;
 }
