@@ -30,6 +30,7 @@ import {
   type CutResult,
   type ComputedCut,
   type Patch,
+  sliceSpecifierPackages,
 } from "./carve.js";
 import {
   isTestPath,
@@ -152,6 +153,7 @@ export async function applyPatch(
     ...workspacePackages(source).keys(),
     ...record.dependencies.map((dependency) => dependency.name),
     ...record.manifest.requiredBuildInputs.packages.map((item) => item.name),
+    ...sliceSpecifierPackages(record, source),
   ]);
   const names = namesOf(trusted.receipt?.pseudonyms, ownPackagesOf(root), (name) => known.has(name));
   checkRecordFiles(record, source);

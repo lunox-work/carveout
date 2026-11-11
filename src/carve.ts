@@ -86,6 +86,7 @@ import { configuredFolders, liveCandidates, type Readiness } from "./readiness.j
 import {
   exactToFolder,
   fromFolder,
+  specifierPackages,
   keptNames,
   looseLeaks,
   maskKept,
@@ -2512,6 +2513,17 @@ function folderEdited(dir: string, record: CarveoutRecord): boolean {
   );
 }
 
+/** The package names the slice's files spell as specifiers, at the cut's commit (or as the checkout holds them). */
+export function sliceSpecifierPackages(record: CarveoutRecord, repo: string | null | undefined): string[] {
+  if (repo === null || repo === undefined || !existsSync(repo)) return [];
+  const commit = record.manifest.sourceCommitSha;
+  return [...record.manifest.included, ...(record.extras ?? [])].flatMap((file) => {
+    if (!isScript(file.path)) return [];
+    const bytes = (commit === null ? null : gitShow(repo, commit, file.path)) ?? (existsSync(join(repo, file.path)) ? readFileSync(join(repo, file.path)) : null);
+    return bytes === null ? [] : specifierPackages(bytes.toString("utf8"));
+  });
+}
+
 /** The node_modules folders under a folder, below its root. */
 function nodeModulesIn(root: string, dir = "", into: string[] = []): string[] {
   for (const entry of readdirSync(join(root, dir), { withFileTypes: true })) {
@@ -3087,6 +3099,9 @@ export async function patchProject(
       ...workspaceNames,
       ...named.dependencies.map((dependency) => dependency.name),
       ...named.manifest.requiredBuildInputs.packages.map((item) => item.name),
+      // And the names the slice's own files spell as specifiers at the
+      // cut's commit, as the cut read them back.
+      ...sliceSpecifierPackages(named, trusted.receipt?.repo ?? named.repo ?? options.repo),
     ]);
     const folder = await unaliasFolder(root, table, named, (name) => known.has(name));
     try {

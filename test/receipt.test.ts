@@ -492,3 +492,19 @@ test("a failing test apply brings in is never recorded as the folder's baseline"
   const copied = readReceipt(cut.receipt).record.copied ?? [];
   assert.equal(copied.find((file) => file.path === "apps/shop/src/cart.test.ts")?.applied, true);
 });
+
+test("an unedited public folder patches to nothing though a comment names a renamed package that is no dependency", async () => {
+  const { patchProject } = await import("../src/carve.js");
+  const doc = join(scratch, "doc-repo");
+  cpSync(FIXTURE, doc, { recursive: true });
+  const cartPath = join(doc, ENTRY);
+  writeFileSync(cartPath, `/**\n * Example: import { client } from "@acmecorp/sdk";\n */\n${readFileSync(cartPath, "utf8")}`);
+  git(doc, ["init", "-q"]);
+  git(doc, ["add", "-A"]);
+  git(doc, ["commit", "-q", "-m", "fixture"]);
+  const cut = await cutSlice({ repo: doc, out: join(scratch, "doc-slice"), entryPoints: [ENTRY], budget: { maxFiles: 40, maxDepth: 1 }, offline: true, public: true, names: ["acmecorp"] });
+  assert.doesNotMatch(readFileSync(join(cut.out, ENTRY), "utf8"), /acmecorp/);
+  const patch = await patchProject(cut.out);
+  assert.equal(patch.diff, "");
+  assert.deepEqual(patch.refused, []);
+});

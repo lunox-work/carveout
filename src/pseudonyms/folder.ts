@@ -389,16 +389,9 @@ export function pseudonymize(input: {
         return match?.[1] === undefined ? [] : [match[1]];
       }),
     );
-    // The packages the slice's own files import, which the repository knows.
-    const imported = new Set(
-      input.files.flatMap((file) =>
-        [...file.text.matchAll(SPECIFIER)].flatMap((match) => {
-          const specifier = match[3] ?? "";
-          if (specifier.startsWith(".") || specifier.startsWith("/")) return [];
-          return [specifier.startsWith("@") ? specifier.split("/").slice(0, 2).join("/") : (specifier.split("/")[0] ?? specifier)];
-        }),
-      ),
-    );
+    // The packages the slice's own files name as specifiers, which the
+    // repository knows (patch reads them back the same way).
+    const imported = new Set(input.files.flatMap((file) => specifierPackages(file.text)));
     const problems = input.files
       .filter((file) => input.readBack?.(file.path) === true)
       .flatMap((file) => {
@@ -468,6 +461,15 @@ export function wordsToFolder(table: FolderPseudonyms, text: string): string {
       out = `${out.slice(0, match.start)}${restyle(placeholder.split("-"), surface)}${out.slice(match.end)}`;
     }
   return unmaskKept(out, table.kept);
+}
+
+/** The package names a text spells as module specifiers (`from "x"`, `import("x")`), relative ones aside. */
+export function specifierPackages(text: string): string[] {
+  return [...text.matchAll(SPECIFIER)].flatMap((match) => {
+    const specifier = match[3] ?? "";
+    if (specifier.startsWith(".") || specifier.startsWith("/")) return [];
+    return [specifier.startsWith("@") ? specifier.split("/").slice(0, 2).join("/") : (specifier.split("/")[0] ?? specifier)];
+  });
 }
 
 /**
