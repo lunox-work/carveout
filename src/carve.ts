@@ -24,6 +24,7 @@ import {
   VITEST_REPORT_PATH,
   SLICE_BUDGET_DEFAULTS,
   coverageGateOf,
+  testsGlobOf,
   declarationPath,
   detectExternals,
   purityRules,
@@ -127,6 +128,10 @@ export function renderSliceAgents(input: {
   readonly testsLeft: number;
   /** Whether the folder carries a TASK.md: the work asked for, and when it is accepted. */
   readonly task?: boolean;
+  /** Where the package's test script finds its tests, from the folder's root (`packages/core/test/*.test.ts`). */
+  readonly testsAt?: string;
+  /** The coverage the package's test script holds it to, which the folder's `npm test` holds added files to. */
+  readonly coverage?: CoverageGate;
 }): string {
   const tests =
     input.testsInFolder === 0
@@ -142,12 +147,22 @@ export function renderSliceAgents(input: {
     "A slice of a larger repository, cut by carveout. The source files are copied at their repository paths; every module they import from the rest of the repository is a `.d.ts` stub with a recording mock behind it.",
     "",
     `- Entry points: ${input.entryPoints.map((entry) => `\`${entry}\``).join(", ")}.`,
-    "- `npm ci`, then `npm test`: it builds and runs the folder's tests. Nothing else needs setting up.",
+    "- `npm ci`, then `npm test`: it builds and runs the folder's tests. Nothing else needs setting up. npm keeps its cache in your home folder; to keep everything in this folder, run it with `--cache .npm-cache`, which the owner's patch leaves out.",
     "- Edit the copied source, and add files beside it in the same packages. The stubs, everything under `carveout/`, `package.json`, the lockfile and the root configuration are generated: edits to them do not go back.",
     "- A mock answers any call with another mock. To make one return something in a test, read the README's Mocks section; nothing else under `carveout/` needs reading.",
     "- If `carveout/baseline.json` is there, the tests it lists failed on the mocks before any edit and are not counted; with none, every test counts.",
     "- The build writes a `.js` beside each `.ts`, a new file's too: leave them. Only the `.ts` comes back.",
     `- ${tests}${left} A pass here is a pass against mocks.`,
+    ...(input.testsAt === undefined
+      ? []
+      : [
+          `- New tests go where the repository's test script finds them: \`${input.testsAt}\`. A test elsewhere runs here but never in the repository, and covers nothing there.`,
+        ]),
+    ...(input.coverage === undefined
+      ? []
+      : [
+          `- The package's test script requires coverage (${coverageTerms(input.coverage)}). \`npm test\` holds each file you add under \`${input.coverage.folder}\` to it${input.coverage.allCovered === undefined ? "" : ", and fails on one no test loads"}; code you add to a file that came with the folder is not measured here, and the repository measures it with its whole package: test it as you would a new file.`,
+        ]),
     "- When done, leave the edits in place: the repository's owner turns them into a patch with `carveout patch`.",
     "",
     "## What comes back, and what is held for the owner",
@@ -159,6 +174,13 @@ export function renderSliceAgents(input: {
     "- Generated files (the stubs, everything under `carveout/`, `package.json`, the lockfile, the root configuration) do not come back: when the change needs one changed, say so.",
     ...(input.task === true ? ["", "The work asked for, and when it is accepted, is in `TASK.md`: read it first."] : []),
   ].join("\n")}\n`;
+}
+
+/** A coverage gate's thresholds, as `lines 90%, branches 90%`. */
+function coverageTerms(coverage: CoverageGate): string {
+  return (["lines", "branches", "functions"] as const)
+    .flatMap((name) => (coverage[name] === undefined ? [] : [`${name} ${coverage[name]}%`]))
+    .join(", ");
 }
 
 /** The checks a package's own scripts run (test, lint, typecheck), as commands: what its CI holds a change to. */
@@ -182,6 +204,8 @@ export function renderTask(input: {
   readonly surface: number;
   /** The commands the repository runs on the package (its own scripts), for what CI checks. */
   readonly ci?: readonly string[];
+  /** Where the package's test script finds its tests, from the folder's root. */
+  readonly testsAt?: string;
 }): string {
   return `${[
     "# Task",
@@ -194,6 +218,7 @@ export function renderTask(input: {
     ...(input.testsInFolder.length === 0
       ? []
       : [`- The ${input.testsInFolder.length} test file(s) that came with the folder still pass, and only grew.`]),
+    ...(input.testsAt === undefined ? [] : [`- New tests are where the repository's test script runs them: \`${input.testsAt}\`.`]),
     ...(input.surface === 0
       ? []
       : [`- The ${input.surface} export(s) code outside this folder uses keep their names and types (\`npm test\` checks them).`]),
@@ -941,6 +966,34 @@ export function seededLockfile(
 }
 
 /**
+ * Takes out of a resolved lock what npm left with nothing to install it
+ * under: an entry nested under a package the lock no longer has
+ * (`node_modules/vitest/node_modules/magic-string` once `vitest` went),
+ * and one npm marked extraneous. npm's `--package-lock-only` marks such
+ * entries rather than dropping them, and an npm other than the one that
+ * resolved the lock may install them. How many it took out.
+ */
+export function pruneLock(lock: { packages?: Record<string, Record<string, unknown>> }): number {
+  const packages = lock.packages ?? {};
+  let removed = 0;
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const key of Object.keys(packages)) {
+      if (key === "") continue;
+      const at = key.lastIndexOf("/node_modules/");
+      const parent = at === -1 ? null : key.slice(0, at);
+      const orphan = parent !== null && parent.includes("node_modules/") && packages[parent] === undefined;
+      if (orphan || packages[key]?.["extraneous"] === true) {
+        delete packages[key];
+        removed += 1;
+        changed = true;
+      }
+    }
+  }
+  return removed;
+}
+
+/**
  * Peers of the installed packages, and of what they install, that the
  * repository's npm lockfile installs at its root for production: a
  * package the slice does not import but one it installs needs, at the
@@ -1331,6 +1384,8 @@ export async function computeCut(
   const packageDir =
     entryPoints[0] === undefined ? null : packageFolder(repo)(`${entryPoints[0]}/`);
   let coverage: CoverageGate | null = null;
+  // Where the package's test script finds its tests, when it names them.
+  let testsAt: string | undefined;
   if (packageDir !== null)
     try {
       const script = (
@@ -1338,7 +1393,11 @@ export async function computeCut(
           scripts?: Record<string, string>;
         }
       ).scripts?.["test"];
-      if (typeof script === "string") coverage = coverageGateOf(packageDir, script);
+      if (typeof script === "string") {
+        coverage = coverageGateOf(packageDir, script);
+        const glob = testsGlobOf(script);
+        if (glob !== undefined) testsAt = posix.join(packageDir, glob);
+      }
     } catch {
       // No readable package.json: no gate.
     }
@@ -1515,6 +1574,8 @@ export async function computeCut(
         testsInFolder: analysis.walk.tests.length,
         testsLeft: testsLeft.length,
         ...(request.task === undefined || request.task.trim() === "" ? {} : { task: true }),
+        ...(testsAt === undefined ? {} : { testsAt }),
+        ...(coverage === null ? {} : { coverage }),
       }),
       class: "config",
       public: true,
@@ -1529,6 +1590,7 @@ export async function computeCut(
               testsInFolder: analysis.walk.tests,
               surface: contract.inbound.reduce((sum, module) => sum + module.symbols.length, 0),
               ci: packageChecks(repo, packageDir),
+              ...(testsAt === undefined ? {} : { testsAt }),
             }),
             class: "config" as const,
             public: true,
@@ -1931,12 +1993,17 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
   }
   if (request.offline !== true)
     try {
-      const resolveLock = () =>
-        command(
+      const resolveLock = async () => {
+        await command(
           "npm",
           ["install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"],
           { cwd: out, signal: AbortSignal.timeout(5 * 60_000) },
         );
+        const path = join(out, "package-lock.json");
+        if (!existsSync(path)) return;
+        const lock = JSON.parse(readFileSync(path, "utf8")) as { packages?: Record<string, Record<string, unknown>> };
+        if (pruneLock(lock) > 0) await writeFile(path, `${JSON.stringify(lock, null, 2)}\n`, "utf8");
+      };
       /** Whether `npm ci` would take the lock: it refuses one out of step with package.json. */
       const lockHolds = async () => {
         try {
@@ -2197,7 +2264,7 @@ function folderEdited(dir: string, record: CarveoutRecord): boolean {
     ...(record.extras ?? []).map((file) => [file.path, file.sha256] as const),
   ]);
   const generated = new Map(record.generated.map((file) => [file.path, file.sha256] as const));
-  const tree = listTree(root);
+  const tree = listTree(root, "", [], toolDirsIn(root, record));
   const present = new Set(tree);
   for (const [path, hash] of written) {
     if (!present.has(path)) return true;
@@ -2574,7 +2641,7 @@ async function unaliasFolder(root: string, table: FolderPseudonyms, record: Carv
           if (inner.isDirectory()) own.add(`${entry.name}/${inner.name}`);
       else own.add(entry.name);
     }
-  for (const path of listTree(root)) {
+  for (const path of listTree(root, "", [], toolDirsIn(root, record))) {
     if (path === RECORD_PATH) continue;
     const bytes = readFileSync(join(root, path));
     const binary = isBinaryPath(path) || !isTextContent(bytes);
@@ -2594,15 +2661,40 @@ async function unaliasFolder(root: string, table: FolderPseudonyms, record: Carv
   return folder;
 }
 
-function listTree(root: string, dir = "", into: string[] = []): string[] {
+function listTree(root: string, dir = "", into: string[] = [], skip: ReadonlySet<string> = new Set()): string[] {
   for (const entry of readdirSync(join(root, dir), { withFileTypes: true })) {
     const path = dir === "" ? entry.name : `${dir}/${entry.name}`;
     if (entry.isDirectory()) {
-      if (entry.name !== "node_modules" && entry.name !== ".git")
-        listTree(root, path, into);
+      if (entry.name !== "node_modules" && entry.name !== ".git" && !(dir === "" && skip.has(entry.name)))
+        listTree(root, path, into, skip);
     } else if (entry.isFile()) into.push(path);
   }
   return into;
+}
+
+/**
+ * Folders a contributor's tools write at a folder's root: npm's cache kept
+ * in the folder (`npm ci --cache .npm-cache`), a coverage report, a build
+ * tool's cache. None is part of a change.
+ */
+const TOOL_DIRS = [".npm-cache", ".npm", ".pnpm-store", ".cache", "coverage", ".nyc_output", ".turbo"];
+
+/**
+ * The tool folders at a returned folder's root that hold none of the
+ * slice's files: left out of what `patch` and `check` read, and named.
+ */
+function toolDirsIn(root: string, record: CarveoutRecord): Set<string> {
+  const held = [
+    ...record.manifest.included.map((file) => file.path),
+    ...(record.copied ?? []).map((file) => file.path),
+    ...(record.extras ?? []).map((file) => file.path),
+    ...record.generated.map((file) => file.path),
+  ];
+  return new Set(
+    TOOL_DIRS.filter(
+      (dir) => existsSync(join(root, dir)) && statSync(join(root, dir)).isDirectory() && !held.some((path) => path.startsWith(`${dir}/`)),
+    ),
+  );
 }
 
 /** The folder files a cut writes beside its stubs that only the folder runs. */
@@ -2741,7 +2833,8 @@ export async function patchProject(
     stubFiles.set(declarationPath(module), module);
     stubFiles.set(runtimePath(module), module);
   }
-  const tree = listTree(root).sort(compare);
+  const tools = toolDirsIn(root, record);
+  const tree = listTree(root, "", [], tools).sort(compare);
   const present = new Set(tree);
   const sources = new Set(
     tree.filter(
@@ -2858,7 +2951,8 @@ export async function patchProject(
   const crossPackage: { file: string; specifier: string }[] = [];
   const drifted: string[] = [];
   const noThreeWay: string[] = [];
-  const skipped: string[] = [];
+  // A tool's folder (npm's cache, a coverage report) is named, not listed.
+  const skipped: string[] = [...tools].map((dir) => `${dir}/`);
   /**
    * The bytes the cut read for an included file, from the commit when the
    * checkout still has them there, else the checkout's file if it has not

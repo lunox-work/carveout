@@ -326,6 +326,18 @@ export interface CoverageGate {
   readonly allCovered?: { readonly dir: string; readonly excluded: readonly string[] };
 }
 
+/**
+ * The test sources a package's test script runs, relative to its folder,
+ * when it names them (`--test dist-test/test/*.test.js`, back at the
+ * sources: `test/*.test.ts`); undefined when it leaves them to the
+ * runner's defaults, which find a test anywhere.
+ */
+export function testsGlobOf(script: string): string | undefined {
+  // The script runs compiled tests: its glob, back at the sources.
+  const glob = /\s--test\s+["']?([^\s"'-][^\s"']*)/.exec(script)?.[1];
+  return glob === undefined ? undefined : glob.replace(/^dist[^/]*\//, "").replace(/\.js$/, ".ts");
+}
+
 /** The thresholds a package's test script passes to `node --test`, if any. */
 export function coverageGateOf(folder: string, script: string): CoverageGate | null {
   if (!/--experimental-test-coverage/.test(script)) return null;
@@ -335,12 +347,7 @@ export function coverageGateOf(folder: string, script: string): CoverageGate | n
   };
   const gate = { lines: read("lines"), branches: read("branches"), functions: read("functions") };
   if (gate.lines === undefined && gate.branches === undefined && gate.functions === undefined) return null;
-  // The script runs compiled tests: its glob, back at the sources.
-  const glob = /\s--test\s+["']?([^\s"'-][^\s"']*)/.exec(script)?.[1];
-  const tests =
-    glob === undefined
-      ? undefined
-      : glob.replace(/^dist[^/]*\//, "").replace(/\.js$/, ".ts");
+  const tests = testsGlobOf(script);
   const guard = /\bassert-all-covered\s+(\S+)\s+\S+((?:[ \t]+[^\s;&|]+)*)/.exec(script);
   const allCovered =
     guard === null

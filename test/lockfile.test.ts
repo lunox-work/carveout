@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { seededLockfile } from "../src/carve.js";
+import { pruneLock, seededLockfile } from "../src/carve.js";
 
 test("a seeded lock preserves workspace-specific and nested dependency versions", () => {
   const repo = mkdtempSync(join(tmpdir(), "carveout-lock-"));
@@ -28,4 +28,22 @@ test("a seeded lock preserves workspace-specific and nested dependency versions"
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
+});
+
+test("a resolved lock loses what npm left with nothing to install it under", () => {
+  const lock = {
+    packages: {
+      "": { name: "slice" },
+      "node_modules/kept": { version: "1.0.0" },
+      "node_modules/kept/node_modules/child": { version: "1.1.0" },
+      // vitest went; what npm nested under it stayed, marked extraneous or not.
+      "node_modules/vitest/node_modules/magic-string": { version: "1.4.1", extraneous: true },
+      "node_modules/@vitest/mocker/node_modules/magic-string": { version: "1.4.2" },
+      "node_modules/@vitest/mocker/node_modules/magic-string/node_modules/deeper": { version: "0.1.0" },
+      "node_modules/stray": { version: "2.0.0", extraneous: true },
+    },
+  };
+  assert.equal(pruneLock(lock), 4);
+  assert.deepEqual(Object.keys(lock.packages), ["", "node_modules/kept", "node_modules/kept/node_modules/child"]);
+  assert.equal(pruneLock(lock), 0);
 });

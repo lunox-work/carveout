@@ -21,7 +21,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, before, test } from "node:test";
-import { cutSlice, patchProject } from "../src/carve.js";
+import { cutSlice, patchProject, renderSliceAgents, renderTask } from "../src/carve.js";
 import { filterDeclaration } from "../src/extract/typescript.js";
 import { walkGraph } from "../src/graph.js";
 import { extensionStyles, restoreImports } from "../src/imports.js";
@@ -280,6 +280,19 @@ test("a patch keeps out protected paths, new files outside the slice's packages,
   assert.equal(git(into, ["status", "--porcelain"]), "");
 });
 
+test("a tool's folder at the root (npm's cache, a coverage report) is named, never judged or carried", async () => {
+  const out = await cut("tools");
+  write(join(out, ".npm-cache/_cacache/index-v5/aa/bb"), "{}\n");
+  write(join(out, ".npm-cache/_logs/debug.log"), "npm\n");
+  write(join(out, "coverage/lcov.info"), "TN:\n");
+  write(join(out, "apps/shop/src/extra.ts"), "export const y = 2;\n");
+  const patch = await patchProject(out);
+  assert.deepEqual(patch.refused, []);
+  assert.deepEqual(patch.added, ["apps/shop/src/extra.ts"]);
+  assert.deepEqual([...patch.skipped].sort(), [".npm-cache/", "coverage/"]);
+  assert.doesNotMatch(patch.diff, /_cacache|lcov/);
+});
+
 test("a record that names a path outside the folder, or another repository, is refused", async () => {
   // Without a receipt the folder's own record is all there is, checked.
   const out = await cut("tampered", { receipt: false });
@@ -427,4 +440,22 @@ test("a cut tells an agent in it what it needs, and an edit to that never goes b
   const patch = await patchProject(out);
   assert.equal(patch.diff, "");
   assert.ok(patch.generatedEdits.includes("AGENTS.md") && patch.generatedEdits.includes("CLAUDE.md"));
+});
+
+test("an agent is told where new tests go and what the coverage gate measures, when the package's script says", () => {
+  const agents = renderSliceAgents({
+    entryPoints: ["packages/core/src/weight.ts"],
+    testsInFolder: 4,
+    testsLeft: 0,
+    task: true,
+    testsAt: "packages/core/test/*.test.ts",
+    coverage: { folder: "packages/core", lines: 90, branches: 90, allCovered: { dir: "src", excluded: [] } },
+  });
+  assert.match(agents, /New tests go where the repository's test script finds them: `packages\/core\/test\/\*\.test\.ts`/);
+  assert.match(agents, /requires coverage \(lines 90%, branches 90%\)\. `npm test` holds each file you add under `packages\/core` to it, and fails on one no test loads; code you add to a file that came with the folder is not measured here/);
+  assert.match(agents, /--cache \.npm-cache/);
+  const bare = renderSliceAgents({ entryPoints: ["a.ts"], testsInFolder: 0, testsLeft: 0 });
+  assert.doesNotMatch(bare, /New tests go|requires coverage/);
+  const task = renderTask({ task: "Do it.", testsInFolder: [], surface: 0, testsAt: "packages/core/test/*.test.ts" });
+  assert.match(task, /New tests are where the repository's test script runs them: `packages\/core\/test\/\*\.test\.ts`/);
 });
