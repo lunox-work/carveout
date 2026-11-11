@@ -24,7 +24,8 @@
 // plugin-branch: the Claude plugin directory scans every file in the plugin
 // folder, and on main that folder is the whole repository (CLI source,
 // lockfile, tests, experiments). The directory tracks the claude-plugin
-// branch instead, which holds only PLUGIN_FILES as of HEAD and a README.md
+// branch instead, which holds only PLUGIN_FILES and plugin.json (less
+// LISTING_LINKS) as of HEAD, and a README.md
 // written from plugin.json, each skill's frontmatter and .claude-plugin/data.md
 // (what is sent where, for the directory's data-handling review; the
 // directory requires a README), one commit per change on top of origin's branch. Builds the commit without touching the
@@ -164,7 +165,11 @@ function pack(offline) {
 }
 
 const PLUGIN_BRANCH = "claude-plugin";
-const PLUGIN_FILES = [".claude-plugin/plugin.json", ".claude-plugin/icon.png", "LICENSE", "skills"];
+const PLUGIN_FILES = [".claude-plugin/icon.png", "LICENSE", "skills"];
+// plugin.json fields only the directory's listing reads. Claude Code warns on
+// them as unknown keys, so the branch's plugin.json drops them and its README
+// carries them as links, which the directory also reads.
+const LISTING_LINKS = { privacyPolicyUrl: "Privacy", documentationUrl: "Documentation", supportUrl: "Support" };
 
 function git(args, env = {}) {
   const result = spawnSync("git", args, { cwd: ROOT, encoding: "utf8", env: { ...process.env, ...env } });
@@ -189,6 +194,8 @@ function pluginReadme() {
   if (needs.length > 0) lines.push("## Requirements", "", ...needs);
   const data = spawnSync("git", ["show", "HEAD:.claude-plugin/data.md"], { cwd: ROOT, encoding: "utf8" });
   if (data.status === 0) lines.push("## Data", "", data.stdout.trim(), "");
+  const links = Object.entries(LISTING_LINKS).filter(([key]) => plugin[key]);
+  if (links.length > 0) lines.push("## Links", "", ...links.map(([key, label]) => `- [${label}](${plugin[key]})`), "");
   lines.push("## Source", "", `This branch holds only the plugin's files. The CLI, its documentation and the`);
   lines.push(`skills' source are on the main branch of ${plugin.repository}. License: ${plugin.license}.`, "");
   return lines.join("\n");
@@ -205,6 +212,11 @@ function pluginBranch(push) {
       if (type === "tree") git(["read-tree", `--prefix=${path}/`, object], env);
       else git(["update-index", "--add", "--cacheinfo", `${mode},${object},${path}`], env);
     }
+    const manifest = JSON.parse(git(["show", "HEAD:.claude-plugin/plugin.json"]));
+    for (const key of Object.keys(LISTING_LINKS)) delete manifest[key];
+    const json = spawnSync("git", ["hash-object", "-w", "--stdin"], { cwd: ROOT, input: `${JSON.stringify(manifest, null, 2)}\n`, encoding: "utf8" });
+    if (json.status !== 0) return [`git hash-object: ${json.stderr.trim()}`];
+    git(["update-index", "--add", "--cacheinfo", `100644,${json.stdout.trim()},.claude-plugin/plugin.json`], env);
     const readme = spawnSync("git", ["hash-object", "-w", "--stdin"], { cwd: ROOT, input: pluginReadme(), encoding: "utf8" });
     if (readme.status !== 0) return [`git hash-object: ${readme.stderr.trim()}`];
     git(["update-index", "--add", "--cacheinfo", `100644,${readme.stdout.trim()},README.md`], env);
