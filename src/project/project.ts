@@ -1471,7 +1471,7 @@ export function testRunnerScript(
   if (ext) return "(?:" + ext[2].split("|").map(globSource).join("|") + ")" + (ext[1] === "@" ? "" : ext[1]);
   if (part === "*") return "[^/]*";
   if (part === "?") return "[^/]";
-  if (/^\[.*\]$/.test(part)) return part.replace(/^\[!/, "[^");
+  if (/^\[.*\]$/.test(part)) return part.replace(/^\[!/, "[^/");
   if (/^\{.*\}$/.test(part)) return "(?:" + part.slice(1, -1).split(",").map(globSource).join("|") + ")";
   return escape(part);
 }).join("");
