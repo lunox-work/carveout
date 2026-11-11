@@ -1,0 +1,20 @@
+{
+  "name": "carveout",
+  "owner": {
+    "name": "lunox-work",
+    "url": "https://github.com/lunox-work"
+  },
+  "metadata": {
+    "description": "carveout: hand one part of a closed TypeScript repository to a contractor, and check an agent's change in the repository."
+  },
+  "plugins": [
+    {
+      "name": "carveout",
+      "source": "./",
+      "description": "Hand one part of a closed TypeScript repository to a contractor and take a checked patch back; check what a change reaches and whether it weakened a test.",
+      "version": "0.1.1",
+      "category": "development",
+      "license": "MIT"
+    }
+  ]
+}

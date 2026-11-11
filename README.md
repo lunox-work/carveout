@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/carveout"><img src="https://img.shields.io/npm/v/carveout?style=flat-square&label=npm" alt="npm version"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT license"></a>
-  <a href="SKILL.md"><img src="https://img.shields.io/badge/Claude_Code-skill-D97757?style=flat-square" alt="Claude Code skill"></a>
+  <a href="skills/carveout/SKILL.md"><img src="https://img.shields.io/badge/Claude_Code-skill-D97757?style=flat-square" alt="Claude Code skill"></a>
   <a href="#limits"><img src="https://img.shields.io/badge/TypeScript-repositories-3178C6?style=flat-square" alt="TypeScript repositories"></a>
 </p>
 
@@ -124,6 +124,13 @@ tests then fail on the mocks before any edit. You choose.
 ```sh
 npx skills add lunox-work/carveout -g
 ```
+
+In Claude Code, the repository is also a plugin marketplace:
+`/plugin marketplace add lunox-work/carveout`, then
+`/plugin install carveout@carveout`. It holds two skills:
+[`carveout`](skills/carveout/SKILL.md), the hand-off, and
+[`carveout-gate`](skills/carveout-gate/SKILL.md), `impact` and `gate` for a
+change made in the repository.
 
 Then ask your coding agent (Claude Code, Codex, Cursor, or any agent that
 loads skills): _"hand `src/billing` to a contractor"_. It plans the slice,

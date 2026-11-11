@@ -4,3 +4,4 @@ dist/
 .carveout/
 experiments/repos.local.json
 experiments/work/
+dist-skills/

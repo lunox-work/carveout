@@ -26,7 +26,8 @@
     "impact-analysis",
     "test-impact-analysis",
     "test-selection",
-    "guardrails"
+    "guardrails",
+    "claude-code-plugin"
   ],
   "homepage": "https://github.com/lunox-work/carveout#readme",
   "bugs": {
@@ -47,12 +48,16 @@
     "AGENTS.md",
     "NOTICE.md",
     "README.md",
-    "SKILL.md"
+    "skills/"
   ],
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json",
-    "test": "npm run build && node --import ./dist/test/setup.js --test dist/test/*.test.js",
-    "prepublishOnly": "npm test"
+    "test": "node scripts/skill.mjs check && npm run build && node --import ./dist/test/setup.js --test dist/test/*.test.js",
+    "prepublishOnly": "npm test",
+    "version": "node scripts/skill.mjs sync && git add skills .claude-plugin",
+    "skill:check": "node scripts/skill.mjs check",
+    "skill:sync": "node scripts/skill.mjs sync",
+    "skill:pack": "node scripts/skill.mjs pack"
   },
   "dependencies": {
     "typescript": "5.9.3"
