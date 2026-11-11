@@ -13,7 +13,7 @@ import { dirname, join, resolve } from "node:path";
 import { after, before, test } from "node:test";
 import { cutSlice, patchProject } from "../src/carve.js";
 import { buildScript } from "../src/project/project.js";
-import { vitestConfigText, vitestSettings } from "../src/project/vitest-config.js";
+import { fileEnvironments, vitestConfigText, vitestSettings } from "../src/project/vitest-config.js";
 
 const FIXTURE = resolve(import.meta.dirname, "../../test/fixtures/shop");
 
@@ -61,6 +61,39 @@ test("a package's Vitest settings are read from its config, never run", () => {
   assert.equal(vitestSettings(repo, "apps/api"), null);
   assert.equal(vitestSettings(repo, "apps/none"), null);
   assert.match(vitestConfigText({ environment: "jsdom", setupFiles: ["apps/web/test/setup.ts"] }), /"setupFiles": \[\n\s+"\.\/apps\/web\/test\/setup\.ts"/);
+});
+
+test("the Vitest settings are found as configs commonly write them", () => {
+  const repo = join(scratch, "settings-forms");
+  write(repo, {
+    // `test` by shorthand, from a name, through `satisfies`.
+    "a/vitest.config.ts": 'import { defineConfig } from "vitest/config";\nconst test = { environment: "happy-dom" };\nexport default defineConfig({ test });\n',
+    "b/vite.config.ts": 'const testConfig = { environment: "jsdom", globals: true };\nexport default { test: testConfig } satisfies Record<string, unknown>;\n',
+    // A function's block, and a plugin whose options hold another `test` first.
+    "c/vitest.config.mts": [
+      'import { defineConfig } from "vitest/config";',
+      "export default defineConfig(({ mode }) => {",
+      '  const plugins = [plugin({ test: { environment: "node" } })];',
+      '  return { plugins, test: { environment: "jsdom", testTimeout: 5_000 } };',
+      "});",
+      "",
+    ].join("\n"),
+    // A package's setup file by specifier, a path with no extension, and `root`.
+    "d/vitest.config.ts": 'export default { test: { root: "./src", setupFiles: ["@testing-library/jest-dom/vitest", "./setup"] } };\n',
+    "d/src/setup.ts": "export {};\n",
+    // A config at the repository's root only.
+    "vitest.config.ts": 'export default { test: { environment: "jsdom" } };\n',
+  });
+  assert.deepEqual(vitestSettings(repo, "a"), { environment: "happy-dom", setupFiles: [] });
+  assert.deepEqual(vitestSettings(repo, "b"), { environment: "jsdom", setupFiles: [], globals: true });
+  assert.deepEqual(vitestSettings(repo, "c"), { environment: "jsdom", setupFiles: [], testTimeout: 5000 });
+  assert.deepEqual(vitestSettings(repo, "d"), { setupFiles: ["d/src/setup.ts"], setupPackages: ["@testing-library/jest-dom/vitest"] });
+  assert.deepEqual(vitestSettings(repo, "e"), { environment: "jsdom", setupFiles: [] });
+  assert.match(
+    vitestConfigText({ setupFiles: ["d/src/setup.ts"], setupPackages: ["@testing-library/jest-dom/vitest"] }),
+    /"setupFiles": \[\n\s+"@testing-library\/jest-dom\/vitest",\n\s+"\.\/d\/src\/setup\.ts"/,
+  );
+  assert.deepEqual(fileEnvironments("/**\n * @vitest-environment happy-dom\n */\nimport { it } from 'vitest';\n"), ["happy-dom"]);
 });
 
 test("a cut whose package runs its Vitest tests in jsdom carries the settings and the setup file", async () => {

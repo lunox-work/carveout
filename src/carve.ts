@@ -67,7 +67,7 @@ import { packageModules, packageUses } from "./extract/fixture.js";
 import { npmPackageTypes, typesPackageOf } from "./extract/package-types.js";
 import { NODE_BUILTINS, isNodeBuiltin } from "./extract/typescript.js";
 import { walkGraph } from "./graph.js";
-import { ENVIRONMENT_PACKAGES, vitestSettings, type VitestSettings } from "./project/vitest-config.js";
+import { ENVIRONMENT_PACKAGES, fileEnvironments, vitestSettings, type VitestSettings } from "./project/vitest-config.js";
 import {
   extensionStyles,
   packageFolder,
@@ -1301,11 +1301,32 @@ export async function computeCut(
   };
   // The environment the package's Vitest tests run in, installed as the
   // repository locks it (`jsdom` for a component's tests).
-  for (const name of ENVIRONMENT_PACKAGES[vitest?.environment ?? ""] ?? [])
+  // So is the one a carried test asks for itself (`// @vitest-environment
+  // happy-dom`), and a package the config's setupFiles name by specifier
+  // (`@testing-library/jest-dom/vitest`).
+  const environments = new Set([
+    ...(vitest?.environment === undefined ? [] : [vitest.environment]),
+    ...analysis.walk.tests.flatMap((test) => {
+      try {
+        return fileEnvironments(readFileSync(join(repo, test), "utf8"));
+      } catch {
+        return [];
+      }
+    }),
+  ]);
+  for (const environment of [...environments].sort(compare))
+    for (const name of ENVIRONMENT_PACKAGES[environment] ?? [])
+      if (choices[name] === undefined && lockedVersion(repo, name) !== null) {
+        choices[name] = "approved-package";
+        log(`Installs ${name}: the package's Vitest tests run in the ${environment} environment.`);
+      }
+  for (const specifier of vitest?.setupPackages ?? []) {
+    const name = packageNameOf(specifier);
     if (choices[name] === undefined && lockedVersion(repo, name) !== null) {
       choices[name] = "approved-package";
-      log(`Installs ${name}: the package's Vitest tests run in the ${vitest?.environment} environment.`);
+      log(`Installs ${name}: the package's Vitest setup runs ${specifier}.`);
     }
+  }
   // So is a package whose class a carried test patches by its prototype
   // (`S3Client.prototype.send = ...`): a mock has no prototype to patch, so
   // the test fails on the mock before any change (E6c: 30 such tests).
