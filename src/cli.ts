@@ -9,7 +9,7 @@
  */
 
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import { basename, dirname, relative, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import {
   CARVEOUT_VERSION,
@@ -78,7 +78,7 @@ const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript r
       renames the folder back. --keep-names writes it in the repository's
       names; a name left in the folder is a blocker either way.
 
-  carveout check <dir> [--in-place] [--isolated] [--receipt <file>] [--json]
+  carveout check <dir> [--in-place] [--isolated] [--accept <test>...] [--receipt <file>] [--json]
       npm ci, npm run build and npm test in a scratch copy of <dir>. --isolated,
       for a folder that came back from someone else: a scratch HOME and npm
       cache and no install scripts (not a sandbox).
@@ -274,6 +274,7 @@ async function main(argv: readonly string[]) {
       private: { type: "string", multiple: true },
       copy: { type: "string", multiple: true },
       "in-place": { type: "boolean" },
+      accept: { type: "string", multiple: true },
       stubs: { type: "boolean" },
       into: { type: "string" },
       verify: { type: "string" },
@@ -759,9 +760,19 @@ async function main(argv: readonly string[]) {
       const [dir] = positionals;
       if (dir === undefined) fail("check needs the folder a cut wrote.");
       readRecord(dir);
+      // The owner's acceptance tests, by their paths in the repository.
+      const root = resolve(values.repo ?? ".");
+      const accept = (values.accept ?? []).map((file) => {
+        const at = resolve(file);
+        const path = relative(root, at).split("\\").join("/");
+        if (path.startsWith("..") || !existsSync(at))
+          fail(`--accept ${file}: give a test file inside the repository (run from its root, or pass --repo), at the path it would have there.`);
+        return { path, text: readFileSync(at, "utf8") };
+      });
       const steps = await checkProject(dir, {
         ...(values["in-place"] === true ? { inPlace: true } : {}),
         ...(values.isolated === true ? { isolated: true } : {}),
+        ...(accept.length === 0 ? {} : { accept }),
         ...receiptOption,
       });
       const ok = steps.length === 3 && steps.every((step) => step.ok);
@@ -855,6 +866,13 @@ async function main(argv: readonly string[]) {
                     ? `The edited folder installs, builds and passes its tests (${carried} test file(s) from the repository among them). A pass here is a pass against mocks: the repository's CI decides.${passing}`
                     : `Ready to hand over: the slice installs, builds, and its tests pass before any edit (${carried} test file(s) from the repository).${passing}`,
             ...(handoff === "red-baseline" ? advice : []),
+            ...(accept.length === 0
+              ? []
+              : [
+                  ok
+                    ? `The owner's ${accept.length} acceptance test file(s) ran with the folder's tests, in the check's copy, and pass.`
+                    : `The owner's ${accept.length} acceptance test file(s) ran with the folder's tests, in the check's copy; npm test's failures above name what failed.`,
+                ]),
           ].join("\n")}\n`,
         );
       }
