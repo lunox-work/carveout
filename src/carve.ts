@@ -123,6 +123,8 @@ export function renderSliceAgents(input: {
   readonly entryPoints: readonly string[];
   readonly testsInFolder: number;
   readonly testsLeft: number;
+  /** Whether the folder carries a TASK.md: the work asked for, and when it is accepted. */
+  readonly task?: boolean;
 }): string {
   const tests =
     input.testsInFolder === 0
@@ -144,6 +146,40 @@ export function renderSliceAgents(input: {
     "- Tests listed in `carveout/baseline.json` failed on the mocks before any edit and are not counted.",
     `- ${tests}${left} A pass here is a pass against mocks.`,
     "- When done, leave the edits in place: the repository's owner turns them into a patch with `carveout patch`.",
+    "",
+    "## What comes back, and what is held for the owner",
+    "",
+    "- Edits to the source files here, and new files beside them in the same packages, come back.",
+    "- A test you were handed may only grow: a new test or a new assertion. Changing an assertion, the data or setup it rests on, or a helper or fixture; skipping or focusing a test; or mocking, spying on or rewriting the code under test is held for the owner to read.",
+    "- New code may not reach what the slice does not: no new package (package.json is generated), no new disk, network, process or environment access, no code built from text (`eval`, `Function`), no module outside these packages.",
+    "- No code that tells a test run from a real one, ends the run early, or rewrites the assertion library or a built-in; no new `@ts-ignore`, `eslint-disable` or coverage ignore; no edit to check or test-runner configuration.",
+    "- Generated files (the stubs, everything under `carveout/`, `package.json`, the lockfile, the root configuration) do not come back: when the change needs one changed, say so.",
+    ...(input.task === true ? ["", "The work asked for, and when it is accepted, is in `TASK.md`: read it first."] : []),
+  ].join("\n")}\n`;
+}
+
+/** The folder's TASK.md: the work asked for, in the owner's words, and when it is accepted. */
+export function renderTask(input: {
+  readonly task: string;
+  readonly testsInFolder: readonly string[];
+  readonly surface: number;
+}): string {
+  return `${[
+    "# Task",
+    "",
+    input.task.trim(),
+    "",
+    "## Accepted when",
+    "",
+    "- `npm test` passes in this folder: the tests you write for the task, and the ones already here, but for those `carveout/baseline.json` names (they fail on the mocks before any edit).",
+    ...(input.testsInFolder.length === 0
+      ? []
+      : [`- The ${input.testsInFolder.length} test file(s) that came with the folder still pass, and only grew.`]),
+    ...(input.surface === 0
+      ? []
+      : [`- The ${input.surface} export(s) code outside this folder uses keep their names and types (\`npm test\` checks them).`]),
+    "- The owner's \`carveout patch\` of the folder keeps nothing out (see AGENTS.md: what comes back, and what is held).",
+    "- The repository's own CI passes once the change is merged: a pass here is a pass against mocks.",
   ].join("\n")}\n`;
 }
 export const CONTRACT_PATH = "carveout/contract.json";
@@ -601,6 +637,11 @@ export interface CutRequest extends SliceRequest {
    * scan still runs). On by default for a public cut with a receipt.
    */
   readonly pseudonyms?: boolean;
+  /**
+   * The work asked for, in the owner's words: written to the folder's
+   * TASK.md with when it is accepted (renamed with the folder in pseudonyms).
+   */
+  readonly task?: string;
   readonly log?: (line: string) => void;
 }
 
@@ -1443,10 +1484,25 @@ export async function computeCut(
         entryPoints: manifest.entryPoints,
         testsInFolder: analysis.walk.tests.length,
         testsLeft: testsLeft.length,
+        ...(request.task === undefined || request.task.trim() === "" ? {} : { task: true }),
       }),
       class: "config",
       public: true,
     },
+    ...(request.task === undefined || request.task.trim() === ""
+      ? []
+      : [
+          {
+            path: "TASK.md",
+            text: renderTask({
+              task: request.task,
+              testsInFolder: analysis.walk.tests,
+              surface: contract.inbound.reduce((sum, module) => sum + module.symbols.length, 0),
+            }),
+            class: "config" as const,
+            public: true,
+          },
+        ]),
     { path: SLICE_CLAUDE_PATH, text: "@AGENTS.md\n", class: "config", public: true },
     {
       path: BOUNDARY_PATH,

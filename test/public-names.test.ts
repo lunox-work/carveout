@@ -329,3 +329,15 @@ test("round two: a name inside a longer word blocks the folder; a private regist
   assert.deepEqual(seeded.packages["node_modules/left-pad"], { version: "1.3.0" });
   assert.equal(seeded.packages["node_modules/zod"]?.["resolved"], "https://registry.npmjs.org/zod/-/zod-4.0.0.tgz");
 });
+
+test("a task written into a public folder says when the work is accepted, in the folder's names", async () => {
+  const cut = await cutSlice({ ...request("task"), task: "Give LunoxCart a discounted(off) method." });
+  const task = readFileSync(join(cut.out, "TASK.md"), "utf8");
+  assert.match(task, /^# Task\n\nGive ZorvexCart a discounted\(off\) method\.\n\n## Accepted when\n/);
+  assert.match(task, /`npm test` passes in this folder/);
+  assert.match(task, /The 1 test file\(s\) that came with the folder still pass, and only grew\./);
+  assert.doesNotMatch(task, /lunox/i);
+  const agents = readFileSync(join(cut.out, "AGENTS.md"), "utf8");
+  assert.match(agents, /## What comes back, and what is held for the owner/);
+  assert.match(agents, /is in `TASK\.md`: read it first\./);
+});

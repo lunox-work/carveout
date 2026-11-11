@@ -7,8 +7,8 @@
  * kept files out of the patch (patch, merge) or held a change (gate).
  */
 
-import { readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import {
   CARVEOUT_VERSION,
@@ -18,6 +18,9 @@ import {
   patchProject,
   planSlice,
   readRecord,
+  readRepoConfig,
+  type CarveoutRecord,
+  type CheckStep,
 } from "./carve.js";
 import {
   SLICE_BUDGET_DEFAULTS,
@@ -36,6 +39,16 @@ import { trustedCut } from "./receipt.js";
 
 const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript repository.
 
+  carveout handoff <entry>... --out <dir> [--task <file|text>] [--depth N] [--max-files N]
+                 [--private <path>]... [--name <word>]... [--copy <dir>]... [--live <pkg>]...
+                 [--receipt <file>] [--json]
+      The hand-off in one step: a cut with the tests that run the code, its
+      whole package and the pure code it runs, for someone outside (public,
+      in pseudonyms), and its check. Prints whether the folder is ready (its
+      tests pass before any edit), what it shows, the receipt to keep, and
+      what to send. --task writes TASK.md: the work, and when it is accepted.
+      Exits 0 only when the folder is ready to hand over.
+
   carveout plan  <entry>... [--repo <dir>] [--max-files N] [--depth N]
                  [--with-tests] [--whole-package] [--follow-workspaces]
                  [--copy-pure] [--private <path>]... [--json]
@@ -46,7 +59,7 @@ const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript r
                  [--copy-pure] [--private <path>]... [--copy <dir>]...
                  [--mock <package>]...
                  [--install <package>]... [--live <package>]... [--offline]
-                 [--widen-literals] [--public] [--name <word>]... [--keep-names]
+                 [--widen-literals] [--public] [--name <word>]... [--keep-names] [--task <file|text>]
                  [--receipt <file> | --no-receipt] [--json]
       Copies the slice to <dir> at its repository paths, with a .d.ts stub and a
       recording mock for every module it imports from outside, mock packages for
@@ -127,6 +140,31 @@ widened. --copy <dir> copies a folder the code reads by name (migrations).
 A carveout.config.json at the repository's root sets the same for every cut.
 `;
 
+/** What a check says of a folder as a hand-off: whether "make the tests pass" is a task someone can finish there. */
+function verdictOf(
+  steps: readonly CheckStep[],
+  record: CarveoutRecord,
+): {
+  readonly ok: boolean;
+  readonly handoff: "ready" | "red-baseline" | "no-tests" | "failed";
+  readonly counts?: { readonly tests: number; readonly pass: number; readonly fail: number };
+  readonly baseline?: readonly string[];
+  readonly carried: number;
+} {
+  const ok = steps.length === 3 && steps.every((step) => step.ok);
+  const testStep = steps.find((step) => step.command === "npm test");
+  const baseline = testStep?.baselineInEffect !== undefined && testStep.baselineInEffect.length > 0 ? testStep.baselineInEffect : undefined;
+  const counts = testStep?.counts;
+  const carried = record.tests?.carried.length ?? 0;
+  return {
+    ok,
+    handoff: !ok ? "failed" : baseline !== undefined ? "red-baseline" : carried === 0 ? "no-tests" : "ready",
+    ...(counts === undefined ? {} : { counts }),
+    ...(baseline === undefined ? {} : { baseline }),
+    carried,
+  };
+}
+
 function fail(message: string): never {
   process.stderr.write(`carveout: ${message}\n`);
   process.exit(1);
@@ -195,6 +233,7 @@ async function main(argv: readonly string[]) {
       "no-receipt": { type: "boolean" },
       name: { type: "string", multiple: true },
       "keep-names": { type: "boolean" },
+      task: { type: "string" },
     },
   });
   const budget = {
@@ -224,6 +263,23 @@ async function main(argv: readonly string[]) {
     }
     return named === undefined ? repo : undefined;
   };
+  /** `--mock`, `--install` and `--live` as the cut's dependency choices, refused when they clash. */
+  const dependencyChoices = (): Record<string, DependencyChoice> => {
+    const choices: Record<string, DependencyChoice> = {};
+    for (const name of values.mock ?? []) choices[name] = "runtime-mock";
+    for (const name of values.install ?? []) {
+      if (choices[name] !== undefined) fail(`${name} is given to both --mock and --install.`);
+      choices[name] = "approved-package";
+    }
+    for (const name of values.live ?? [])
+      if (choices[name] === "runtime-mock") fail(`${name} is given to both --mock and --live.`);
+    return choices;
+  };
+  /** `--task`: a file's text, or the text given. */
+  const taskOption = () =>
+    values.task === undefined
+      ? {}
+      : { task: existsSync(values.task) && statSync(values.task).isFile() ? readFileSync(values.task, "utf8") : values.task };
   /** The receipt a folder's command was given, as an option; or none, by `--no-receipt`. */
   const receiptOption = {
     ...(values.receipt === undefined ? {} : { receipt: values.receipt }),
@@ -409,6 +465,101 @@ async function main(argv: readonly string[]) {
       return;
     }
 
+    case "handoff": {
+      if (positionals.length === 0) fail("handoff needs at least one entry point.");
+      if (values.out === undefined) fail("handoff needs --out <dir>.");
+      // The hand-off's own defaults, unless a flag or the owner's
+      // configuration says otherwise: the tests that run the code, its
+      // whole package, the pure code it runs, and a folder for someone
+      // outside, in pseudonyms.
+      const config = readRepoConfig(repo);
+      const result = await cutSlice({
+        repo,
+        out: values.out,
+        entryPoints: positionals,
+        budget,
+        choices: dependencyChoices(),
+        ...(values.live === undefined ? {} : { live: values.live }),
+        tests: true,
+        wholePackage: values["whole-package"] ?? config.wholePackage ?? true,
+        copyPure: values["copy-pure"] ?? config.copyPure ?? true,
+        ...(values["follow-workspaces"] === true ? { followWorkspaces: true } : {}),
+        ...(values.private === undefined ? {} : { private: values.private }),
+        public: values.public ?? config.public ?? true,
+        ...(values.offline === true ? { offline: true } : {}),
+        ...(values.copy === undefined ? {} : { copy: values.copy }),
+        ...(values["no-receipt"] === true ? { receipt: false as const } : values.receipt === undefined ? {} : { receipt: values.receipt }),
+        ...(values.name === undefined ? {} : { names: values.name }),
+        ...(values["keep-names"] === true ? { pseudonyms: false } : {}),
+        ...taskOption(),
+        log: (line) => {
+          if (values.json !== true) process.stderr.write(`${line}\n`);
+        },
+      });
+      const steps = await checkProject(result.out, {
+        ...(result.receipt === null ? { noReceipt: true } : { receipt: result.receipt }),
+      });
+      const verdict = verdictOf(steps, result.record);
+      const record = result.record;
+      if (values.json === true)
+        print({
+          out: result.out,
+          ready: record.ready && verdict.handoff === "ready",
+          handoff: verdict.handoff,
+          counts: verdict.counts ?? null,
+          baseline: verdict.baseline ?? [],
+          blockers: record.blockers,
+          exposure: record.exposure ?? null,
+          pseudonyms: result.pseudonyms === null ? null : { renames: result.pseudonyms.rules.length, kept: result.pseudonyms.kept },
+          readiness: result.readiness,
+          receipt: result.receipt,
+          steps,
+        });
+      else {
+        const lines = [
+          `Hand-off folder: ${result.out}`,
+          `  Verdict: ${
+            !record.ready
+              ? "not ready: the cut has blockers (below)"
+              : verdict.handoff === "ready"
+                ? "ready: it installs, builds, and its tests pass before any edit"
+                : verdict.handoff === "red-baseline"
+                  ? `its tests run, but ${verdict.baseline?.length ?? 0} fail on the mocks before any edit (not counted)`
+                  : verdict.handoff === "no-tests"
+                    ? "it builds, but no test of this code came with it: write the tests the work must pass"
+                    : "it does not install, build or test on its own (carveout check names the step)"
+          }`,
+          ...(verdict.counts === undefined ? [] : [`  Tests: ${verdict.counts.pass} of ${verdict.counts.tests} pass before any edit.`]),
+          ...(record.exposure === undefined ? [] : [`  Shows ${renderExposure(record.exposure)}`]),
+          `  Names: ${
+            result.pseudonyms === null
+              ? record.request.public === true
+                ? "in the repository's own (--keep-names or no receipt)"
+                : "in the repository's own (not public)"
+              : result.pseudonyms.rules.length === 0
+                ? "none of the repository's is in the folder"
+                : `${result.pseudonyms.rules.length} rename(s) hide the repository's; the receipt keeps the table`
+          }.`,
+          ...(record.blockers.length === 0
+            ? []
+            : ["", "Blockers:", list(record.blockers.map((b) => `${b.code}${b.file === null ? "" : ` ${b.file}`}: ${b.detail}`))]),
+          ...(verdict.handoff === "red-baseline" && hasAdvice(result.readiness)
+            ? ["", "To run those on real code, cut again with:", ...renderReadiness(result.readiness)]
+            : []),
+          "",
+          result.receipt === null
+            ? "No receipt: the folder that comes back will be judged by its own record (--no-receipt on patch)."
+            : `Receipt: ${result.receipt}\n  Keep it, and never send it: the folder that comes back is judged by it.`,
+          `Send the folder without node_modules: (cd ${dirname(result.out)} && zip -qr ${basename(result.out)}.zip ${basename(result.out)} -x '*/node_modules/*')`,
+          "When it comes back, from the repository's root: carveout patch <returned folder> --output change.patch; read all of it; then git apply --3way change.patch on a branch, and let CI decide.",
+          "",
+        ];
+        process.stdout.write(lines.join("\n"));
+      }
+      if (!record.ready || verdict.handoff !== "ready") process.exitCode = 2;
+      return;
+    }
+
     case "cut": {
       if (positionals.length === 0) fail("cut needs at least one entry point.");
       if (values.out === undefined) fail("cut needs --out <dir>.");
@@ -438,6 +589,7 @@ async function main(argv: readonly string[]) {
         ...(values["no-receipt"] === true ? { receipt: false as const } : values.receipt === undefined ? {} : { receipt: values.receipt }),
         ...(values.name === undefined ? {} : { names: values.name }),
         ...(values["keep-names"] === true ? { pseudonyms: false } : {}),
+        ...taskOption(),
         log: (line) => {
           if (values.json !== true) process.stderr.write(`${line}\n`);
         },

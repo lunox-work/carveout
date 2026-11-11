@@ -87,6 +87,23 @@ For a contractor or contributor who must not see the rest of a closed
 repository. The maintainer cuts and later merges; the contractor only works
 in the folder.
 
+In one step:
+
+```sh
+carveout handoff apps/api/src/billing/quote.ts --task task.md --out ../quote-slice
+```
+
+`handoff` cuts with the tests that run the code, its whole package and the
+pure code it runs, for someone outside (public, in pseudonyms), checks the
+folder, and says whether it is ready to hand over (its tests pass before
+any edit; exit 0 only then), what it shows, the receipt to keep and what
+to send. `--task` writes `TASK.md`: the work in the owner's words, renamed
+with the folder, and when it is accepted (`npm test` passes, the tests
+handed over only grew, the exports outside code uses keep their types,
+`carveout patch` keeps nothing out, the repository's CI passes). The
+folder's `AGENTS.md` tells an agent working in it what comes back and what
+the hand-off policy holds. Step by step:
+
 ```sh
 # maintainer, at the repository's root
 carveout plan  packages/api/src/quote.ts --depth 1 --with-tests --whole-package --copy-pure
@@ -376,15 +393,16 @@ are found by name first, and the compiler confirms each one.
 
 ## Commands
 
-| Command                                  | Does                                                                                                                                                                                                                                                              |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `carveout plan <entry>...`               | Lists the files, cuts, importers, packages, environment and blockers; the lines the cut shows, by why each file is there; every test that runs the code, in the folder or left behind and why. Writes nothing.                                                    |
-| `carveout cut <entry>... --out <dir>`    | Writes the folder. Exits 2 if it was written with blockers; writes nothing if it would carry a credential.                                                                                                                                                        |
-| `carveout check <dir>`                   | Runs `npm ci`, `npm run build` and `npm test` in a scratch copy; records the tests that fail on the mocks, and says whether the folder is ready to hand over (its tests pass before any edit) or what would make it so. `--isolated` for a folder that came back. |
-| `carveout status <dir>`                  | Says whether a cut now would write the same folder, and names what changed. Exits 4 if stale.                                                                                                                                                                     |
-| `carveout patch <dir>`                   | Prints the edits as a patch for the repository (`--output <file>`), with full blob ids for `git apply --3way`. Runs none of the folder's code; keeps out what the hand-off policy refuses (exit 6).                                                               |
-| `carveout merge <dir> --into <checkout>` | Patches, applies with `--3way` in the checkout you name, and runs `--verify <cmd>` there with a scratch HOME and only the `--verify-env` variables. Applies nothing on a refusal (exit 6).                                                                        |
-| `carveout apply <dir> <patch>`           | Brings a patch for the repository into the folder, imports rewritten; `--stubs` adds the stubs it needs. A module the patch adds past the cut's reach joins the folder as an entry, with its tests.                                                               |
+| Command                                   | Does                                                                                                                                                                                                                                                              |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `carveout handoff <entry>... --out <dir>` | A cut for someone outside with the hand-off's defaults, and its check, in one step: ready or not, what it shows, the receipt to keep, what to send. `--task` writes `TASK.md`.                                                                                    |
+| `carveout plan <entry>...`                | Lists the files, cuts, importers, packages, environment and blockers; the lines the cut shows, by why each file is there; every test that runs the code, in the folder or left behind and why. Writes nothing.                                                    |
+| `carveout cut <entry>... --out <dir>`     | Writes the folder. Exits 2 if it was written with blockers; writes nothing if it would carry a credential.                                                                                                                                                        |
+| `carveout check <dir>`                    | Runs `npm ci`, `npm run build` and `npm test` in a scratch copy; records the tests that fail on the mocks, and says whether the folder is ready to hand over (its tests pass before any edit) or what would make it so. `--isolated` for a folder that came back. |
+| `carveout status <dir>`                   | Says whether a cut now would write the same folder, and names what changed. Exits 4 if stale.                                                                                                                                                                     |
+| `carveout patch <dir>`                    | Prints the edits as a patch for the repository (`--output <file>`), with full blob ids for `git apply --3way`. Runs none of the folder's code; keeps out what the hand-off policy refuses (exit 6).                                                               |
+| `carveout merge <dir> --into <checkout>`  | Patches, applies with `--3way` in the checkout you name, and runs `--verify <cmd>` there with a scratch HOME and only the `--verify-env` variables. Applies nothing on a refusal (exit 6).                                                                        |
+| `carveout apply <dir> <patch>`            | Brings a patch for the repository into the folder, imports rewritten; `--stubs` adds the stubs it needs. A module the patch adds past the cut's reach joins the folder as an entry, with its tests.                                                               |
 
 Options for `plan` and `cut`:
 
@@ -672,8 +690,9 @@ the person:
 
 For a slice, run `npx -y carveout plan <entry> --depth 1` first. Show the
 person what the slice would hold and what it cuts, and agree the entry
-points and the depth with them. Then `cut` and `check`, and report the
-check's result as it is.
+points and the depth with them. Then `cut` and `check` (or `handoff`, both
+in one, with `--task` for the work and its acceptance), and report the
+verdict as it is: ready, tests that fail on the mocks, or no tests.
 
 For a change in the repository, run `npx -y carveout impact` (add
 `--base <branch>` for committed work) and report the exports, importers and

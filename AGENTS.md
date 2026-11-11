@@ -21,8 +21,9 @@ the person:
 
 For a slice, run `npx -y carveout plan <entry> --depth 1` first. Show the
 person what the slice would hold and what it cuts, and agree the entry
-points and the depth with them. Then `cut` and `check`, and report the
-check's result as it is.
+points and the depth with them. Then `cut` and `check` (or `handoff`, both
+in one, with `--task` for the work and its acceptance), and report the
+verdict as it is: ready, tests that fail on the mocks, or no tests.
 
 For a change in the repository, run `npx -y carveout impact` (add
 `--base <branch>` for committed work) and report the exports, importers and
