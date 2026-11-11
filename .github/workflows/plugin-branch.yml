@@ -1,0 +1,30 @@
+# Keeps the claude-plugin branch, which the Claude plugin directory tracks,
+# in step with the plugin's files on main. See scripts/skill.mjs.
+name: plugin branch
+on:
+  push:
+    branches: [main]
+    paths:
+      [
+        ".claude-plugin/plugin.json",
+        "LICENSE",
+        "skills/**",
+        "scripts/skill.mjs",
+      ]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: plugin-branch
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/skill.mjs check
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          node scripts/skill.mjs plugin-branch --push

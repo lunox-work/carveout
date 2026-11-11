@@ -6,6 +6,9 @@
 //   node scripts/skill.mjs sync             write package.json's version into
 //                                           the pins (npm `version` hook)
 //   node scripts/skill.mjs pack [--offline] one zip per skill in dist-skills/
+//   node scripts/skill.mjs plugin-branch [--push]
+//                                           commit the plugin's files to the
+//                                           claude-plugin branch
 //
 // check: `name` matches its folder (lowercase, digits, single hyphens, at
 // most 64), `description` 1 to 1024 characters without < or >,
@@ -17,9 +20,17 @@
 // pack: a zip holding one top-level folder named after the skill, with
 // SKILL.md at its root. It refuses a pin that npm does not serve yet
 // (publish first), unless --offline.
+//
+// plugin-branch: the Claude plugin directory scans every file in the plugin
+// folder, and on main that folder is the whole repository (CLI source,
+// lockfile, tests, experiments). The directory tracks the claude-plugin
+// branch instead, which holds only PLUGIN_FILES as of HEAD, one commit per
+// change on top of origin's branch. Builds the commit without touching the
+// working tree or index; --push sends it to origin. CI runs it on push to main.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -150,13 +161,52 @@ function pack(offline) {
   return [];
 }
 
+const PLUGIN_BRANCH = "claude-plugin";
+const PLUGIN_FILES = [".claude-plugin/plugin.json", "LICENSE", "skills"];
+
+function git(args, env = {}) {
+  const result = spawnSync("git", args, { cwd: ROOT, encoding: "utf8", env: { ...process.env, ...env } });
+  if (result.status !== 0) throw new Error(`git ${args.join(" ")}: ${(result.stderr || "").trim()}`);
+  return result.stdout.trim();
+}
+
+function pluginBranch(push) {
+  const scratch = mkdtempSync(join(tmpdir(), "plugin-branch-"));
+  try {
+    const env = { GIT_INDEX_FILE: join(scratch, "index") };
+    git(["read-tree", "--empty"], env);
+    for (const path of PLUGIN_FILES) {
+      const [mode, type, object] = git(["ls-tree", "HEAD", "--", path]).split(/\s+/);
+      if (!object) return [`${path}: not in HEAD`];
+      if (type === "tree") git(["read-tree", `--prefix=${path}/`, object], env);
+      else git(["update-index", "--add", "--cacheinfo", `${mode},${object},${path}`], env);
+    }
+    const tree = git(["write-tree"], env);
+    const remote = spawnSync("git", ["fetch", "--quiet", "origin", PLUGIN_BRANCH], { cwd: ROOT }).status === 0;
+    const parent = remote ? git(["rev-parse", "FETCH_HEAD"]) : null;
+    if (parent && git(["rev-parse", `${parent}^{tree}`]) === tree) {
+      console.log(`${PLUGIN_BRANCH}: up to date at ${parent.slice(0, 7)}`);
+      return [];
+    }
+    const head = git(["rev-parse", "--short", "HEAD"]);
+    const message = `Plugin files from main ${head}\n\n${PLUGIN_FILES.join(", ")}; built by scripts/skill.mjs plugin-branch.`;
+    const commit = git(["commit-tree", tree, ...(parent ? ["-p", parent] : []), "-m", message]);
+    if (push) git(["push", "--quiet", "origin", `${commit}:refs/heads/${PLUGIN_BRANCH}`]);
+    console.log(`${PLUGIN_BRANCH}: ${commit.slice(0, 7)} from main ${head}${push ? ", pushed" : " (not pushed; add --push)"}`);
+    return [];
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
 const [command, ...args] = process.argv.slice(2);
 let problems;
 if (command === "check") problems = check();
 else if (command === "sync") (sync(), (problems = check()));
 else if (command === "pack") problems = pack(args.includes("--offline"));
+else if (command === "plugin-branch") problems = pluginBranch(args.includes("--push"));
 else {
-  console.error("usage: node scripts/skill.mjs check | sync | pack [--offline]");
+  console.error("usage: node scripts/skill.mjs check | sync | pack [--offline] | plugin-branch [--push]");
   process.exit(1);
 }
 for (const problem of problems) console.error(problem);
