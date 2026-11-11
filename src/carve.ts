@@ -14,11 +14,12 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join, posix, relative, resolve } from "node:path";
+import { basename, dirname, join, posix, relative, resolve, sep } from "node:path";
 import { command } from "./command.js";
 import ts from "typescript";
 import {
   BASELINE_PATH,
+  HARNESS_DIR,
   LAST_RUN_PATH,
   SLICE_BUDGET_DEFAULTS,
   coverageGateOf,
@@ -91,6 +92,7 @@ import {
 } from "./pseudonyms/index.js";
 import {
   RECEIPT_SCHEMA_VERSION,
+  folderView,
   newCutId,
   publicRecord,
   receiptPathFor,
@@ -709,7 +711,12 @@ export function readinessOf(
       } catch {
         // Gone since the walk: not counted.
       }
-    copyPure = { files, lines };
+    // A budget the walk with it outgrows leaves pure code and tests out:
+    // the advice says what budget holds them.
+    copyPure =
+      walk.dropped.length > 0
+        ? { files, lines, needsMaxFiles: walk.included.length + walk.dropped.length }
+        : { files, lines };
   }
   const packageOf = packageFolder(repo);
   const copied = record.request.copy ?? [];
@@ -1640,6 +1647,10 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
   const fresh = !existsSync(out);
   const cutId = newCutId();
   const receipt = request.receipt === false ? null : resolve(request.receipt ?? receiptPathFor(cutId));
+  // The receipt holds what the folder must not: never inside it, nor in
+  // the checkout, where a commit could carry it.
+  if (receipt !== null && [out, repo].some((dir) => receipt === dir || receipt.startsWith(`${dir}${sep}`)))
+    throw new Error(`--receipt ${receipt}: the receipt cannot be kept in the folder or the repository; name a file elsewhere.`);
   // A public folder is written in pseudonyms (pseudonyms/folder.ts): the
   // names the repository goes by, hidden under a table only the receipt
   // keeps. Without a receipt there is nowhere to keep it: the names stay,
@@ -1699,14 +1710,17 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
         vocabulary,
       );
   }
-  // What each file hashes to as the folder holds it, by its folder path.
+  // What each file hashes to as the folder holds it, by its folder path,
+  // and the generated files' text, which the receipt keeps.
   const folderHash = new Map<string, string>();
+  const generatedText: Record<string, string> = {};
   for (const file of files) {
     const path = pathOf(file.path);
     const text = folderText(file.path, file.text);
     await mkdir(dirname(join(out, path)), { recursive: true });
     await writeFile(join(out, path), text, "utf8");
     folderHash.set(path, sha256(text));
+    if (file.class !== "source") generatedText[path] = text;
   }
   for (const path of [...binaryPaths, ...textExtras]) {
     const target = pathOf(path);
@@ -1780,7 +1794,10 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
     );
   }
   const lockText = lockfile ? readFileSync(join(out, "package-lock.json"), "utf8") : null;
-  if (lockText !== null) folderHash.set("package-lock.json", sha256(lockText));
+  if (lockText !== null) {
+    folderHash.set("package-lock.json", sha256(lockText));
+    generatedText["package-lock.json"] = lockText;
+  }
   const generated = [
     ...files.filter((file) => file.class !== "source"),
     ...(lockText === null ? [] : [{ path: "package-lock.json", text: lockText }]),
@@ -1862,6 +1879,7 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
       record,
       ...(folderRecord === record ? {} : { folderRecord }),
       ...(table === null ? {} : { pseudonyms: table }),
+      generatedText,
     });
   await writeFile(join(out, RECORD_PATH), `${JSON.stringify(folderRecord, null, 2)}\n`, "utf8");
   return { out, record, contract, readiness, receipt, pseudonyms: table };
@@ -1926,13 +1944,31 @@ export interface CheckStep {
   readonly baselineEdited?: readonly string[];
   /** Whether the folder holds an edit since the cut (a folder that came back). */
   readonly edited?: boolean;
+  /** The tests `npm test` did not count: the baseline in effect for the run. */
+  readonly baselineInEffect?: readonly string[];
+  /** Generated files the folder changed, put back from the receipt for the run. */
+  readonly restored?: readonly string[];
+  /** Whether a receipt vouched for the record and baseline the run read. */
+  readonly receiptRead?: boolean;
 }
 
 /**
- * Whether the folder holds an edit since the cut, read from the folder
- * alone (a public folder names no repository): a slice file whose bytes
- * differ from what the cut wrote, one gone, or a new source file beside
- * them. What a build emits and what the harness writes do not count.
+ * Whether a path is what the folder's build or test run writes beside a
+ * source (`cart.js` and `cart.js.map` beside `cart.ts`), or the run's own
+ * records: neither is an edit.
+ */
+function buildOutput(path: string, present: ReadonlySet<string>): boolean {
+  if (path === BASELINE_PATH || path === LAST_RUN_PATH || path.endsWith(".tsbuildinfo")) return true;
+  const stem = path.replace(/\.map$/, "").replace(/\.d\.[cm]?ts$/, ".js").replace(/\.[cm]?js$/, "");
+  return stem !== path && ["ts", "tsx", "mts", "cts"].some((ext) => present.has(`${stem}.${ext}`));
+}
+
+/**
+ * Whether the folder holds an edit since the cut: a slice file whose bytes
+ * differ from what the cut wrote, one gone, a generated file changed, or
+ * any new file but what a build or a test run writes. Read against the
+ * record as the folder holds it (the receipt's, when there is one); the
+ * folder's own `.gitignore` hides nothing.
  */
 function folderEdited(dir: string, record: CarveoutRecord): boolean {
   const root = resolve(dir);
@@ -1940,33 +1976,28 @@ function folderEdited(dir: string, record: CarveoutRecord): boolean {
     ...(record.copied ?? []).map((file) => [file.path, file.sha256] as const),
     ...(record.extras ?? []).map((file) => [file.path, file.sha256] as const),
   ]);
-  const generated = new Set(record.generated.map((file) => file.path));
-  const ignored = new Set(
-    existsSync(join(root, ".gitignore"))
-      ? readFileSync(join(root, ".gitignore"), "utf8").split("\n").filter(Boolean)
-      : [],
-  );
+  const generated = new Map(record.generated.map((file) => [file.path, file.sha256] as const));
   const tree = listTree(root);
   const present = new Set(tree);
   for (const [path, hash] of written) {
     if (!present.has(path)) return true;
     if (sha256(readFileSync(join(root, path))) !== hash) return true;
   }
+  for (const [path, hash] of generated)
+    if (path !== "package-lock.json" && present.has(path) && sha256(readFileSync(join(root, path))) !== hash) return true;
   return tree.some(
-    (path) =>
-      !written.has(path) &&
-      !generated.has(path) &&
-      !ignored.has(path) &&
-      path !== RECORD_PATH &&
-      path !== "package-lock.json" &&
-      !path.startsWith("carveout/") &&
-      !(
-        /\.[cm]?js$/.test(path) &&
-        ["ts", "tsx", "mts", "cts"].some((ext) =>
-          present.has(path.replace(/\.[cm]?js$/, `.${ext}`)),
-        )
-      ),
+    (path) => !written.has(path) && !generated.has(path) && path !== RECORD_PATH && path !== "package-lock.json" && !buildOutput(path, present),
   );
+}
+
+/** The paths under a folder that are symbolic links, outside node_modules. */
+function symlinksIn(root: string, dir = "", into: string[] = []): string[] {
+  for (const entry of readdirSync(join(root, dir), { withFileTypes: true })) {
+    const path = dir === "" ? entry.name : `${dir}/${entry.name}`;
+    if (entry.isSymbolicLink()) into.push(path);
+    else if (entry.isDirectory() && entry.name !== "node_modules" && entry.name !== ".git") symlinksIn(root, path, into);
+  }
+  return into;
 }
 
 /**
@@ -1997,19 +2028,26 @@ async function recordBaseline(
   // Records from before `copied` was kept are judged by a patch, as before.
   const edited =
     record.copied === undefined
-      ? (await patchProject(source)).diff !== ""
+      ? (await patchProject(source, { noReceipt: true })).diff !== ""
       : folderEdited(source, record);
   if (edited) return null;
-  await writeFile(
-    join(source, BASELINE_PATH),
-    `${JSON.stringify({ failing }, null, 2)}\n`,
-  );
+  // Written as a new file: never through a link the folder put there.
+  await rm(join(source, BASELINE_PATH), { force: true });
+  await writeFile(join(source, BASELINE_PATH), `${JSON.stringify({ failing }, null, 2)}\n`, { flag: "wx" });
   return failing;
 }
 
 /**
  * Installs, builds and tests the folder, in a scratch copy so the folder
  * itself is left as it was; stops at the first step that fails.
+ *
+ * A folder that came back is run as the receipt's cut made it: its
+ * generated files (the test runner, the harness, the manifests and the
+ * stubs) are put back from the receipt, a file the folder added under
+ * `carveout/` is taken out, the baseline read is the receipt's, and a
+ * folder with a symbolic link is not run at all. Its code runs, as the
+ * caller, with the caller's network: the receipt is put back if the run
+ * changed it, and the check fails.
  */
 export async function checkProject(
   dir: string,
@@ -2024,17 +2062,28 @@ export async function checkProject(
     readonly isolated?: boolean;
     /** The cut's receipt file; else the one `CARVEOUT_HOME` keeps for its id. */
     readonly receipt?: string;
+    /** No receipt: the folder's own record and baseline are all there is. */
+    readonly noReceipt?: boolean;
   } = {},
 ): Promise<readonly CheckStep[]> {
   // The receipt's record and baseline when there is one: a folder that
   // came back may have edited its own, to look unedited or to leave a
   // failing test uncounted.
-  const trusted = trustedCut(dir, options.receipt, { optional: true });
+  const trusted = trustedCut(dir, options.receipt, { optional: true, ...(options.noReceipt === true ? { noReceipt: true } : {}) });
   // What the folder's files are measured against: the record as the folder
   // holds it (a public folder in pseudonyms has its own paths and hashes),
   // as the receipt keeps it.
-  const record = trusted.receipt?.folderRecord ?? trusted.record;
+  const record = trusted.receipt === null ? trusted.record : folderView(trusted.receipt);
   const source = resolve(dir);
+  const links = symlinksIn(source);
+  if (links.length > 0)
+    return [
+      {
+        command: "copy",
+        ok: false,
+        output: `The folder holds symbolic links, which a slice never has; nothing was run:\n${links.map((path) => `  ${path}`).join("\n")}`,
+      },
+    ];
   let work = source;
   const scratch =
     options.inPlace !== true || options.isolated === true
@@ -2044,6 +2093,40 @@ export async function checkProject(
     work = join(scratch, "project");
     execFileSync("cp", ["-R", source, work]);
     await rm(join(work, "node_modules"), { recursive: true, force: true });
+  }
+  const steps: CheckStep[] = [];
+  // The generated files the folder changed, put back from the receipt; the
+  // files it added under carveout/, taken out. In place, nothing is
+  // changed: a folder that does not match is not run.
+  const restored: string[] = [];
+  const texts = trusted.receipt?.generatedText;
+  if (texts !== undefined) {
+    const tree = listTree(work);
+    const extra = tree.filter(
+      (path) => path.startsWith(`${HARNESS_DIR}/`) && texts[path] === undefined && path !== BASELINE_PATH && path !== LAST_RUN_PATH,
+    );
+    const changed = Object.entries(texts).filter(([path, text]) => {
+      const at = join(work, path);
+      return !existsSync(at) || readFileSync(at, "utf8") !== text;
+    });
+    if (options.inPlace === true && options.isolated !== true && (extra.length > 0 || changed.length > 0)) {
+      if (scratch !== null) await rm(scratch, { recursive: true, force: true });
+      return [
+        {
+          command: "compare",
+          ok: false,
+          output: `The folder's generated files are not the cut's (${[...changed.map(([path]) => path), ...extra].join(", ")}); check it without --in-place, which puts them back.`,
+        },
+      ];
+    }
+    for (const path of extra) await rm(join(work, path), { force: true });
+    for (const [path, text] of changed) {
+      await mkdir(dirname(join(work, path)), { recursive: true });
+      await rm(join(work, path), { force: true });
+      await writeFile(join(work, path), text);
+      restored.push(path);
+    }
+    restored.push(...extra.map((path) => `${path} (taken out)`));
   }
   const env: Record<string, string> = {};
   if (options.isolated === true && scratch !== null) {
@@ -2057,7 +2140,6 @@ export async function checkProject(
     "--no-fund",
     ...(options.isolated === true ? ["--ignore-scripts"] : []),
   ];
-  const steps: CheckStep[] = [];
   const run = [
     record.lockfile || existsSync(join(work, "package-lock.json"))
       ? ["npm", "ci", ...installFlags]
@@ -2078,13 +2160,25 @@ export async function checkProject(
         }
       })()
     : null;
-  const chosen = trustedBaseline(trusted.receipt, folderBaseline);
+  // With no receipt, the folder's own baseline is read only when the
+  // caller says there is none to be had (`--no-receipt`).
+  const chosen =
+    trusted.receipt === null && options.noReceipt !== true
+      ? { use: null, edited: folderBaseline ?? [] }
+      : trustedBaseline(trusted.receipt, folderBaseline);
   const baselineEdited = chosen.edited.length > 0 ? chosen.edited : undefined;
   if (chosen.use === null) await rm(join(work, BASELINE_PATH), { force: true });
   else if (chosen.use !== "folder") {
     await mkdir(dirname(join(work, BASELINE_PATH)), { recursive: true });
-    await writeFile(join(work, BASELINE_PATH), `${JSON.stringify({ failing: chosen.use }, null, 2)}\n`);
+    await rm(join(work, BASELINE_PATH), { force: true });
+    await writeFile(join(work, BASELINE_PATH), `${JSON.stringify({ failing: chosen.use }, null, 2)}\n`, { flag: "wx" });
   }
+  const inEffect = chosen.use === "folder" ? (folderBaseline ?? []) : (chosen.use ?? []);
+  // The receipt as it was before any of the folder's code ran.
+  const receiptBefore =
+    trusted.receiptPath !== null && existsSync(trusted.receiptPath) ? readFileSync(trusted.receiptPath) : null;
+  let receiptNow = receiptBefore;
+  let recorded: readonly string[] | null = null;
   for (const argv of run) {
     const [executable = "npm", ...args] = argv;
     try {
@@ -2105,8 +2199,11 @@ export async function checkProject(
               trusted.receipt !== null && (trusted.receipt.baseline !== undefined || folderBaseline !== null),
             )
           : null;
-      if (baseline !== null && trusted.receipt !== null && trusted.receiptPath !== null)
+      if (baseline !== null && trusted.receipt !== null && trusted.receiptPath !== null) {
         writeReceipt(trusted.receiptPath, { ...trusted.receipt, baseline });
+        receiptNow = readFileSync(trusted.receiptPath);
+        recorded = baseline;
+      }
       steps.push(
         baseline === null
           ? { command: argv.join(" "), ok: false, output }
@@ -2120,22 +2217,41 @@ export async function checkProject(
       if (baseline === null) break;
     }
   }
+  // The folder's code ran as the caller: if it changed the receipt, the
+  // receipt is put back and the check fails.
+  if (trusted.receiptPath !== null && receiptNow !== null) {
+    const after = existsSync(trusted.receiptPath) ? readFileSync(trusted.receiptPath) : null;
+    if (after === null || !after.equals(receiptNow)) {
+      await rm(trusted.receiptPath, { force: true });
+      writeReceipt(trusted.receiptPath, JSON.parse(receiptNow.toString("utf8")) as Parameters<typeof writeReceipt>[1]);
+      steps.push({
+        command: "receipt",
+        ok: false,
+        output: `The folder's code changed the maintainer's receipt (${trusted.receiptPath}) while it ran; it was put back. Do not merge this folder: read its tests and scripts first.`,
+      });
+    }
+  }
   // The run's counts, for the verdict: how many tests the folder runs and
   // how many pass before any edit.
   const tapPath = join(work, LAST_RUN_PATH);
   const tap = existsSync(tapPath) ? readFileSync(tapPath, "utf8") : "";
   const count = (key: string) => Number(new RegExp(`^# ${key} (\\d+)$`, "m").exec(tap)?.[1] ?? Number.NaN);
-  const last = steps.at(-1);
+  const testStep = steps.findIndex((step) => step.command === "npm test");
   const edited = record.copied === undefined ? undefined : folderEdited(source, record);
-  if (last !== undefined && last.command === "npm test")
-    steps[steps.length - 1] = {
-      ...last,
+  if (testStep !== -1) {
+    const step = steps[testStep] as CheckStep;
+    steps[testStep] = {
+      ...step,
       ...(edited === undefined ? {} : { edited }),
       ...(Number.isNaN(count("tests"))
         ? {}
         : { counts: { tests: count("tests"), pass: count("pass"), fail: count("fail") } }),
       ...(baselineEdited === undefined ? {} : { baselineEdited }),
+      baselineInEffect: recorded ?? inEffect,
+      ...(restored.length === 0 ? {} : { restored }),
+      receiptRead: trusted.receipt !== null,
     };
+  }
   if (scratch !== null) await rm(scratch, { recursive: true, force: true });
   return steps;
 }
@@ -2191,6 +2307,12 @@ export interface Patch {
    * repository.
    */
   readonly recordFrom: "receipt" | "folder";
+  /**
+   * New files the patch leaves out without judging them: under `carveout/`
+   * (the folder's harness, which never goes back) or hidden by the
+   * folder's `.gitignore`. Named, since the folder's own tests run them.
+   */
+  readonly skipped: readonly string[];
 }
 
 export interface PatchOptions {
@@ -2200,6 +2322,8 @@ export interface PatchOptions {
   readonly allow?: readonly string[];
   /** The cut's receipt file; else the one `CARVEOUT_HOME` keeps for its id. */
   readonly receipt?: string;
+  /** No receipt: judge the folder by its own record, checked against the repository. */
+  readonly noReceipt?: boolean;
   /** Internal: the folder is a copy already put back in the repository's names. */
   readonly unaliased?: boolean;
 }
@@ -2331,7 +2455,7 @@ export async function patchProject(
   const root = resolve(dir);
   // The receipt's record when there is one: the folder's own came back
   // with the folder, and is checked against the repository instead.
-  const trusted = trustedCut(root, options.receipt);
+  const trusted = trustedCut(root, options.receipt, options.noReceipt === true ? { noReceipt: true } : {});
   // A folder in pseudonyms is renamed back first; the patch is made from
   // that copy, in the repository's names.
   const table = trusted.receipt?.pseudonyms;
@@ -2485,6 +2609,7 @@ export async function patchProject(
   const crossPackage: { file: string; specifier: string }[] = [];
   const drifted: string[] = [];
   const noThreeWay: string[] = [];
+  const skipped: string[] = [];
   /**
    * The bytes the cut read for an included file, from the commit when the
    * checkout still has them there, else the checkout's file if it has not
@@ -2522,8 +2647,8 @@ export async function patchProject(
         path === RECORD_PATH ||
         path === "package-lock.json" ||
         // The folder's .gitignore is the contributor's to edit: it hides
-        // build output, never a slice file's edit.
-        (ignored.has(path) && !included.has(path))
+        // build output, never a slice file's or a generated file's edit.
+        (ignored.has(path) && !included.has(path) && !generated.has(path) && (skipped.push(path), true))
       )
         continue;
       const bytes = await readFile(join(root, path));
@@ -2539,7 +2664,11 @@ export async function patchProject(
       }
       const original = included.get(path);
       if (original === undefined) {
-        if (path.startsWith("carveout/") || emitted(path)) continue;
+        if (path.startsWith("carveout/")) {
+          if (path !== BASELINE_PATH && path !== LAST_RUN_PATH) skipped.push(path);
+          continue;
+        }
+        if (emitted(path)) continue;
         let content: Buffer = bytes;
         if (isScript(path)) {
           const restored = restoreImports(path, text, null, [], context);
@@ -2683,6 +2812,7 @@ export async function patchProject(
       noThreeWay,
       refused,
       recordFrom: trusted.receipt === null ? "folder" : "receipt",
+      skipped,
     };
   } finally {
     await rm(scratch, { recursive: true, force: true });

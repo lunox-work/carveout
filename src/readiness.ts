@@ -25,7 +25,12 @@ export interface Readiness {
    * tests run), with their lines; null when the cut copies pure code
    * already or carries no test.
    */
-  readonly copyPure: { readonly files: readonly string[]; readonly lines: number } | null;
+  readonly copyPure: {
+    readonly files: readonly string[];
+    readonly lines: number;
+    /** The file budget the cut with it needs, when this cut's would leave files out. */
+    readonly needsMaxFiles?: number;
+  } | null;
   /** Mocked packages of a database, cache or queue: `--live` keeps one real. */
   readonly live: readonly { readonly name: string; readonly service: string }[];
   /** Folders a slice package reads by a configured name: `--copy` brings one. */
@@ -83,9 +88,10 @@ function firstText(repo: string, dir: string, names: readonly string[]): { name:
 
 /** A relative folder named in a config file, under the package, normalized. */
 function underPackage(dir: string, named: string): string | null {
-  const joined = posix.normalize(posix.join(dir, named.replace(/^\.\//, "")));
-  if (joined.startsWith("..") || posix.isAbsolute(joined)) return null;
-  return joined.replace(/\/+$/, "");
+  const joined = posix.normalize(posix.join(dir, named.replace(/^\.\//, ""))).replace(/\/+$/, "");
+  // The package itself (`out: "./"`) is no folder to copy beside the slice.
+  if (joined.startsWith("..") || posix.isAbsolute(joined) || joined === "." || joined === posix.normalize(dir || ".")) return null;
+  return joined;
 }
 
 /**
@@ -124,7 +130,9 @@ export function configuredFolders(
     if (existsSync(join(repo, dir, "prisma", "schema.prisma")))
       add(underPackage(dir, "prisma"), "Prisma's schema and migrations");
     const knex = firstText(repo, dir, ["knexfile.ts", "knexfile.js", "knexfile.mjs", "knexfile.cjs"]);
-    const directory = knex === null ? undefined : /\bdirectory\s*:\s*["'`]([^"'`]+)["'`]/.exec(knex.text)?.[1];
+    // The migrations' directory, not the seeds': inside `migrations: { … }`.
+    const directory =
+      knex === null ? undefined : /\bmigrations\s*:\s*\{[^}]*?\bdirectory\s*:\s*["'`]([^"'`]+)["'`]/s.exec(knex.text)?.[1];
     if (directory !== undefined) add(underPackage(dir, directory), `knex's migrations (directory in ${knex?.name})`);
     add(underPackage(dir, "migrations"), "a migrations folder the code reads by name");
   }
@@ -150,7 +158,7 @@ export function renderReadiness(readiness: Readiness): string[] {
     const shown = readiness.copyPure.files.slice(0, 5).join(", ");
     const more = readiness.copyPure.files.length > 5 ? `, and ${readiness.copyPure.files.length - 5} more` : "";
     lines.push(
-      `  --copy-pure: copies the ${readiness.copyPure.files.length} pure module(s) the slice mocks now (${readiness.copyPure.lines} lines: ${shown}${more}), so its tests run them; the contributor reads them.`,
+      `  --copy-pure${readiness.copyPure.needsMaxFiles === undefined ? "" : ` --max-files ${readiness.copyPure.needsMaxFiles}`}: copies ${readiness.copyPure.files.length} module(s) the slice mocks now (${readiness.copyPure.lines} lines: ${shown}${more}): the pure code its tests run, and the workspace source on the way; the contributor reads them.${readiness.copyPure.needsMaxFiles === undefined ? "" : ` The current file budget would leave some out, and the tests with them.`}`,
     );
   }
   for (const { name, service } of readiness.live)

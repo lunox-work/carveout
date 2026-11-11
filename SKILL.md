@@ -379,12 +379,19 @@ it (`~/.carveout/receipts/<cut id>.json`; the cut prints the path; pass
 `--receipt <file>` if it is elsewhere): the record as the cut made it, so
 an edited `carveout.json` cannot widen what the patch may carry. `check`
 reads the receipt's baseline the same way, and names any test the folder's
-own `carveout/baseline.json` added: it is counted. A public folder's own
-record leaves the repository's names to the receipt, and cannot be patched
-without it. Without a receipt, a `carveout.json` that names a path outside
-the folder is refused, and the repository is the one given with `--repo`
-(else the record's), which must hold the cut's commit. Tell the maintainer
-to keep the receipt and never send it.
+own `carveout/baseline.json` added: it is counted. `check` also runs the
+folder on the receipt's generated files (its test runner and harness put
+back), refuses a folder with a symbolic link, and fails if the folder's
+code changed the receipt while it ran. A folder whose receipt is not found
+is refused unless you pass `--no-receipt` (the folder chooses which cut id
+it carries): say so to the person rather than passing it by default. A
+public folder's own record leaves the repository's names to the receipt,
+and cannot be patched without it. With `--no-receipt`, a `carveout.json`
+that names a path outside the folder is refused, and the repository is the
+one given with `--repo` (else the record's), which must hold the cut's
+commit. Tell the maintainer to keep the receipt and never send it, and to
+run `patch` before `check` on a folder that came back: `check` runs its
+code.
 
 Its `index` lines carry the full blob ids of the cut commit's files. When a
 file moved since the cut, `patch` says so: apply with `git apply --3way`,

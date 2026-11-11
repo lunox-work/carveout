@@ -91,10 +91,12 @@ export async function applyPatch(
     readonly repo?: string;
     /** The cut's receipt file; else the one `CARVEOUT_HOME` keeps for its id. */
     readonly receipt?: string;
+    /** No receipt: the folder's own record is all there is. */
+    readonly noReceipt?: boolean;
   } = {},
 ): Promise<Applied> {
   const root = resolve(dir);
-  let trusted = trustedCut(root, options.receipt);
+  let trusted = trustedCut(root, options.receipt, options.noReceipt === true ? { noReceipt: true } : {});
   if (trusted.receipt?.pseudonyms !== undefined)
     throw new Error(
       "apply does not write into a folder in pseudonyms yet: cut again from the repository as it is now, with the same flags.",
@@ -217,8 +219,8 @@ export async function applyPatch(
       }
       (included.has(path) || status === "M" ? changed : added).push(path);
     }
-    const stubs = await neededStubs(root, record, cuts, options.stubs === true, (updated) => {
-      trusted = saveRecord(root, trusted, updated);
+    const stubs = await neededStubs(root, record, cuts, options.stubs === true, (updated, written) => {
+      trusted = saveRecord(root, trusted, updated, written);
     });
     if (grown.length > 0) {
       const current = trusted.record;
@@ -253,7 +255,7 @@ async function neededStubs(
   record: CarveoutRecord,
   cuts: readonly ComputedCut[],
   write: boolean,
-  save: (updated: CarveoutRecord) => void,
+  save: (updated: CarveoutRecord, written: Readonly<Record<string, string>>) => void,
 ): Promise<Applied["stubs"]> {
   const generated = new Map(record.generated.map((file) => [file.path, file.sha256]));
   const wanted = new Map<string, string>();
@@ -291,7 +293,7 @@ async function neededStubs(
         .map(([path, hash]) => ({ path, sha256: hash }))
         .sort((a, b) => compare(a.path, b.path)),
     };
-    save(updated);
+    save(updated, Object.fromEntries(writes.map(({ path, text }) => [path, text])));
   }
   return found;
 }
@@ -326,6 +328,8 @@ export async function mergeProject(
     readonly verifyEnv?: readonly string[];
     /** The cut's receipt file; else the one `CARVEOUT_HOME` keeps for its id. */
     readonly receipt?: string;
+    /** No receipt: judge the folder by its own record. */
+    readonly noReceipt?: boolean;
   },
 ): Promise<Merge> {
   const into = resolve(options.into);
@@ -335,6 +339,7 @@ export async function mergeProject(
     repo: options.repo ?? into,
     ...(options.allow === undefined ? {} : { allow: options.allow }),
     ...(options.receipt === undefined ? {} : { receipt: options.receipt }),
+    ...(options.noReceipt === true ? { noReceipt: true } : {}),
   });
   const steps: MergeStep[] = [];
   // Nothing is applied while the policy keeps a path out: the maintainer

@@ -1256,7 +1256,7 @@ function readme(input: {
   return `${[
     `# ${input.origin.name}`,
     "",
-    `A slice of ${input.origin.repository === null ? "a repository" : `\`${input.origin.repository}\``}, carved out by carveout (\`carveout.json\` names the commit). It holds only the files below; every module it imports from the rest of the repository is a stub with a recording mock behind it.`,
+    `A slice of ${input.origin.repository === null ? "a repository" : `\`${input.origin.repository}\``}, carved out by carveout (${input.origin.repository === null ? "the maintainer keeps the record of the cut" : "\`carveout.json\` names the commit"}). It holds only the files below; every module it imports from the rest of the repository is a stub with a recording mock behind it.`,
     "",
     "## Run it",
     "",
@@ -1336,8 +1336,12 @@ function readme(input: {
     "",
     ...(input.rewrites.length === 0
       ? ["None."]
-      : input.rewrites.map(
-          (item) => `- \`${item.file}\`: \`${item.from}\` → \`${item.to}\``,
+      : input.rewrites.map((item) =>
+          // A public folder names what an import became, not how the
+          // repository spelled it (a workspace package's name, a path alias).
+          input.origin.repository === null
+            ? `- \`${item.file}\`: an import rewritten to \`${item.to}\``
+            : `- \`${item.file}\`: \`${item.from}\` → \`${item.to}\``,
         )),
     "",
     "## Tests",

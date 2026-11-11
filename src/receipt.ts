@@ -50,7 +50,16 @@ export interface Receipt {
   readonly folderRecord?: CarveoutRecord;
   /** A public folder's pseudonyms: the table and the kept names. */
   readonly pseudonyms?: FolderPseudonyms;
+  /**
+   * The generated files as the folder holds them, by folder path: the test
+   * runner, the harness, the stubs and mocks, the manifests. `check` runs a
+   * folder that came back on these, not on what it brought.
+   */
+  readonly generatedText?: Readonly<Record<string, string>>;
 }
+
+/** The record as the folder holds it: what its files are measured against. */
+export const folderView = (receipt: Receipt): CarveoutRecord => receipt.folderRecord ?? receipt.record;
 
 /** A new cut id: 128 random bits, as hex. */
 export function newCutId(): string {
@@ -69,8 +78,9 @@ export function receiptPathFor(cutId: string): string {
 export function writeReceipt(path: string, receipt: Receipt): void {
   const target = resolve(path);
   mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
-  const temporary = `${target}.${process.pid}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
+  // A name no one can have made first: the file is created, never followed.
+  const temporary = `${target}.${randomBytes(6).toString("hex")}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600, flag: "wx" });
   chmodSync(temporary, 0o600);
   renameSync(temporary, target);
 }
@@ -113,27 +123,61 @@ export interface TrustedCut {
  * is looked for under `CARVEOUT_HOME`. A receipt of another cut is refused.
  * Without one, the folder's own record is all there is.
  */
-export function trustedCut(dir: string, given?: string, options: { readonly optional?: boolean } = {}): TrustedCut {
-  const folder = readRecord(dir);
+export function trustedCut(
+  dir: string,
+  given?: string,
+  options: {
+    /**
+     * Go on without a receipt: the folder's own record is all there is,
+     * checked against the repository (`--no-receipt`). Without it, a folder
+     * whose receipt cannot be found is refused: the folder decides which
+     * id it carries, and so whether one is found.
+     */
+    readonly noReceipt?: boolean;
+    /** `check`: go on without one, and trust nothing of the folder's own (its baseline). */
+    readonly optional?: boolean;
+  } = {},
+): TrustedCut {
+  const hasRecord = existsSync(join(resolve(dir), RECORD_PATH));
+  const named = given !== undefined ? resolve(given) : null;
+  if (!hasRecord && named === null) readRecord(dir);
+  const folderOwn = hasRecord ? readRecord(dir) : null;
   const path =
-    given !== undefined
-      ? resolve(given)
-      : typeof folder.cutId === "string" && CUT_ID.test(folder.cutId) && existsSync(receiptPathFor(folder.cutId))
-        ? receiptPathFor(folder.cutId)
-        : null;
+    named ??
+    (folderOwn !== null && typeof folderOwn.cutId === "string" && CUT_ID.test(folderOwn.cutId) && existsSync(receiptPathFor(folderOwn.cutId))
+      ? receiptPathFor(folderOwn.cutId)
+      : null);
   if (path === null) {
-    // `check` in the contributor's hands has no receipt, and needs none.
-    if (folder.publicScrubbed === true && options.optional !== true)
-      throw new Error(
-        `${dir} is a public folder whose record keeps the repository's names out; its receipt holds them. Pass --receipt <file> (the cut printed where it wrote it), or work on the machine that cut it.`,
-      );
-    return { record: folder, folder, receipt: null, receiptPath: null };
+    const folder = folderOwn as CarveoutRecord;
+    if (options.noReceipt === true || options.optional === true) {
+      if (folder.publicScrubbed === true && options.optional !== true)
+        throw new Error(
+          `${dir} is a public folder whose record keeps the repository's names out; its receipt holds them. Pass --receipt <file> (the cut printed where it wrote it), or work on the machine that cut it.`,
+        );
+      return { record: folder, folder, receipt: null, receiptPath: null };
+    }
+    throw new Error(
+      `No receipt for ${dir}: ${typeof folder.cutId === "string" ? `cut ${folder.cutId.slice(0, 8)} has none under ${dirname(receiptPathFor(CUT_ID.test(folder.cutId) ? folder.cutId : "0".repeat(32)))}` : "its carveout.json names no cut"}. A folder that comes back is judged by the receipt its cut wrote: pass --receipt <file>, or --no-receipt to judge it by its own record, checked against the repository.`,
+    );
   }
   if (!existsSync(path)) throw new Error(`${path}: no such receipt.`);
   const receipt = readReceipt(path);
+  const view = folderView(receipt);
+  const folder = folderOwn ?? view;
   if (folder.cutId !== undefined && folder.cutId !== receipt.cutId)
     throw new Error(
       `${path} is the receipt of cut ${receipt.cutId.slice(0, 8)}, and the folder says it is cut ${String(folder.cutId).slice(0, 8)}: name the receipt of this folder's cut.`,
+    );
+  // A folder whose generated files are another cut's is not this receipt's.
+  const shape = (record: CarveoutRecord) =>
+    record.generated
+      .map((file) => file.path)
+      .filter((file) => file !== "package-lock.json")
+      .sort()
+      .join("\n");
+  if (folderOwn !== null && shape(folderOwn) !== shape(view))
+    throw new Error(
+      `${dir} does not hold the files of cut ${receipt.cutId.slice(0, 8)}'s folder: name the receipt of the cut that wrote it.`,
     );
   // A public record names no checkout; the receipt does.
   const record: CarveoutRecord = receipt.record.repo === undefined ? { ...receipt.record, repo: receipt.repo } : receipt.record;
@@ -152,16 +196,24 @@ export function publicRecord(record: CarveoutRecord): CarveoutRecord {
   const { private: _private, ...params } = record.manifest.params as typeof record.manifest.params & {
     private?: unknown;
   };
-  const { private: _requestPrivate, ...request } = record.request;
+  const { private: _requestPrivate, choices: _choices, ...request } = record.request;
+  const { repo: _repo, ...rest } = record;
   const unnamed = <T extends { readonly specifier: string | null }>(edge: T): T => ({ ...edge, specifier: null });
+  // A slice file's original hash, blob id and size confirm a guess at what
+  // it held before the cut rewrote it: the folder's own copy's stand in.
+  const copied = new Map((record.copied ?? []).map((file) => [file.path, file.sha256]));
   return {
-    ...record,
+    ...rest,
     manifest: {
       ...record.manifest,
       sourceCommitSha: null,
       graphSha256: "",
       boundaryContractSha256: "",
       params,
+      included: record.manifest.included.map((file) => {
+        const own = copied.get(file.path);
+        return own === undefined ? file : { ...file, blobId: "", sha256: own };
+      }),
       internalImports: record.manifest.internalImports.map(unnamed),
       cuts: {
         ...record.manifest.cuts,
@@ -171,7 +223,7 @@ export function publicRecord(record: CarveoutRecord): CarveoutRecord {
     },
     importRewrites: [],
     inputs: [],
-    request,
+    request: { ...request, choices: {} },
     publicScrubbed: true,
   };
 }
@@ -181,7 +233,13 @@ export function publicRecord(record: CarveoutRecord): CarveoutRecord {
  * stubs) to the folder and, when the cut has one, to its receipt: the
  * folder's copy public-scrubbed as the cut wrote it.
  */
-export function saveRecord(dir: string, trusted: TrustedCut, updated: CarveoutRecord): TrustedCut {
+export function saveRecord(
+  dir: string,
+  trusted: TrustedCut,
+  updated: CarveoutRecord,
+  /** Generated files the command wrote into the folder, by folder path. */
+  written: Readonly<Record<string, string>> = {},
+): TrustedCut {
   const scrub = trusted.receipt !== null && updated.request.public === true;
   const folder = scrub ? publicRecord(updated) : updated;
   writeFileSync(join(resolve(dir), RECORD_PATH), `${JSON.stringify(folder, null, 2)}\n`);
@@ -194,6 +252,9 @@ export function saveRecord(dir: string, trusted: TrustedCut, updated: CarveoutRe
     ...trusted.receipt,
     record,
     ...(trusted.receipt.folderRecord === undefined ? {} : { folderRecord: folder }),
+    ...(trusted.receipt.generatedText === undefined
+      ? {}
+      : { generatedText: { ...trusted.receipt.generatedText, ...written } }),
   };
   writeReceipt(trusted.receiptPath, receipt);
   return { ...trusted, record: updated, folder, receipt };

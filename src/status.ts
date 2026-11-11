@@ -117,10 +117,12 @@ export async function statusProject(
     readonly repo?: string;
     /** The cut's receipt file; else the one `CARVEOUT_HOME` keeps for its id. */
     readonly receipt?: string;
+    /** No receipt: the folder's own record is all there is. */
+    readonly noReceipt?: boolean;
   } = {},
 ): Promise<Status> {
   const root = resolve(dir);
-  const record: CarveoutRecord = trustedCut(root, options.receipt).record;
+  const record: CarveoutRecord = trustedCut(root, options.receipt, options.noReceipt === true ? { noReceipt: true } : {}).record;
   const repo = trustedRepo(record, options.repo);
   const request = record.request;
   let fresh;

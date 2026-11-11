@@ -218,14 +218,17 @@ async function main(argv: readonly string[]) {
     if (values.repo !== undefined) return repo;
     let named: string | undefined;
     try {
-      named = trustedCut(dir, values.receipt).record.repo;
+      named = trustedCut(dir, values.receipt, { optional: true }).record.repo;
     } catch {
       named = readRecord(dir).repo;
     }
     return named === undefined ? repo : undefined;
   };
-  /** The receipt a folder's command was given, as an option. */
-  const receiptOption = values.receipt === undefined ? {} : { receipt: values.receipt };
+  /** The receipt a folder's command was given, as an option; or none, by `--no-receipt`. */
+  const receiptOption = {
+    ...(values.receipt === undefined ? {} : { receipt: values.receipt }),
+    ...(values["no-receipt"] === true ? { noReceipt: true } : {}),
+  };
   const bounds = {
     ...(values["whole-package"] === true ? { wholePackage: true } : {}),
     ...(values["follow-workspaces"] === true ? { followWorkspaces: true } : {}),
@@ -432,7 +435,7 @@ async function main(argv: readonly string[]) {
         ...(values.public === true ? { public: true } : {}),
         ...bounds,
         ...(values.copy === undefined ? {} : { copy: values.copy }),
-        ...(values["no-receipt"] === true ? { receipt: false as const } : receiptOption),
+        ...(values["no-receipt"] === true ? { receipt: false as const } : values.receipt === undefined ? {} : { receipt: values.receipt }),
         ...(values.name === undefined ? {} : { names: values.name }),
         ...(values["keep-names"] === true ? { pseudonyms: false } : {}),
         log: (line) => {
@@ -544,7 +547,8 @@ async function main(argv: readonly string[]) {
       });
       const ok = steps.length === 3 && steps.every((step) => step.ok);
       const checked = trustedCut(dir, values.receipt, { optional: true }).record;
-      const baselineOf = steps.find((step) => step.baseline !== undefined)?.baseline;
+      const testStep = steps.find((step) => step.command === "npm test");
+      const baselineOf = testStep?.baselineInEffect !== undefined && testStep.baselineInEffect.length > 0 ? testStep.baselineInEffect : undefined;
       const baselineEdited = steps.find((step) => step.baselineEdited !== undefined)?.baselineEdited;
       const counts = steps.find((step) => step.counts !== undefined)?.counts;
       const carried = checked.tests?.carried.length ?? 0;
@@ -556,11 +560,27 @@ async function main(argv: readonly string[]) {
           : carried === 0
             ? "no-tests"
             : "ready";
-      if (values.json === true) print({ ok, handoff, counts: counts ?? null, baselineEdited: baselineEdited ?? [], steps });
+      if (values.json === true)
+        print({
+          ok,
+          handoff,
+          counts: counts ?? null,
+          baseline: baselineOf ?? [],
+          baselineEdited: baselineEdited ?? [],
+          restored: testStep?.restored ?? [],
+          receipt: testStep?.receiptRead ?? false,
+          steps,
+        });
       else {
+        if (testStep?.restored !== undefined)
+          process.stdout.write(
+            `The folder's generated files were not the cut's; the check ran on the receipt's:\n${list(testStep.restored)}\n`,
+          );
+        if (testStep !== undefined && testStep.receiptRead === false && values["no-receipt"] !== true)
+          process.stdout.write("No receipt for this folder: its own carveout/baseline.json was not read, so every failing test counts.\n");
         if (baselineEdited !== undefined)
           process.stdout.write(
-            `The folder's carveout/baseline.json names ${baselineEdited.length} test(s) the receipt's does not, added since the check that recorded it; they were counted:\n${list(baselineEdited)}\n`,
+            `The folder's carveout/baseline.json names ${baselineEdited.length} test(s) the receipt's baseline does not; they were counted:\n${list(baselineEdited)}\n`,
           );
         for (const step of steps) {
           process.stdout.write(`${step.ok ? "ok  " : "FAIL"} ${step.command}\n`);
@@ -599,12 +619,14 @@ async function main(argv: readonly string[]) {
             handoff === "failed"
               ? "The slice does not stand on its own yet."
               : handoff === "red-baseline"
-                ? `The slice installs, builds and tests on its own, but ${baselineOf?.length ?? 0} test(s) fail on the mocks before any edit (carveout/baseline.json): a contributor cannot make those pass here, so a fixed task should not rest on them.${passing}`
+                ? edited
+                  ? `The edited folder installs, builds and passes its tests, but for the ${baselineOf?.length ?? 0} test(s) that failed on the mocks before any edit (not counted). A pass here is a pass against mocks: the repository's CI decides.${passing}`
+                  : `The slice installs, builds and tests on its own, but ${baselineOf?.length ?? 0} test(s) fail on the mocks before any edit (carveout/baseline.json): a contributor cannot make those pass here, so a fixed task should not rest on them.${passing}`
                 : handoff === "no-tests"
                   ? `The slice installs, builds and tests on its own, but no test of this code came with it: a pass means it builds and keeps its exports. Cut with --with-tests, or write the tests the work must pass before handing it over.${passing}`
                   : edited
-                    ? `The edited folder installs, builds and passes its tests, ${carried} of them the repository's tests of this code. A pass here is a pass against mocks: the repository's CI decides.${passing}`
-                    : `Ready to hand over: the slice installs, builds, and its ${carried} test(s) of this code pass before any edit.${passing}`,
+                    ? `The edited folder installs, builds and passes its tests (${carried} test file(s) from the repository among them). A pass here is a pass against mocks: the repository's CI decides.${passing}`
+                    : `Ready to hand over: the slice installs, builds, and its tests pass before any edit (${carried} test file(s) from the repository).${passing}`,
             ...(handoff === "red-baseline" ? advice : []),
           ].join("\n")}\n`,
         );
@@ -688,6 +710,11 @@ async function main(argv: readonly string[]) {
             `${path} was cut from uncommitted changes, so --3way cannot merge it; apply it by hand if git apply refuses.`,
         ),
         ...patch.deleted.map((path) => `deletes ${path}.`),
+        ...(patch.skipped.length === 0
+          ? []
+          : [
+              `not in the patch, and not judged (the folder's own tests may run them): ${patch.skipped.join(", ")}.`,
+            ]),
         ...patch.refused.map(
           ({ path, reason }) => `kept out: ${path}, ${reason}.`,
         ),

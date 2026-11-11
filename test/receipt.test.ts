@@ -68,7 +68,10 @@ test("a cut writes a receipt only its owner reads, named by the id the folder ca
     receipt: false,
   });
   assert.equal(bare.receipt, null);
-  assert.equal(trustedCut(bare.out).receipt, null);
+  // The folder alone decides nothing: without a receipt it is refused,
+  // unless the caller says to go on without one.
+  assert.throws(() => trustedCut(bare.out), /No receipt for/);
+  assert.equal(trustedCut(bare.out, undefined, { noReceipt: true }).receipt, null);
   // Or at a file the maintainer names.
   const named = join(scratch, "keep", "slice-receipt.json");
   const elsewhere = await cutSlice({
@@ -126,4 +129,51 @@ test("apply keeps the receipt in step with the folder it grows", async () => {
     receipt.record.manifest.included.map((file) => file.path),
     folder.manifest.included.map((file: { path: string }) => file.path),
   );
+});
+
+test("check runs no folder with a link in it, and in place no folder whose generated files are not the cut's", async () => {
+  const { checkProject } = await import("../src/carve.js");
+  const { symlinkSync } = await import("node:fs");
+  const result = await cutSlice({
+    repo,
+    out: join(scratch, "linked"),
+    entryPoints: [ENTRY],
+    budget: { maxFiles: 40, maxDepth: 1 },
+    offline: true,
+  });
+  writeFileSync(join(scratch, "victim.txt"), "precious\n");
+  symlinkSync(join(scratch, "victim.txt"), join(result.out, "carveout", "baseline.json"));
+  const linked = await checkProject(result.out, { isolated: true });
+  assert.equal(linked.length, 1);
+  assert.equal(linked[0]?.ok, false);
+  assert.match(linked[0]?.output ?? "", /symbolic links[\s\S]*carveout\/baseline\.json/);
+  assert.equal(readFileSync(join(scratch, "victim.txt"), "utf8"), "precious\n");
+  // In place, a changed test runner is not run: nothing is put back there.
+  const edited = await cutSlice({
+    repo,
+    out: join(scratch, "inplace"),
+    entryPoints: [ENTRY],
+    budget: { maxFiles: 40, maxDepth: 1 },
+    offline: true,
+  });
+  writeFileSync(join(edited.out, "carveout", "test.js"), "process.exitCode = 0;\n");
+  const steps = await checkProject(edited.out, { inPlace: true });
+  assert.equal(steps.length, 1);
+  assert.match(steps[0]?.output ?? "", /not the cut's \(carveout\/test\.js\)/);
+});
+
+test("a folder that is not the receipt's cut is refused, whatever id it carries", async () => {
+  const first = await cutSlice({ repo, out: join(scratch, "shape-a"), entryPoints: [ENTRY], budget: { maxFiles: 40, maxDepth: 1 }, offline: true });
+  const second = await cutSlice({
+    repo,
+    out: join(scratch, "shape-b"),
+    entryPoints: ["apps/shop/src/checkout.ts"],
+    budget: { maxFiles: 40, maxDepth: 0 },
+    offline: true,
+  });
+  // The first folder, claiming the second cut's id.
+  const path = join(first.out, "carveout.json");
+  const record = JSON.parse(readFileSync(path, "utf8"));
+  writeFileSync(path, JSON.stringify({ ...record, cutId: second.record.cutId }));
+  assert.throws(() => trustedCut(first.out), /does not hold the files of cut/);
 });
