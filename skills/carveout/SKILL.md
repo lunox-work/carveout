@@ -89,13 +89,13 @@ It reads the import graph and runs nothing. It prints:
 - `Shows`: the lines the cut copies, by why (entry points, depth, whole package,
   pure code, tests and what they bring). Show it to the person before a public
   cut: it is what the contributor reads;
-- `Source from outside the entry points`: that code by folder, with its lines,
+- "Source from outside the entry points": that code by folder, with its lines,
   tests not counted. Ask the person about each folder before a public cut, and
   add `--private <path>` for any that must stay closed;
 - `Tests:`: whether any test in the folder runs the code, and every test that
   does and stays in the repository, with why (not asked for, another package's,
-  Jest, reads what no slice carries, the file limit). With none in the folder, a
-  pass means it builds and keeps its exports.
+  Jest, reads what no slice carries, the file limit). With none in the folder,
+  the check passing means it builds and keeps its exports.
 
 The defaults are depth 3 and 40 files. Choose the budget with the person:
 
@@ -376,9 +376,10 @@ It leaves out, and names:
   under test that detects the test runner or rewrites a built-in); new
   suppressions or edited check configuration; a script, new or edited, that
   gains a reach it did not have (Node's disk, network or process modules, a
-  service SDK, `fetch`, `eval`, `Function` also through `.constructor`, the
-  environment, a module loaded from a URL, a module or global named by a
-  computed value or hidden behind one). Show the person the list;
+  service SDK, the global fetch function, dynamic code evaluation (eval and the
+  Function constructor, also reached through .constructor), the process
+  environment, an import by URL, a module or global named by a computed value or
+  hidden behind one). Show the person the list;
   `--allow <path|glob>` carries one they reviewed.
 
 `patch` runs none of the folder's code and takes nothing in it on trust. It

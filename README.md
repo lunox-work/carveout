@@ -34,6 +34,12 @@ claude plugin install carveout@carveout
 - **Retention:** carveout runs no service and keeps nothing outside the
   folders it writes and that receipt.
 
+## Links
+
+- [Privacy](https://github.com/lunox-work/carveout/blob/main/PRIVACY.md)
+- [Documentation](https://github.com/lunox-work/carveout/blob/main/docs/REFERENCE.md)
+- [Support](https://github.com/lunox-work/carveout/issues)
+
 ## Source
 
 This branch holds only the plugin's files. The CLI, its documentation and the
