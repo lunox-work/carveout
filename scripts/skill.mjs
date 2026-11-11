@@ -24,8 +24,9 @@
 // plugin-branch: the Claude plugin directory scans every file in the plugin
 // folder, and on main that folder is the whole repository (CLI source,
 // lockfile, tests, experiments). The directory tracks the claude-plugin
-// branch instead, which holds only PLUGIN_FILES as of HEAD, one commit per
-// change on top of origin's branch. Builds the commit without touching the
+// branch instead, which holds only PLUGIN_FILES as of HEAD and a README.md
+// written from plugin.json and each skill's frontmatter (the directory
+// requires one), one commit per change on top of origin's branch. Builds the commit without touching the
 // working tree or index; --push sends it to origin. CI runs it on push to main.
 
 import { spawnSync } from "node:child_process";
@@ -170,6 +171,26 @@ function git(args, env = {}) {
   return result.stdout.trim();
 }
 
+/** The plugin branch's README: what the plugin does, its skills, how to install and what each needs. */
+function pluginReadme() {
+  const plugin = JSON.parse(git(["show", "HEAD:.claude-plugin/plugin.json"]));
+  const market = JSON.parse(git(["show", "HEAD:.claude-plugin/marketplace.json"]));
+  const names = git(["ls-tree", "--name-only", "HEAD:skills"]).split("\n").filter(Boolean);
+  const lines = [`# ${plugin.name}`, "", plugin.description, "", "## Skills", ""];
+  const needs = [];
+  for (const name of names) {
+    const { fields } = frontmatter(git(["show", `HEAD:skills/${name}/SKILL.md`]));
+    lines.push(`- **${fields.name}**: ${fields.description}`, "");
+    if (fields.compatibility) needs.push(`- **${fields.name}**: ${fields.compatibility}`, "");
+  }
+  lines.push("## Install", "", "```sh", `claude plugin marketplace add ${plugin.repository.replace(/^https:\/\/github\.com\//, "")}`);
+  lines.push(`claude plugin install ${plugin.name}@${market.name}`, "```", "");
+  if (needs.length > 0) lines.push("## Requirements", "", ...needs);
+  lines.push("## Source", "", `This branch holds only the plugin's files. The CLI, its documentation and the`);
+  lines.push(`skills' source are on the main branch of ${plugin.repository}. License: ${plugin.license}.`, "");
+  return lines.join("\n");
+}
+
 function pluginBranch(push) {
   const scratch = mkdtempSync(join(tmpdir(), "plugin-branch-"));
   try {
@@ -181,6 +202,9 @@ function pluginBranch(push) {
       if (type === "tree") git(["read-tree", `--prefix=${path}/`, object], env);
       else git(["update-index", "--add", "--cacheinfo", `${mode},${object},${path}`], env);
     }
+    const readme = spawnSync("git", ["hash-object", "-w", "--stdin"], { cwd: ROOT, input: pluginReadme(), encoding: "utf8" });
+    if (readme.status !== 0) return [`git hash-object: ${readme.stderr.trim()}`];
+    git(["update-index", "--add", "--cacheinfo", `100644,${readme.stdout.trim()},README.md`], env);
     const tree = git(["write-tree"], env);
     const remote = spawnSync("git", ["fetch", "--quiet", "origin", PLUGIN_BRANCH], { cwd: ROOT }).status === 0;
     const parent = remote ? git(["rev-parse", "FETCH_HEAD"]) : null;
