@@ -769,10 +769,14 @@ async function main(argv: readonly string[]) {
       const baselineEdited = steps.find((step) => step.baselineEdited !== undefined)?.baselineEdited;
       const counts = steps.find((step) => step.counts !== undefined)?.counts;
       const carried = checked.tests?.carried.length ?? 0;
-      // Whether "make the tests pass" is a task someone can finish here.
-      const handoff: "ready" | "red-baseline" | "no-tests" | "failed" = !ok
-        ? "failed"
-        : baselineOf !== undefined
+      // Whether "make the tests pass" is a task someone can finish here; a
+      // cut with blockers (a name left in a public folder) is not, whatever
+      // its tests say.
+      const handoff: "blocked" | "ready" | "red-baseline" | "no-tests" | "failed" = !checked.ready
+        ? "blocked"
+        : !ok
+          ? "failed"
+          : baselineOf !== undefined
           ? "red-baseline"
           : carried === 0
             ? "no-tests"
@@ -833,7 +837,9 @@ async function main(argv: readonly string[]) {
               : ["Cut again, on this machine, to see what would run them on real code (--copy-pure, --live, --copy)."];
         process.stdout.write(
           `${[
-            handoff === "failed"
+            handoff === "blocked"
+              ? `Not ready to hand over: the cut has blockers (${checked.blockers.map((blocker) => blocker.code).join(", ")}); carveout status names them.${passing}`
+              : handoff === "failed"
               ? edited && steps.some((step) => step.command === "npm test" && !step.ok)
                 ? "npm test fails on the folder's edits (above): what it lists failed after the edits and not before them, on the same mocks."
                 : "The slice does not stand on its own yet."

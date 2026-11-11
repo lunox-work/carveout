@@ -371,3 +371,40 @@ test("the folder's Vitest reads the source beside a built .js, as the repository
   assert.equal(plugin.resolveId("react", importer), null);
   assert.equal(plugin.resolveId("./mod.js", join(at, "node_modules/x/index.js")), null);
 });
+
+test("what a setup file loads is held as the setup is, a setup file named as an entry too, and a module only its own test imports is code", async () => {
+  const repo = join(scratch, "setup-reach");
+  cpSync(FIXTURE, repo, { recursive: true });
+  write(repo, {
+    "apps/shop/package.json": JSON.stringify({ name: "@fx/shop", version: "1.0.0", type: "module", dependencies: { "@fx/money": "*", stripe: "^17.0.0" }, devDependencies: { vitest: "^3.0.0" } }),
+    "apps/shop/vitest.config.ts": 'export default { test: { environment: "jsdom", setupFiles: ["./test/setup.ts"] } };\n',
+    "apps/shop/test/setup.ts": 'import "./register";\n',
+    "apps/shop/test/register.ts": "globalThis.ready = true;\nexport {};\n",
+    "apps/shop/src/tax.test.ts": 'import { expect, it } from "vitest";\nimport { tax } from "./tax";\nit("taxes", () => expect(tax(100)).toBe(10));\n',
+    "apps/shop/src/rounding.ts": "export const round = (cents: number): number => Math.round(cents);\n",
+    "apps/shop/src/rounding.test.ts": 'import { expect, it } from "vitest";\nimport { round } from "./rounding";\nit("rounds", () => expect(round(1.4)).toBe(1));\n',
+  });
+  const git = (args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, stdio: "ignore" });
+  git(["init", "-q"]);
+  git(["add", "-A"]);
+  git(["commit", "-q", "-m", "fixture"]);
+  const cutOf = async (name: string, entryPoints: string[]) =>
+    (await cutSlice({ repo, out: join(scratch, name), entryPoints, budget: { maxFiles: 40, maxDepth: 1 }, tests: true, offline: true, choices: { vitest: "approved-package" } })).out;
+  const mock = 'import { vi } from "vitest";\nvi.mock("../src/tax", () => ({ tax: () => 10 }));\n';
+  // A module the setup file loads.
+  const loaded = await cutOf("setup-reach-loaded", ["apps/shop/src/tax.ts"]);
+  writeFileSync(join(loaded, "apps/shop/test/register.ts"), `${mock}globalThis.ready = true;\nexport {};\n`);
+  const first = await patchProject(loaded);
+  assert.ok(first.refused.some((refusal) => refusal.path === "apps/shop/test/register.ts"), JSON.stringify(first.refused));
+  // A setup file the cut was asked for by name, as cuts before setup files were recorded apart named them.
+  const named = await cutOf("setup-reach-named", ["apps/shop/src/tax.ts", "apps/shop/test/setup.ts"]);
+  writeFileSync(join(named, "apps/shop/test/setup.ts"), `${mock}import "./register";\n`);
+  const second = await patchProject(named);
+  assert.match(second.refused.find((refusal) => refusal.path === "apps/shop/test/setup.ts")?.reason ?? "", /changes what a check holds code to/, JSON.stringify(second.refused));
+  // Under a folder entry, a module only its own test imports is the task's code.
+  const folder = await cutOf("setup-reach-folder", ["apps/shop/src"]);
+  writeFileSync(join(folder, "apps/shop/src/rounding.ts"), "export const round = (cents: number): number => Math.round(cents + 0);\n");
+  const third = await patchProject(folder);
+  assert.equal(third.refused.some((refusal) => refusal.path === "apps/shop/src/rounding.ts"), false, JSON.stringify(third.refused));
+  assert.ok(third.changed.includes("apps/shop/src/rounding.ts"));
+});

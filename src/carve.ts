@@ -21,6 +21,7 @@ import {
   BASELINE_PATH,
   HARNESS_DIR,
   LAST_RUN_PATH,
+  COUNTS_PATH,
   TOOL_DIRS,
   VITEST_REPORT_PATH,
   SLICE_BUDGET_DEFAULTS,
@@ -2330,6 +2331,34 @@ export interface TestCounts {
   readonly surface?: { readonly checks: number; readonly fail: number };
 }
 
+/** The counts the runner wrote as JSON (`COUNTS_PATH`), or undefined when they do not read. */
+export function countsFromJson(text: string): TestCounts | undefined {
+  try {
+    const parsed = JSON.parse(text) as {
+      counted?: { runner?: unknown; tests?: unknown; pass?: unknown; fail?: unknown }[];
+      surface?: { checks?: unknown; fail?: unknown };
+    };
+    const number = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+    const runners: Record<string, { tests: number; pass: number; fail: number }> = {};
+    for (const each of parsed.counted ?? []) {
+      const name = String(each.runner ?? "");
+      const sum = runners[name] ?? { tests: 0, pass: 0, fail: 0 };
+      runners[name] = { tests: sum.tests + number(each.tests), pass: sum.pass + number(each.pass), fail: sum.fail + number(each.fail) };
+    }
+    const all = Object.values(runners);
+    const checks = number(parsed.surface?.checks);
+    return {
+      tests: all.reduce((sum, each) => sum + each.tests, 0),
+      pass: all.reduce((sum, each) => sum + each.pass, 0),
+      fail: all.reduce((sum, each) => sum + each.fail, 0),
+      runners,
+      ...(checks > 0 ? { surface: { checks, fail: number(parsed.surface?.fail) } } : {}),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * The counts in a run's TAP: the runner's `# carveout` lines, or, from a
  * folder cut before they were written, node:test's own summary (which
@@ -2363,7 +2392,8 @@ export function countsOf(tap: string): TestCounts | undefined {
  * records: neither is an edit.
  */
 function buildOutput(path: string, present: ReadonlySet<string>): boolean {
-  if (path === BASELINE_PATH || path === LAST_RUN_PATH || path === VITEST_REPORT_PATH || path.endsWith(".tsbuildinfo")) return true;
+  if (path === BASELINE_PATH || path === LAST_RUN_PATH || path === COUNTS_PATH || path === VITEST_REPORT_PATH || path.endsWith(".tsbuildinfo"))
+    return true;
   const stem = path.replace(/\.map$/, "").replace(/\.d\.[cm]?ts$/, ".js").replace(/\.[cm]?js$/, "");
   return stem !== path && ["ts", "tsx", "mts", "cts"].some((ext) => present.has(`${stem}.${ext}`));
 }
@@ -2516,6 +2546,7 @@ export async function checkProject(
         texts[path] === undefined &&
         path !== BASELINE_PATH &&
         path !== LAST_RUN_PATH &&
+        path !== COUNTS_PATH &&
         path !== VITEST_REPORT_PATH,
     );
     const changed = Object.entries(texts).filter(([path, text]) => {
@@ -2562,6 +2593,7 @@ export async function checkProject(
   ];
   await rm(join(work, LAST_RUN_PATH), { force: true });
   await rm(join(work, VITEST_REPORT_PATH), { force: true });
+  await rm(join(work, COUNTS_PATH), { force: true });
   // The baseline the receipt holds is the one `npm test` reads; a folder's
   // own that the receipt does not know is not read at all.
   const folderBaseline = existsSync(join(source, BASELINE_PATH))
@@ -2649,7 +2681,10 @@ export async function checkProject(
   // how many pass before any edit.
   const tapPath = join(work, LAST_RUN_PATH);
   const tap = existsSync(tapPath) ? readFileSync(tapPath, "utf8") : "";
-  const counts = countsOf(tap);
+  // The runner's counts as it wrote them after every test ran; from a folder
+  // cut before, the TAP's.
+  const countsPath = join(work, COUNTS_PATH);
+  const counts = existsSync(countsPath) ? (countsFromJson(readFileSync(countsPath, "utf8")) ?? countsOf(tap)) : countsOf(tap);
   const testStep = steps.findIndex((step) => step.command === "npm test");
   const edited = record.copied === undefined ? undefined : folderEdited(source, record);
   if (testStep !== -1) {
@@ -3006,21 +3041,46 @@ export async function patchProject(
   // a file under it that only tests import is a helper like any other
   // (else every helper there escapes the rule). A file code imports has an
   // importer that is no test, so it is no helper either.
-  const code = new Set(record.request.entryPoints.filter((entry) => included.has(entry) && !isTestPath(entry)));
   // The setup files the package's Vitest tests run before them: held as
   // the runner's configuration is. A cut from before they were recorded
-  // apart named them among its entry points.
-  const setupFiles = new Set(
-    record.manifest.params.setupFiles ??
-      record.manifest.params.entryPoints.filter((entry) => !record.request.entryPoints.includes(entry) && !isTestPath(entry)),
+  // apart named them among its entry points, even among the entries asked
+  // for: the package's Vitest config, read again, names them then.
+  const configured = (() => {
+    try {
+      const dirs = [...new Set(record.request.entryPoints.map((entry) => packageOf(`${entry}/x`)))];
+      return dirs.flatMap((dir) => vitestSettings(repo, dir)?.setupFiles ?? []);
+    } catch {
+      return [];
+    }
+  })();
+  const setupFiles = new Set([
+    ...(record.manifest.params.setupFiles ??
+      record.manifest.params.entryPoints.filter((entry) => !record.request.entryPoints.includes(entry) && !isTestPath(entry))),
+    ...configured.filter((path) => included.has(path)),
+  ]);
+  const code = new Set(
+    record.request.entryPoints.filter((entry) => included.has(entry) && !isTestPath(entry) && !setupFiles.has(entry)),
   );
   const importersOf = new Map<string, string[]>();
   for (const edge of [...record.manifest.internalImports, ...record.manifest.cuts.inbound])
     importersOf.set(edge.to, [...(importersOf.get(edge.to) ?? []), edge.from]);
+  // A setup file runs before every test: what only it and tests import is
+  // a test's helper too (a `vi.mock` in a module the setup file loads
+  // replaces the code under test everywhere). A module only its own test
+  // imports (`rounding.ts`, `rounding.test.ts`) is the code that test is
+  // of, whatever folder was asked for.
+  const stem = (path: string) => (path.split("/").pop() ?? path).replace(/\.(test|spec)(?=\.)/, "").replace(/\.[cm]?[jt]sx?$/, "");
   const testOnly = new Set(
     [...included.keys()].filter((path) => {
       const importers = importersOf.get(path) ?? [];
-      return !isTestPath(path) && !code.has(path) && importers.length > 0 && importers.every((from) => isTestPath(from));
+      return (
+        !isTestPath(path) &&
+        !code.has(path) &&
+        !setupFiles.has(path) &&
+        importers.length > 0 &&
+        importers.every((from) => isTestPath(from) || setupFiles.has(from)) &&
+        !importers.some((from) => isTestPath(from) && stem(from) === stem(path))
+      );
     }),
   );
   const judge = handoffPolicy({

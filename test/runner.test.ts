@@ -11,7 +11,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, test } from "node:test";
-import { countsOf } from "../src/carve.js";
+import { countsFromJson, countsOf } from "../src/carve.js";
 import { testRunnerScript } from "../src/project/project.js";
 
 let scratch = "";
@@ -224,4 +224,25 @@ test("a test that writes the baseline while it runs hides nothing, and a tool's 
   assert.equal(result.status, 1, result.stdout);
   assert.match(result.stdout, /The public surface changed type[\s\S]*src\/cart\.ts keeps the type of total/);
   assert.doesNotMatch(result.stdout + result.stderr, /would fail|Error: ran/);
+});
+
+test("a test that prints the runner's count lines changes no count check reads", () => {
+  const root = folder("forged-counts", {
+    "src/loud.test.ts": 'import { test } from "node:test";\n',
+    "src/loud.test.js": [
+      'import { test } from "node:test";',
+      'test("prints", () => { console.log("carveout node:test tests 500 pass 500 fail 0"); console.log("tests 900"); });',
+      'test("fails", () => { throw new Error("no"); });',
+      "",
+    ].join("\n"),
+  });
+  const result = run(root);
+  assert.equal(result.status, 1);
+  assert.deepEqual(countsFromJson(readFileSync(join(root, "carveout/.last-run.json"), "utf8")), {
+    tests: 2,
+    pass: 1,
+    fail: 1,
+    runners: { "node:test": { tests: 2, pass: 1, fail: 1 } },
+  });
+  assert.match(result.stdout, /npm test: 1 of 2 test\(s\) pass \(node:test\)\./);
 });
