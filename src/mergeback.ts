@@ -124,6 +124,13 @@ export async function applyPatch(
     readonly receipt?: string;
     /** No receipt: the folder's own record is all there is. */
     readonly noReceipt?: boolean;
+    /**
+     * Filled with each slice file the command wrote, by repository path:
+     * the hash of the file as the cut of the patched repository writes it,
+     * in the repository's names and in the folder's, whatever the folder's
+     * own edits merged into it. What `refresh` moves the folder's base to.
+     */
+    readonly written?: Map<string, { readonly folderPath: string; readonly sha256: string; readonly folderSha256: string }>;
   } = {},
 ): Promise<Applied> {
   const root = resolve(dir);
@@ -249,6 +256,8 @@ export async function applyPatch(
     const rewrites: ImportRewrite[] = [];
     /** Folder paths the command wrote, for the leak scan. */
     const wrote: string[] = [];
+    /** Each slice file written, by repository path, as the cut writes it (the folder's edits aside). */
+    const newly = new Map<string, { folderPath: string; sha256: string; folderSha256: string }>();
     for (const [path, status] of [...touched.entries()].sort(([a], [b]) => compare(a, b))) {
       if (status === "D") {
         if (included.has(path)) {
@@ -277,6 +286,13 @@ export async function applyPatch(
       await mkdir(dirname(join(root, names.path(path))), { recursive: true });
       const folderPath = names.path(path);
       const base = baseCut?.files.find((item) => item.path === path)?.text;
+      if (editedInFolder.has(folderPath) && (text === null || base === undefined)) {
+        // The folder edited a file the change writes and there is no text
+        // at the cut's commit to merge from (one an earlier apply added, a
+        // binary): left as the folder has it, for a person.
+        conflicts.push(path);
+        continue;
+      }
       if (text !== null && editedInFolder.has(folderPath) && base !== undefined) {
         // The folder's edit, read back in the repository's names, with the
         // change merged in; left alone where the two overlap.
@@ -291,6 +307,15 @@ export async function applyPatch(
       } else if (text === null) await copyFile(join(repo, path), join(root, folderPath));
       else await writeFile(join(root, folderPath), names.text(path, text));
       wrote.push(folderPath);
+      const clean =
+        text === null
+          ? (() => {
+              const bytes = readFileSync(join(repo, path));
+              return { folderPath, sha256: sha256(bytes), folderSha256: sha256(bytes) };
+            })()
+          : { folderPath, sha256: sha256(text), folderSha256: sha256(names.text(path, text)) };
+      newly.set(path, clean);
+      options.written?.set(path, clean);
       if (!included.has(path) && status === "M") {
         // A repository file the slice did not hold: it joins the slice at
         // the bytes of the cut's commit, so `patch` diffs it from there.
@@ -303,7 +328,12 @@ export async function applyPatch(
       wrote.push(...Object.keys(written));
       trusted = saveRecord(root, trusted, updated, written);
     });
-    if (grown.length > 0) {
+    // A file the change added or the slice grew is the folder's copy from
+    // now on, at what the command wrote: a later apply sees the folder's
+    // edits to it, and merges into them or leaves them, never over them.
+    const copiedNow = new Set((trusted.record.copied ?? []).map((file) => file.path));
+    const fresh = trusted.record.copied === undefined ? [] : [...newly.entries()].filter(([path]) => !copiedNow.has(path));
+    if (grown.length > 0 || fresh.length > 0) {
       const current = trusted.record;
       const updated: CarveoutRecord = {
         ...current,
@@ -314,8 +344,15 @@ export async function applyPatch(
         importRewrites: [...current.importRewrites, ...rewrites].sort((a, b) =>
           compare(`${a.file}\n${a.from}`, `${b.file}\n${b.from}`),
         ),
+        ...(current.copied === undefined
+          ? {}
+          : {
+              copied: [...current.copied, ...fresh.map(([path, { sha256: hash }]) => ({ path, sha256: hash }))].sort((a, b) =>
+                compare(a.path, b.path),
+              ),
+            }),
       };
-      trusted = saveRecord(root, trusted, updated);
+      trusted = saveRecord(root, trusted, updated, {}, new Map(fresh.map(([, { folderPath, folderSha256 }]) => [folderPath, folderSha256])));
     }
     return { changed, added, deleted, outside, stubs, merged, conflicts, leaks: leaksIn(root, wrote, trusted.receipt?.pseudonyms) };
   } finally {
@@ -635,12 +672,42 @@ export async function refreshProject(
   const paths = [...new Set([...packages.map((dir) => (dir === "" ? "." : dir)), ...stubbed])].sort(compare);
   const change = git(repo, ["diff", "--binary", "--full-index", from, to, "--", ...paths]);
   if (change.trim() === "") return null;
+  const written = new Map<string, { folderPath: string; sha256: string; folderSha256: string }>();
   const applied = await applyPatch(root, change, {
     stubs: true,
     repo,
+    written,
     ...(options.receipt === undefined ? {} : { receipt: options.receipt }),
     ...(options.noReceipt === true ? { noReceipt: true } : {}),
     ...(options.log === undefined ? {} : { log: options.log }),
   });
+  // The repository holds these commits: the folder's base moves to them, so
+  // a patch of it carries the contributor's work alone, not the commits it
+  // was brought (and `git apply` takes it at the new HEAD). Not past an
+  // overlap, which leaves a file at the old base for a person to merge.
+  if (applied.conflicts.length === 0) {
+    const now = trustedCut(root, options.receipt, options.noReceipt === true ? { noReceipt: true } : {});
+    const gone = new Set(applied.deleted);
+    const known = new Set(now.record.manifest.included.map((file) => file.path));
+    const atTo = (path: string): IncludedFile => {
+      const bytes = execFileSync("git", ["show", `${to}:${path}`], { cwd: repo, maxBuffer: 256 * 1024 * 1024 });
+      const [mode = "100644", , blobId = ""] = git(repo, ["ls-tree", to, "--", path]).trim().split(/\s+/);
+      return { path, blobId, sha256: sha256(bytes), mode, sizeBytes: bytes.length, operations: ["edit"] };
+    };
+    const included = [
+      ...now.record.manifest.included.filter((file) => !gone.has(file.path)).map((file) => (written.has(file.path) ? { ...file, ...atTo(file.path) } : file)),
+      ...[...written.keys()].filter((path) => !known.has(path)).map(atTo),
+    ].sort((a, b) => compare(a.path, b.path));
+    const copiedNow = new Map((now.record.copied ?? []).filter((file) => !gone.has(file.path)).map((file) => [file.path, file.sha256]));
+    for (const [path, { sha256: hash }] of written) copiedNow.set(path, hash);
+    const updated: CarveoutRecord = {
+      ...now.record,
+      manifest: { ...now.record.manifest, sourceCommitSha: to, included },
+      ...(now.record.copied === undefined
+        ? {}
+        : { copied: [...copiedNow.entries()].map(([path, hash]) => ({ path, sha256: hash })).sort((a, b) => compare(a.path, b.path)) }),
+    };
+    saveRecord(root, now, updated, {}, new Map([...written.values()].map(({ folderPath, folderSha256 }) => [folderPath, folderSha256])));
+  }
   return { from, to, applied };
 }

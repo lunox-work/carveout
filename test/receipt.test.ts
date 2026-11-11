@@ -271,6 +271,30 @@ test("refresh brings the repository's commits since the cut into a folder that h
   assert.ok(refreshed.applied.changed.includes("apps/shop/src/tax.ts"));
   assert.match(readFileSync(held, "utf8"), /the contributor's note[\s\S]*the repository's note/);
   assert.match(readFileSync(join(cut.out, "apps/shop/src/tax.ts"), "utf8"), /0\.2/);
+  // The folder's base moved to the commits it was brought: a patch carries
+  // the contributor's work alone, and applies at the repository's HEAD.
+  const { patchProject } = await import("../src/carve.js");
+  const patch = await patchProject(cut.out, { repo: moving });
+  assert.deepEqual(patch.changed, [ENTRY]);
+  assert.doesNotMatch(patch.diff, /0\.2|the repository's note/);
+  writeFileSync(join(scratch, "refresh.patch"), patch.diff);
+  git(moving, ["apply", "--check", join(scratch, "refresh.patch")]);
+  // A file the repository adds, which the contributor then edits, is never
+  // written over by the next refresh.
+  writeFileSync(join(moving, "apps/shop/src/discount.ts"), "export const DISCOUNT = 0.05;\n");
+  writeFileSync(cart, `import { DISCOUNT } from "./discount";\n${readFileSync(cart, "utf8")}export const discount = DISCOUNT;\n`);
+  git(moving, ["add", "-A"]);
+  git(moving, ["commit", "-qm", "upstream: a discount"]);
+  const added = await refreshProject(cut.out);
+  assert.ok(added !== null && added.applied.added.includes("apps/shop/src/discount.ts"), JSON.stringify(added?.applied));
+  const discount = join(cut.out, "apps/shop/src/discount.ts");
+  writeFileSync(discount, readFileSync(discount, "utf8").replace("0.05", "0.05; // the contributor's"));
+  writeFileSync(join(moving, "apps/shop/src/discount.ts"), "export const DISCOUNT = 0.07;\n");
+  git(moving, ["commit", "-qam", "upstream: a bigger discount"]);
+  const again = await refreshProject(cut.out);
+  assert.ok(again !== null);
+  assert.ok(again.applied.conflicts.includes("apps/shop/src/discount.ts") || again.applied.merged.includes("apps/shop/src/discount.ts"), JSON.stringify(again.applied));
+  assert.match(readFileSync(discount, "utf8"), /the contributor's/);
 });
 
 test("apply into a folder in pseudonyms names what the cut never saw by the same words, and names what it cannot", async () => {

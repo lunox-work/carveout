@@ -289,6 +289,12 @@ export function saveRecord(
   updated: CarveoutRecord,
   /** Generated files the command wrote into the folder, by folder path. */
   written: Readonly<Record<string, string>> = {},
+  /**
+   * Slice files whose hash the record takes anew, by folder path: as the
+   * command wrote them, the folder's edits aside (`refresh` moving the
+   * folder's base). Every other path keeps the hash it had.
+   */
+  rebased: ReadonlyMap<string, string> = new Map(),
 ): TrustedCut {
   const scrub = trusted.receipt !== null && updated.request.public === true;
   // Each path keeps the hash the folder's record had for it: the folder's
@@ -303,7 +309,7 @@ export function saveRecord(
       if (file.sha256 !== "") previous.set(file.path, file.sha256);
   const known = (path: string) => {
     const text = written[path];
-    return text !== undefined ? createHash("sha256").update(text).digest("hex") : previous.get(path);
+    return text !== undefined ? createHash("sha256").update(text).digest("hex") : (rebased.get(path) ?? previous.get(path));
   };
   const folder = scrub ? folderRecordFor(updated, trusted.receipt?.pseudonyms, dir, known) : updated;
   writeFileSync(join(resolve(dir), RECORD_PATH), `${JSON.stringify(folder, null, 2)}\n`);
