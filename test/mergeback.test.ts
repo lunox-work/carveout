@@ -77,6 +77,23 @@ before(() => {
 
 after(() => rmSync(scratch, { recursive: true, force: true }));
 
+test("a package the folder adds names its pin and the repository package file it goes into", async () => {
+  const out = await cut("adds-package");
+  edit(join(out, "package.json"), '"dependencies": {', '"dependencies": {\n    "dayjs": "1.11.13",');
+  edit(join(out, "apps/shop/src/tax.ts"), "export const TAX_RATE", 'import dayjs from "dayjs";\nexport const year = (): number => dayjs().year();\nexport const TAX_RATE');
+  const held = await patchProject(out);
+  assert.deepEqual(held.changed, []);
+  assert.match(held.boundary[0]?.detail ?? "", /Add "dayjs": "1\.11\.13" to apps\/shop\/package\.json before applying/);
+  assert.deepEqual(held.boundary[0]?.added, [{ name: "dayjs", version: "1.11.13" }]);
+  // Allowed, the edit comes back as written and applies once the owner adds the pin.
+  const allowed = await patchProject(out, { allow: ["apps/shop/src/tax.ts"] });
+  assert.deepEqual(allowed.changed, ["apps/shop/src/tax.ts"]);
+  const into = clone("adds-package-into");
+  const patchFile = join(scratch, "adds-package.patch");
+  writeFileSync(patchFile, allowed.diff);
+  git(into, ["apply", "--check", patchFile]);
+});
+
 test("a patch carries deletions, new files and new imports as the repository writes them", async () => {
   const out = await cut("edits");
   const src = join(out, "apps/shop/src");
@@ -119,7 +136,7 @@ test("a patch carries deletions, new files and new imports as the repository wri
       ["stub", "packages/money/src/index.d.ts"],
     ],
   );
-  assert.match(patch.boundary[0]?.detail ?? "", /adds left-pad/);
+  assert.match(patch.boundary[0]?.detail ?? "", /adds left-pad 1\.3\.0, .* Add "left-pad": "1\.3\.0" to the package that needs it before applying/);
   // The workspace package by name, the alias the slice's own import uses,
   // and the app's extensionless style for the new file.
   assert.match(patch.diff, /^\+import \{ format \} from "@fx\/money";$/m);

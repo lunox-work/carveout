@@ -3057,6 +3057,8 @@ export interface BoundaryEdit {
    */
   readonly kind: "stub" | "dependency" | "config" | "mock";
   readonly detail: string;
+  /** For `dependency`: the packages the folder added, at the versions it pins. */
+  readonly added?: readonly { readonly name: string; readonly version: string }[];
 }
 
 export interface Patch {
@@ -3223,7 +3225,7 @@ function boundaryEdit(
       detail: `${module} is cut: the edit to its stub stays in the folder, and the patch does not change ${module}.`,
     };
   if (path === "package.json") {
-    let names: string[] = [];
+    let added: { name: string; version: string }[] = [];
     try {
       const manifest = JSON.parse(readFileSync(join(root, path), "utf8")) as Record<
         string,
@@ -3233,12 +3235,13 @@ function boundaryEdit(
         "typescript",
         ...record.dependencies.map((dependency) => dependency.name),
       ]);
-      names = [
-        ...Object.keys(manifest["dependencies"] ?? {}),
-        ...Object.keys(manifest["devDependencies"] ?? {}),
+      added = [
+        ...Object.entries(manifest["dependencies"] ?? {}),
+        ...Object.entries(manifest["devDependencies"] ?? {}),
       ]
-        .filter((name) => !known.has(name))
-        .sort(compare);
+        .filter(([name]) => !known.has(name))
+        .map(([name, version]) => ({ name, version: typeof version === "string" ? version : String(version) }))
+        .sort((a, b) => compare(a.name, b.name));
     } catch {
       // Not JSON any more: reported as edited.
     }
@@ -3246,9 +3249,10 @@ function boundaryEdit(
       path,
       kind: "dependency",
       detail:
-        names.length === 0
+        added.length === 0
           ? "package.json was edited; the repository's package files are not patched."
-          : `adds ${names.join(", ")}, which the repository's package files do not get.`,
+          : `adds ${added.map((item) => `${item.name} ${item.version}`).join(", ")}, which the repository's package files do not get.`,
+      ...(added.length === 0 ? {} : { added }),
     };
   }
   if (CONFIG_FILES.has(path))
@@ -3455,11 +3459,21 @@ export async function patchProject(
   });
   const refused: Refusal[] = [];
   /** Whether the policy lets `path` into the patch; a refusal is named. */
+  /** Bare packages each edited script imports, for a dependency it adds. */
+  const importedBy = new Map<string, Set<string>>();
   const admits = (
     path: string,
     change: "added" | "changed" | "deleted",
     texts?: { readonly before: string | null; readonly after: string },
   ) => {
+    if (texts !== undefined && isScript(path))
+      for (const specifier of specifiersOf(texts.after, path))
+        if (isPackageName(packageNameOf(specifier))) {
+          const name = packageNameOf(specifier);
+          const files = importedBy.get(name) ?? new Set<string>();
+          files.add(path);
+          importedBy.set(name, files);
+        }
     const reason = judge(path, change, texts);
     if (reason !== null) refused.push({ path, reason });
     return reason === null;
@@ -3641,6 +3655,21 @@ export async function patchProject(
       const base = baseOf(path, original);
       await mkdir(dirname(join(scratch, "a", path)), { recursive: true });
       await writeFile(join(scratch, "a", path), base ?? "");
+    }
+    // A package the folder added goes into the repository's package file by
+    // hand: name the file, from where the edits import it, so the patch
+    // applies onto a repository that installs it.
+    for (const [index, edit] of boundary.entries()) {
+      if (edit.added === undefined) continue;
+      const where = edit.added.map((item) => {
+        const dirs = [...new Set([...(importedBy.get(item.name) ?? [])].map((path) => packageOf(path)))].sort(compare);
+        const files = dirs.map((dir) => (dir === "" ? "package.json" : `${dir}/package.json`));
+        return `"${item.name}": "${item.version}" ${files.length === 0 ? "to the package that needs it" : `to ${files.join(" and ")}`}`;
+      });
+      boundary[index] = {
+        ...edit,
+        detail: `${edit.detail} Add ${where.join("; ")} before applying, then pass --allow for the files that import it.`,
+      };
     }
     let diff = "";
     if (changed.length + added.length + deleted.length > 0) {
