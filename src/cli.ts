@@ -611,6 +611,8 @@ async function main(argv: readonly string[]) {
           pseudonyms: result.pseudonyms === null ? null : { renames: result.pseudonyms.rules.length, kept: result.pseudonyms.kept },
           readiness: result.readiness,
           receipt: result.receipt,
+          // The owner's acceptance tests on the folder as it goes out.
+          acceptance: vacuous === null ? null : vacuous ? "pass-before-the-work" : "fail-before-the-work",
           steps,
         });
       else {
