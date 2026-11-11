@@ -2396,9 +2396,38 @@ export async function patchProject(
   const packages = new Set(
     [...included.keys()].map((path) => packageOf(path)),
   );
+  // The packages the folder has, its own workspaces' and those it stubs
+  // included: a bare import of any other reaches past it. And the modules
+  // it holds or stubs, which an import may name by path.
+  const cutModules = record.manifest.cuts.outbound.map((edge) => edge.to);
+  const touched = new Set([...packages, ...cutModules.map((path) => packageOf(path))]);
+  const knownPackages = new Set([
+    ...record.dependencies.filter((dependency) => dependency.kind === "package").map((dependency) => dependency.name),
+    ...record.manifest.requiredBuildInputs.packages.map((item) => item.name),
+    ...[...workspacePackages(repo)]
+      .filter(([, directory]) => touched.has(packageOf(`${relative(repo, directory).split("\\").join("/")}/package.json`)))
+      .map(([name]) => name),
+  ]);
+  const bare = (path: string) => path.replace(/\.(d\.)?[cm]?[jt]sx?$/, "").replace(/\/index$/, "");
+  const heldModules = new Set([...included.keys(), ...cutModules].map(bare));
+  const holds = (path: string) => heldModules.has(bare(path));
+  // A slice file only tests import is a test's helper: an edit to it is a
+  // test edit, wherever it is kept and whatever it is named.
+  const importersOf = new Map<string, string[]>();
+  for (const edge of [...record.manifest.internalImports, ...record.manifest.cuts.inbound])
+    importersOf.set(edge.to, [...(importersOf.get(edge.to) ?? []), edge.from]);
+  const testOnly = new Set(
+    [...included.keys()].filter((path) => {
+      const importers = importersOf.get(path) ?? [];
+      return !isTestPath(path) && importers.length > 0 && importers.every((from) => isTestPath(from));
+    }),
+  );
   const judge = handoffPolicy({
     packages,
     packageOf,
+    knownPackages,
+    holds,
+    testSupport: (path: string) => testOnly.has(path),
     reach: true,
     integrity: true,
     checks: true,

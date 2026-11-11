@@ -144,35 +144,54 @@ What carveout holds to:
   `patch` runs none of the folder's code.
 - **The hand-off policy.** The patch carries edits to the slice's files and
   new files in the slice's packages. It leaves out, names, and exits 6 on:
-  new files in other packages (a cut module's folder among them);
-  protected paths (CI workflows, hooks, `.vscode`, `.devcontainer`,
-  `package.json`, lockfiles, `.npmrc`, `.env*`, Dockerfiles, Makefiles,
-  `*.sh`, `CODEOWNERS`, `carveout.config.json`); deleted tests, test
-  helpers and fixtures; edited tests that remove or rewrite an assertion,
-  skip or focus (`.only`) a test, leave an assertion unreachable, in a
-  `catch` that swallows it, or under a new condition, loop or callback,
-  rewrite a statement the assertions rest on (the data passed in, the
-  value compared with, a setup line, a fake's method), or mock the code's
-  own module (`vi.mock("./cart")`), and edited fixtures (an expected value
-  changed may be the change itself, or a test bent to pass: the maintainer
-  reads it); a script, new or edited, that gains a way to pass a test
-  without the code passing it: ending the run early (`process.exit`,
-  `process.exitCode`), swallowing failures (`process.on("uncaughtException")`),
-  rewriting the assertion library, or, in the code under test, telling a
-  test run from a real one (`typeof describe`, `import.meta.vitest`,
-  `NODE_ENV === "test"`, `process.argv` matched against a runner) or
-  rewriting a built-in (`Array.prototype.includes = …`); new suppressions
-  (`@ts-ignore`, `eslint-disable`, coverage ignores) and edited check
-  configuration; and a script that gains a reach it did not have: Node's
-  disk, network or process modules, a service SDK, `fetch`, `eval`,
-  `Function` (also through `.constructor`), `WebAssembly`, the environment,
-  a module loaded from a URL, or a module or global named by a computed
-  value or hidden behind one (`const r = require`, `const g = globalThis`;
-  a returned test that reads the closed source and sends it out is one).
+
+  - new files in other packages (a cut module's folder among them), and
+    protected paths: CI workflows, hooks, `.vscode`, `.devcontainer`,
+    manifests and lockfiles, `.npmrc`, `.env*`, Dockerfiles, Makefiles,
+    `*.sh`, task runners (`project.json`, `turbo.json`, `lint-staged`,
+    `lefthook`, `bunfig.toml`, `vercel.json`, `*.tf`, …), `CODEOWNERS`,
+    `carveout.config.json`;
+  - check configuration edited, deleted or, for what a runner picks up by
+    being there (`vitest.config.*`, setup files, `babel`, `swc`, coverage),
+    added; a module mock added under `__mocks__`;
+  - deleted tests, helpers, fixtures and snapshots; edited fixtures and
+    snapshots; edited tests and helpers (a helper by its folder, its name or
+    because only tests import it) that remove or rewrite an assertion, put
+    one where it may not run (under a new condition, loop, callback or early
+    exit, in another test, in a `catch` that swallows it or a `finally` that
+    leaves), skip or focus a test (`.skip`, `.only`, `t.skip()`, `skipIf`,
+    `fails`, `each([])`, options not written out), rewrite a statement the
+    assertions rest on (the data, the expected value, a setup line, a fake's
+    method; a table that only grows a row passes), add a statement that runs
+    before a kept assertion or shadows a name it reads, or mock, spy on or
+    write a member of the code's own module (`vi.mock("./cart")`,
+    `vi.spyOn(pricing, "round")`);
+  - a script that gains a way to pass a test without the code passing it:
+    ending the run early with no failing code (`process.exit(0)`, also
+    through `const p = process`), swallowing failures, rewriting the
+    assertion library or a built-in (`Object.is`, `expect.extend` over a
+    built-in matcher; a test may fake `Date.now` and `Math.random`), and in
+    the code under test, telling a test run from a real one (`typeof
+describe`, `import.meta.vitest`, `NODE_ENV === "test"`, `process.argv`
+    searched for a runner, a runner's global read where nothing declares it);
+  - new suppressions (`@ts-ignore`, `eslint-disable`, coverage ignores; a
+    test's `@ts-expect-error` is a test of the types);
+  - a script that gains a reach it did not have: Node's disk, network or
+    process modules, a service SDK, a package the slice does not have, a
+    module outside the slice's packages, `fetch`, `eval`, `Function` by any
+    route (`x.constructor`), `WebAssembly`, the environment
+    (`process.env`, `process.report`, typescript's `sys`, vite's
+    `loadEnv`), the module loader, a file loaded raw or as native code, a
+    module from a URL, or a module or global named by a computed value or
+    hidden behind one (`const r = require`, `const g = globalThis`; a
+    returned test that reads the closed source and sends it out is one);
+  - code in a language the policy does not read (`.vue`, `.py`, `.node`).
+
   `--allow <path|glob>` lets a reviewed one through. `merge` applies
-  nothing while any is refused. The policy reads syntax, not intent: a new
-  runner configuration (`vitest.config.ts`), or code that does harm with
-  only the reach its file already had, passes it.
+  nothing while any is refused. The policy reads syntax, not intent: code
+  that special-cases a test's own inputs, or does harm with only the reach
+  its file already had, passes it.
+
 - **Running what came back.** The contributor's tests, and every new file
   the patch carries, are code that runs beside the whole repository, the
   part the slice kept closed included. A branch pushed to the repository

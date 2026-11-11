@@ -155,7 +155,9 @@ test("a test's data, setup and mocks are held as its assertions are; additions p
     /mocks 1 more of the code's own modules \(\.\.\/src\/price\.js\)/,
   );
   assert.match(judge(`${DATA}mock.module("../src/price.js", { namedExports: { price: () => 4 } });\n`), /mocks 1 more/);
-  assert.equal(judge(`${DATA}vi.mock("stripe");\n`), "");
+  // A package's mock added at the top changes what every test in the file
+  // sees: held as a statement that runs before them.
+  assert.match(judge(`${DATA}vi.mock("stripe");\n`), /adds 1 statement that run before/);
   // A fake's method added passes; one rewritten is held.
   const FAKE = "export class FakeDb {\n  rows = [1];\n  count() { return this.rows.length; }\n}\n";
   assert.equal(weakenedTest("pkg/test/fakes.ts", FAKE, FAKE.replace("  count()", "  first() { return this.rows[0]; }\n  count()")), null);
@@ -195,7 +197,7 @@ test("a script that could pass a test without the code passing it is read from i
 
 test("code built from text, a module from a URL or a name hidden behind a value counts as reach", () => {
   const reach = (text: string) => reachOf("pkg/src/x.ts", text);
-  assert.deepEqual(reach('const run = ({} as any).constructor.constructor("return 1");\n'), ["a constructor called through .constructor"]);
+  assert.deepEqual(reach('const run = ({} as any).constructor.constructor("return 1");\n'), ["a constructor reached through .constructor"]);
   assert.deepEqual(reach('const r = require;\nr("fs");\n'), ["require taken as a value"]);
   assert.deepEqual(reach('const g = globalThis;\ng["fetch"]("x");\n'), ["the global object taken as a value"]);
   assert.deepEqual(reach('await import("data:text/javascript,export default 1");\n'), ["a module loaded from a URL"]);
@@ -216,4 +218,133 @@ test("the policy holds a test's helper or fixture edited or deleted, and what co
   // A script that had it may keep it; off unless asked.
   assert.equal(judge("pkg/test/run.test.ts", "changed", { before: "process.exitCode = 1;\n", after: "process.exitCode = 1;\nconst x = 1;\n" }), null);
   assert.equal(handoffPolicy({})("pkg/test/price.test.ts", "added", { before: null, after: "process.exit(0);\n" }), null);
+});
+
+test("round two: the ways around a test's verdict a reviewer found are held", () => {
+  const N = [
+    'import assert from "node:assert/strict";',
+    'import { test } from "node:test";',
+    'import { total } from "./checkout";',
+    "",
+    'test("total adds prices", () => {',
+    "  const cart = { items: [{ price: 1 }, { price: 2 }] };",
+    "  assert.equal(total(cart), 3);",
+    "});",
+    "",
+  ].join("\n");
+  const path = "apps/shop/src/checkout.test.ts";
+  const held = (after: string) => weakenedTest(path, N, after) ?? "";
+  // Skips the counters did not see.
+  assert.match(held(N.replace("  const cart", "  t.todo();\n  const cart").replace('test("total adds prices", () => {', 'test("total adds prices", (t) => {')), /skips 1 more test/);
+  assert.match(held(N.replace('test("total adds prices", () => {', 'test("total adds prices", { "skip": true }, () => {')), /skips 1 more test/);
+  assert.match(held(`${N}const opts = { todo: true };\n`.replace('test("total adds prices", () => {', 'test("total adds prices", opts, () => {')), /skips 1 more test/);
+  // An empty shell left behind, the body moved where it never runs.
+  assert.match(held(N.replace('test("total adds prices", () => {', 'test("total adds prices", () => {});\ntest.skip("moved", () => {')), /removes or rewrites 1 assertion|skips/);
+  // Early exits and wrappers that never run the assertion, or swallow it.
+  assert.match(held(N.replace("  const cart", "  if (true) return;\n  const cart")), /removes or rewrites 1 assertion/);
+  assert.match(held(N.replace("  assert.equal(total(cart), 3);", "  try { assert.equal(total(cart), 3); } finally { return; }")), /removes or rewrites 1 assertion/);
+  assert.match(held(N.replace("  assert.equal(total(cart), 3);", "  try { assert.equal(total(cart), 3); } catch (e) { if (false) throw e; }")), /removes or rewrites 1 assertion/);
+  assert.match(held(N.replace("  assert.equal(total(cart), 3);", "  switch (0) { case 0: break; default: assert.equal(total(cart), 3); }")), /removes or rewrites 1 assertion/);
+  // What a kept assertion reads, changed by an added statement.
+  assert.match(held(N.replace("  assert.equal", "  cart.items = [{ price: 3 }];\n  assert.equal")), /adds 1 statement/);
+  assert.match(held(`${N}function total() {\n  return 3;\n}\n`), /adds 1 statement/);
+  assert.match(held(N.replace("  assert.equal(total(cart), 3);", "  {\n    const cart = { items: [{ price: 3 }] };\n    assert.equal(total(cart), 3);\n  }")), /adds 1 statement/);
+  assert.match(held(N.replace('test("total', 'beforeEach(() => {});\ntest("total')), /adds 1 statement/);
+  // The code's own module, replaced without vi.mock.
+  assert.match(held(N.replace('import { total } from "./checkout";', 'import * as checkout from "./checkout";\nimport { total } from "./checkout";').replace("  assert.equal", '  vi.spyOn(checkout, "total").mockReturnValue(3);\n  assert.equal')), /mocks 1 more of the code's own modules/);
+  assert.match(held(`${N}vi.mock("@/checkout", () => ({ total: () => 3 }));\n`), /mocks 1 more/);
+  // A string's own whitespace is not layout.
+  const S = 'test("f", () => {\n  assert.equal(format(3), "$ 3.00");\n});\n';
+  assert.match(weakenedTest(path, S, S.replace("$ 3.00", "$3.00")) ?? "", /rewrites 1 assertion/);
+});
+
+test("round two: the edits a contractor makes for real still pass", () => {
+  const V = [
+    'import { describe, expect, it, vi } from "vitest";',
+    'import { total } from "./checkout";',
+    "",
+    'describe("total", () => {',
+    "  const cases = [[1, 1]];",
+    "  const fake = { id: 1 };",
+    '  it("adds prices", () => {',
+    "    expect(total(cases, fake)).toBe(3);",
+    "  });",
+    "});",
+    "",
+  ].join("\n");
+  const path = "apps/shop/src/checkout.test.ts";
+  const passes = (after: string) => assert.equal(weakenedTest(path, V, after), null, after);
+  // A new test, in a file that imports describe and it from its runner.
+  passes(V.replace("  });\n});", '  });\n  it("adds none", () => {\n    vi.useFakeTimers();\n    expect(total([], fake)).toBe(0);\n  });\n});'));
+  // Formatting: quotes, semicolons, a reflow, a comment.
+  passes(V.replaceAll('"', "'"));
+  passes(V.replaceAll(";\n", "\n"));
+  passes(V.replace("expect(total(cases, fake)).toBe(3);", "expect(\n      total(cases, fake), // two lines\n    ).toBe(3);"));
+  // A table row, a field on fake data, wrapping in a describe.
+  passes(V.replace("[[1, 1]]", "[[1, 1], [2, 2]]"));
+  passes(V.replace("{ id: 1 }", "{ id: 1, name: \"x\" }"));
+  passes(V.replace('describe("total", () => {', 'describe("checkout", () => {\ndescribe("total", () => {').replace(/\}\);\n$/, "});\n});\n"));
+  // An import of the runner's names, a helper with a name of its own.
+  passes(V.replace('import { describe, expect, it, vi } from "vitest";', 'import { beforeEach, describe, expect, it, vi } from "vitest";'));
+  passes(`${V}export function cartOf(items: number[]) {\n  return { items };\n}\n`);
+});
+
+test("round two: reach and integrity a reviewer found", () => {
+  const reach = (text: string) => reachOf("apps/shop/src/x.ts", text);
+  assert.deepEqual(reach("const p = process;\np.getBuiltinModule(\"node:fs\");\n"), ["process taken as a value"]);
+  assert.deepEqual(reach("const { env } = process;\n"), ["process taken as a value"]);
+  assert.deepEqual(reach("const F = (() => {}).constructor;\nF(\"return 1\")();\n"), ["a constructor reached through .constructor"]);
+  assert.deepEqual(reach("module.require(\"node:child_process\");\n"), ["the module loader (module.require)"]);
+  assert.deepEqual(reach("const all = process.report.getReport();\n"), ["process.report"]);
+  assert.deepEqual(reach('import env from "../../../.env?raw";\n'), ["a file loaded raw or as native code"]);
+  assert.deepEqual(reach('import ts from "typescript";\nts.sys.readFile("x");\n'), ["typescript's sys (the disk and the environment)"]);
+  assert.deepEqual(reach("const w = window;\n"), ["the global object taken as a value"]);
+  assert.deepEqual(reach('import { run } from "node:test";\nrun({});\n'), ["a test run of its own (node:test run)"]);
+  // A package the slice does not have, and a module outside its packages.
+  assert.deepEqual(reachOf("apps/shop/src/x.ts", 'import WS from "ws";\nimport { keys } from "../../../services/billing/src/keys";\n', {
+    knownPackages: new Set(["stripe"]),
+    packages: new Set(["apps/shop"]),
+    packageOf: (file) => file.split("/").slice(0, 2).join("/"),
+  }), ["a module outside the slice's packages", "a package the slice does not have (ws)"]);
+  // What is fine: a constructor's name, this.constructor, a spy on process, typeof.
+  assert.deepEqual(reach("const n = x.constructor.name;\nclass A { clone() { return new (this.constructor as any)(); } }\nif (typeof process !== \"undefined\") {}\n"), []);
+  const integrity = (file: string, text: string) => integrityOf(file, text);
+  assert.deepEqual(integrity("apps/shop/src/checkout.test.ts", "const p = process;\np.exit(0);\n"), ["process.exit"]);
+  assert.deepEqual(integrity("apps/shop/src/checkout.test.ts", "Object.is = () => true;\n"), ["rewrites Object.is"]);
+  assert.deepEqual(integrity("apps/shop/src/checkout.test.ts", 'expect.extend({ toBe: () => ({ pass: true, message: () => "" }) });\n'), [
+    "rewrites the test runner or the assertion library",
+  ]);
+  assert.deepEqual(integrity("apps/shop/src/checkout.test.ts", 'import assert from "node:assert";\nconst a = assert;\na.equal = () => {};\n'), [
+    "rewrites the test runner or the assertion library",
+  ]);
+  assert.deepEqual(integrity("apps/shop/src/checkout.ts", 'Object.defineProperty(Object, "is", { value: () => true });\n'), ["rewrites Object"]);
+  assert.deepEqual(integrity("apps/shop/src/checkout.ts", "queueMicrotask(() => process.exit(0));\n"), ["process.exit"]);
+  assert.deepEqual(integrity("apps/shop/src/checkout.ts", "try { if (it) {} } catch {}\n"), ["it read as a global"]);
+  // What is fine: a failing exit, a CLI's own argv, a test's fake clock, a signal's exit.
+  assert.deepEqual(integrity("apps/shop/src/cli.ts", 'if (process.argv.includes("--with-tests")) process.exit(1);\nif (process.argv[2] === "test") run();\nexport async function main() { process.exit(0); }\n'), []);
+  assert.deepEqual(integrity("apps/shop/src/checkout.test.ts", "Date.now = () => 0;\n"), []);
+  assert.deepEqual(integrity("apps/shop/test/server.ts", 'process.on("SIGTERM", () => process.exit(0));\n'), []);
+  assert.deepEqual(integrity("apps/shop/src/errors.ts", "Error.stackTraceLimit = 50;\n"), []);
+});
+
+test("round two: paths a reviewer found", () => {
+  const judge = handoffPolicy({ checks: true, integrity: true });
+  assert.match(judge("apps/shop/vitest.config.ts", "added", { before: null, after: "export default {};\n" }) ?? "", /adds what a check holds code to/);
+  assert.match(judge("apps/shop/vitest.setup.ts", "changed", { before: "", after: "beforeEach((c) => c.skip());\n" }) ?? "", /changes what a check holds code to/);
+  assert.equal(judge("packages/new/tsconfig.json", "added", { before: null, after: "{}" }), null);
+  assert.match(judge("apps/shop/project.json", "changed", { before: "{}", after: "{\"x\":1}" }) ?? "", /a protected path/);
+  assert.match(judge("apps/shop/src/__snapshots__/checkout.test.ts.snap", "changed", { before: "a", after: "b" }) ?? "", /changes a test fixture/);
+  assert.match(judge("apps/shop/src/__snapshots__/checkout.test.ts.snap", "deleted") ?? "", /deletes a test's helper or fixture/);
+  assert.match(judge("apps/shop/test/fixtures/receipt.png", "changed") ?? "", /changes a test fixture/);
+  assert.match(judge("apps/shop/src/Cart.vue", "added", { before: null, after: "<template/>" }) ?? "", /a language the policy does not read/);
+  assert.match(judge("apps/shop/__mocks__/decimal.js.ts", "added", { before: null, after: "export default 1;\n" }) ?? "", /adds a module mock/);
+  // A test's helper by name, or by what imports it.
+  const helper = "export const make = () => ({ total: 3 });\n";
+  assert.match(judge("apps/shop/src/test-helpers.ts", "changed", { before: helper, after: helper.replace("3", "4") }) ?? "", /rewrites or removes 1 other statement of a test's helper/);
+  assert.match(
+    handoffPolicy({ testSupport: (file) => file === "apps/shop/src/cart-data.ts" })("apps/shop/src/cart-data.ts", "changed", { before: helper, after: helper.replace("3", "4") }) ?? "",
+    /a test's helper/,
+  );
+  // A test's @ts-expect-error tests the types.
+  assert.equal(judge("apps/shop/src/checkout.test.ts", "added", { before: null, after: "// @ts-expect-error\ntotal(1);\n" }), null);
 });
