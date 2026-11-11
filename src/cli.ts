@@ -1150,6 +1150,10 @@ async function main(argv: readonly string[]) {
         );
         if (applied.leaks.length > 0) process.stdout.write(leaksText(applied.leaks));
         if (applied.unmapped.length > 0) process.stdout.write(unmappedText(applied.unmapped));
+        if (refreshed.copiedLeft !== undefined)
+          process.stdout.write(
+            `Changed in the repository, in a folder the cut copied: not written over the folder's copy. Bring each change by hand, then: carveout refresh ${dir} --resolved <path>:\n${list(refreshed.copiedLeft)}\n`,
+          );
         if (refreshed.droppedUpstream !== undefined)
           process.stdout.write(
             `Taken as resolved, though the folder's text leaves out some of the repository's change to it (the next patch reverts those lines; merge them in if that is not meant):\n${list(refreshed.droppedUpstream)}\n`,

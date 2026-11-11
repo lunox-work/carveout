@@ -780,6 +780,8 @@ export async function refreshProject(
   readonly applied: Applied;
   /** Files taken as resolved whose text leaves out some of the repository's change to them. */
   readonly droppedUpstream?: readonly string[];
+  /** Copied folders' files the repository changed, left as the folder holds them. */
+  readonly copiedLeft?: readonly string[];
 } | null> {
   const root = resolve(dir);
   const trusted = trustedCut(root, options.receipt, options.noReceipt === true ? { noReceipt: true } : {});
@@ -794,12 +796,12 @@ export async function refreshProject(
   const copiedFolders = (record.extras ?? []).map((file) => file.path);
   const paths = [...new Set([...packages.map((dir) => (dir === "" ? "." : dir)), ...stubbed, ...copiedFolders])].sort(compare);
   const resolved = [...new Set(options.resolved ?? [])];
-  // Only the slice's own files: a path outside would join the record, and
-  // the next patch would delete it.
-  const sliceFiles = new Set(record.manifest.included.map((file) => file.path));
+  // Only the slice's own files and the copied folders': a path outside
+  // would join the record, and the next patch would delete it.
+  const sliceFiles = new Set([...record.manifest.included.map((file) => file.path), ...copiedFolders]);
   const outsideSlice = resolved.filter((path) => !sliceFiles.has(path));
   if (outsideSlice.length > 0)
-    throw new Error(`--resolved takes the slice's own files; these are not: ${outsideSlice.join(", ")}.`);
+    throw new Error(`--resolved takes the slice's own files and its copied folders'; these are not: ${outsideSlice.join(", ")}.`);
   const change = git(repo, ["diff", "--binary", "--full-index", from, to, "--", ...paths, ...resolved.map((path) => `:(exclude)${path}`)]);
   if (change.trim() === "" && resolved.length === 0) return null;
   const written = new Map<string, { folderPath: string; sha256: string; folderSha256: string }>();
@@ -864,6 +866,10 @@ export async function refreshProject(
     ...(trusted.record.extras ?? []).map((file) => file.path),
   ]);
   const left = changedNames.filter((name) => held.has(name) && !written.has(name) && !applied.deleted.includes(name));
+  // A copied folder's file the repository changed is never written over
+  // what the folder holds: named, to bring by hand and pass as resolved.
+  const copiedSet = new Set(copiedFolders);
+  const copiedLeft = left.filter((name) => copiedSet.has(name));
   const whole = applied.conflicts.length === 0 && applied.unmapped.length === 0 && left.length === 0;
   if (written.size > 0 || whole) {
     const now = trustedCut(root, options.receipt, options.noReceipt === true ? { noReceipt: true } : {});
@@ -874,10 +880,19 @@ export async function refreshProject(
       const [mode = "100644", , blobId = ""] = git(repo, ["ls-tree", to, "--", path]).trim().split(/\s+/);
       return { path, blobId, sha256: sha256(bytes), mode, sizeBytes: bytes.length, operations: ["edit"] };
     };
+    // A copied folder's file stays one, at the new base's bytes: patch
+    // reads its base by the hash `extras` keeps.
+    const extrasPaths = new Set((now.record.extras ?? []).map((file) => file.path));
     const included = [
       ...now.record.manifest.included.filter((file) => !gone.has(file.path)).map((file) => (written.has(file.path) ? { ...file, ...atTo(file.path) } : file)),
-      ...[...written.keys()].filter((path) => !known.has(path)).map(atTo),
+      ...[...written.keys()].filter((path) => !known.has(path) && !extrasPaths.has(path)).map(atTo),
     ].sort((a, b) => compare(a.path, b.path));
+    const extras = now.record.extras
+      ?.filter((file) => !gone.has(file.path))
+      .map((file) => {
+        const moved = written.get(file.path);
+        return moved === undefined ? file : { path: file.path, sha256: moved.sha256 };
+      });
     // A file refresh wrote is the repository's at the new base; any other
     // keeps what it was, a patch's mark included.
     const copiedNow = new Map<string, { path: string; sha256: string; applied?: true }>(
@@ -892,10 +907,17 @@ export async function refreshProject(
     const updated: CarveoutRecord = {
       ...now.record,
       manifest: { ...now.record.manifest, ...(whole ? { sourceCommitSha: to } : {}), included },
+      ...(extras === undefined ? {} : { extras }),
       ...(bases === undefined ? { bases: undefined } : { bases }),
       ...(now.record.copied === undefined ? {} : { copied: [...copiedNow.values()].sort((a, b) => compare(a.path, b.path)) }),
     };
     saveRecord(root, now, updated, {}, new Map([...written.values()].map(({ folderPath, folderSha256 }) => [folderPath, folderSha256])));
   }
-  return { from, to, applied, ...(droppedUpstream.length === 0 ? {} : { droppedUpstream }) };
+  return {
+    from,
+    to,
+    applied,
+    ...(droppedUpstream.length === 0 ? {} : { droppedUpstream }),
+    ...(copiedLeft.length === 0 ? {} : { copiedLeft }),
+  };
 }

@@ -6,7 +6,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, before, test } from "node:test";
@@ -619,4 +619,44 @@ test("check names the packages a folder's package.json added, which its run does
   assert.deepEqual(packagesAdded(cut, cut), []);
   // A package.json that is not JSON any more adds nothing it can name.
   assert.deepEqual(packagesAdded("{", cut), []);
+});
+
+test("refresh leaves a copied folder's files to the folder, and --resolved moves them as copies", async () => {
+  const { refreshProject } = await import("../src/mergeback.js");
+  const { patchProject } = await import("../src/carve.js");
+  const moving = join(scratch, "copied-moving");
+  git(scratch, ["clone", "-q", repo, moving]);
+  const migration = "apps/shop/migrations/0001.sql";
+  const seed = "apps/shop/migrations/0002.sql";
+  mkdirSync(join(moving, "apps/shop/migrations"), { recursive: true });
+  writeFileSync(join(moving, migration), "create table carts (id int);\n");
+  writeFileSync(join(moving, seed), "insert into carts values (1);\n");
+  git(moving, ["add", "-A"]);
+  git(moving, ["commit", "-qm", "migrations"]);
+  const cut = await cutSlice({ repo: moving, out: join(scratch, "copied-refresh"), entryPoints: [ENTRY], budget: { maxFiles: 40, maxDepth: 1 }, offline: true, copy: ["apps/shop/migrations"] });
+  // Both sides change the migration's one line; upstream also changes the seed.
+  writeFileSync(join(cut.out, migration), "create table carts (id int, total int);\n");
+  writeFileSync(join(moving, migration), "create table carts (id bigint);\n");
+  writeFileSync(join(moving, seed), "insert into carts values (2);\n");
+  git(moving, ["commit", "-qam", "upstream"]);
+  const first = await refreshProject(cut.out);
+  assert.ok(first !== null);
+  // Not written into the folder: named, and the folder's base stays.
+  assert.deepEqual(first.applied.outside, [migration, seed]);
+  assert.deepEqual(first.copiedLeft, [migration, seed]);
+  assert.match(readFileSync(join(cut.out, migration), "utf8"), /id int, total int/);
+  // Brought by hand, and taken as resolved: still copies, at the new base.
+  writeFileSync(join(cut.out, migration), "create table carts (id bigint, total int);\n");
+  writeFileSync(join(cut.out, seed), "insert into carts values (2);\n");
+  const resolved = await refreshProject(cut.out, { resolved: [migration, seed] });
+  assert.ok(resolved !== null);
+  const record = JSON.parse(readFileSync(join(cut.out, "carveout.json"), "utf8")) as { manifest: { included: { path: string }[] }; extras?: { path: string }[] };
+  assert.ok(!record.manifest.included.some((file) => file.path === migration || file.path === seed));
+  assert.deepEqual(record.extras?.map((file) => file.path), [migration, seed]);
+  const patch = await patchProject(cut.out, { repo: moving });
+  assert.match(patch.diff, /^-create table carts \(id bigint\);$/m);
+  assert.match(patch.diff, /^\+create table carts \(id bigint, total int\);$/m);
+  assert.doesNotMatch(patch.diff, /0002\.sql/);
+  writeFileSync(join(scratch, "copied-refresh.patch"), patch.diff);
+  git(moving, ["apply", "--check", join(scratch, "copied-refresh.patch")]);
 });
