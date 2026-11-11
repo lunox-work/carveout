@@ -147,6 +147,10 @@ test("a service package the code's own types are built from is installed, not mo
     // Untyped, `Pick<Stripe.Customer, …>` demands what Stripe's own type leaves optional.
     "apps/shop/src/customer.ts": [
       'import type Stripe from "stripe";',
+      // Beside it, for their values alone: installed, they would dial a
+      // Redis and a Postgres the folder has none of.
+      'import Redis from "ioredis";',
+      'import pg from "pg";',
       "",
       'export function blank(): Pick<Stripe.Customer, "email" | "phone"> {',
       "  return {} as never;",
@@ -154,8 +158,16 @@ test("a service package the code's own types are built from is installed, not mo
       'export function partial(): Pick<Stripe.CustomerCreateParams, "email" | "phone"> {',
       "  return {};",
       "}",
+      "export const cache = () => new Redis();",
+      "export const pool = () => new pg.Pool();",
       "",
     ].join("\n"),
+    "apps/shop/package.json": JSON.stringify({
+      name: "@fx/shop",
+      version: "1.0.0",
+      type: "module",
+      dependencies: { "@fx/money": "*", stripe: "^17.0.0", ioredis: "^5.4.0", pg: "^8.13.0" },
+    }),
   });
   const git = (args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, stdio: "ignore" });
   git(["init", "-q"]);
@@ -168,8 +180,10 @@ test("a service package the code's own types are built from is installed, not mo
     budget: { maxFiles: 40, maxDepth: 1 },
     offline: true,
   });
-  const stripe = cut.record.dependencies.find((dependency) => dependency.name === "stripe");
-  assert.equal(stripe?.resolution, "approved-package", JSON.stringify(cut.record.dependencies));
+  const resolution = (name: string) => cut.record.dependencies.find((dependency) => dependency.name === name)?.resolution;
+  assert.equal(resolution("stripe"), "approved-package", JSON.stringify(cut.record.dependencies));
+  assert.equal(resolution("ioredis"), "runtime-mock");
+  assert.equal(resolution("pg"), "runtime-mock");
 });
 
 test("a module that is no package (a Vite virtual module) is mocked in the folder and found by its name", async () => {

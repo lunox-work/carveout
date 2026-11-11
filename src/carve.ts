@@ -184,6 +184,58 @@ function coverageTerms(coverage: CoverageGate): string {
 }
 
 /**
+ * The packages whose types a file's errors are about: of the packages
+ * `candidate` accepts that the file imports, those whose imported names a
+ * type names in the declaration around an error's line (`Pick<Stripe.
+ * Customer, …>`), or anywhere in the file for an error with no line. A
+ * service package imported beside one, for its values alone, is not:
+ * installed, it would run against a service the folder has none of.
+ */
+export function packagesTypingLines(
+  path: string,
+  text: string,
+  lines: readonly (number | null)[],
+  candidate: (name: string) => boolean,
+): Set<string> {
+  const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, /\.[cm]?tsx$|\.jsx$/.test(path) ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const bindings = new Map<string, string>();
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    const specifier = statement.moduleSpecifier.text;
+    if (specifier.startsWith(".") || isNodeBuiltin(specifier)) continue;
+    const name = packageNameOf(specifier);
+    const clause = statement.importClause;
+    if (!candidate(name) || clause === undefined) continue;
+    if (clause.name !== undefined) bindings.set(clause.name.text, name);
+    const named = clause.namedBindings;
+    if (named !== undefined && ts.isNamespaceImport(named)) bindings.set(named.name.text, name);
+    else if (named !== undefined) for (const element of named.elements) bindings.set(element.name.text, name);
+  }
+  const found = new Set<string>();
+  if (bindings.size === 0) return found;
+  /** The packages whose names a type within `node` names. */
+  const typesIn = (node: ts.Node, inType: boolean): void => {
+    const typed = inType || ts.isTypeNode(node);
+    if (typed && ts.isIdentifier(node)) {
+      const name = bindings.get(node.text);
+      if (name !== undefined) found.add(name);
+    }
+    ts.forEachChild(node, (child) => typesIn(child, typed));
+  };
+  for (const line of lines) {
+    if (line === null || line < 1 || line > source.getLineStarts().length) {
+      typesIn(source, false);
+      continue;
+    }
+    const at = source.getPositionOfLineAndCharacter(line - 1, 0);
+    const end = source.getLineEndOfPosition(at);
+    for (const statement of source.statements)
+      if (statement.getStart(source) <= end && at < statement.getEnd()) typesIn(statement, false);
+  }
+  return found;
+}
+
+/**
  * The checks a package's own scripts run (test, lint, typecheck), by the
  * scripts' names: what its CI holds a change to. Never their commands,
  * which may carry a credential (`DATABASE_URL=postgres://user:pass@…`) or
@@ -1312,19 +1364,18 @@ export async function computeCut(
   // optional). The cut counted that error as the untyped packages' cost,
   // which installing them pays; mocked, the package would stay untyped and
   // the folder's build would fail where the cut said ready.
-  const untypedFiles = new Set(
-    (contract.compilation.untypedPackageErrors ?? []).flatMap((diagnostic) =>
-      diagnostic.file === undefined || diagnostic.file === null ? [] : [String(diagnostic.file)],
-    ),
-  );
+  const untypedLines = new Map<string, (number | null)[]>();
+  for (const diagnostic of contract.compilation.untypedPackageErrors ?? [])
+    if (diagnostic.file !== undefined && diagnostic.file !== null)
+      untypedLines.set(String(diagnostic.file), [...(untypedLines.get(String(diagnostic.file)) ?? []), diagnostic.line]);
   const typedBy = new Map<string, string>();
-  for (const file of manifest.included)
-    if (untypedFiles.has(file.path) && isScript(file.path))
-      for (const { specifier } of moduleSpecifiers(file.path, readFileSync(join(repo, file.path), "utf8"))) {
-        if (specifier.startsWith(".") || isNodeBuiltin(specifier)) continue;
-        const name = packageNameOf(specifier);
-        if (serviceOf(name) !== null && !workspaces.has(name) && isPackageName(name) && !typedBy.has(name)) typedBy.set(name, file.path);
-      }
+  for (const file of manifest.included) {
+    const lines = untypedLines.get(file.path);
+    if (lines === undefined || !isScript(file.path)) continue;
+    const candidate = (name: string) => serviceOf(name) !== null && !workspaces.has(name) && isPackageName(name);
+    for (const name of packagesTypingLines(file.path, readFileSync(join(repo, file.path), "utf8"), lines, candidate))
+      if (!typedBy.has(name)) typedBy.set(name, file.path);
+  }
   for (const [name, file] of [...typedBy].sort(([a], [b]) => compare(a, b)))
     if (choices[name] === undefined && repositoryVersion(repo, name, [file]) !== null) {
       choices[name] = "approved-package";
