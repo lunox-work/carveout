@@ -602,28 +602,31 @@ names the importers and tests the contractor never saw.
 
 With the hand-off's flags (`--public --with-tests --whole-package
 --copy-pure`, in pseudonyms), on 2026-11-11, eleven of the slices below
-were cut and checked again. Ten pass `check` on their own:
-sandbox-factory's worker (413 of 466 tests pass at the baseline), shared
-package (380 of 415), pricing, API cutter and a React component (in jsdom,
-after the package's setup file); command-center's articles, auth (an SDK
-installed for its types) and web app (75 of 75); and two of landing's,
-which no test runs. Tests that fail at the baseline test what the slice
-mocks, and `check` names what would run them on real code (a database
-driver, `--live postgres`). No public folder held a name of its
-repository. The eleventh, sandbox-factory's 200-file components folder,
-does not build: a stub of a value typed from a large generic package is
-narrower than the source (Limits). Getting there fixed what the earlier
-runs had not met: a lock npm 11 left short, a component's Vitest
-environment and setup, a Vite virtual module, a path alias taken for a
-package, a re-exported import's kind, an SDK whose types the code is built
-from, the whole-folder `noImplicitAny` relax, and the pseudonyms of
-multi-word names.
+were cut and checked again; the counts are the repository's tests, the
+checks of the public surface apart. Ten install, build and test on their
+own: sandbox-factory's worker (373 of 426 pass at the baseline; it also
+runs three Python scripts by path, which the cut names as blockers until
+they are copied with `--copy`), shared package (369 of 404), pricing, API
+cutter and a React component (12 of 12 Vitest tests in jsdom, after the
+package's setup file); command-center's articles, auth (two SDKs installed
+for their types; 96 of 131) and web app (121 of 121: 74 on node:test, 47
+on Vitest); and two of landing's, which no test runs. Tests that fail at
+the baseline test what the slice mocks, and `check` names what would run
+them on real code (a database driver, `--live postgres`). No public folder
+held a name of its repository but a sibling repository named in prose
+alone, which `--name` hides. The eleventh, sandbox-factory's 200-file
+components folder, does not build: a type the client infers from a server
+outside the slice is narrower in its stub than in the source (Limits).
 
-An agent given only a public hand-off folder, its `AGENTS.md` and
-`TASK.md`, delivered the task with `npm test` green; `carveout patch`
-gave it back in the repository's names, it merged with `git apply
---3way`, and the owner's hidden acceptance tests passed on the merged
-code.
+Three agents, each given only a public hand-off folder, its `AGENTS.md`
+and `TASK.md`, delivered their tasks with `npm test` green: a function in
+a fixture, a pricing function in sandbox-factory's core (71 of 71), and a
+React dialog's keyboard behaviour in jsdom (19 of 19 Vitest tests).
+`carveout patch` gave each back in the repository's names, each applied
+with `git apply --3way`, and the owner's hidden acceptance tests passed in
+a slice of the merged code. What they found unclear in the folder was
+fixed: where new tests go, what the coverage gate measures, what may grow
+in a test, and that Vitest read the last build rather than the source.
 
 Thirteen real slices from three TypeScript repositories, sandbox-factory
 among them. They range from 1 to 173 files, and cover Node services, React
@@ -689,10 +692,11 @@ class, `never[]` under the relaxed `noImplicitAny`).
   source in a slice is reported as `language_unsupported`.
 - **Inferred types.** A stub can be narrower than the source when a type is
   inferred from a package carveout could not read, or from a large generic
-  one (an auth client's): the cut's check reads packages untyped, and the
-  folder's build, with them installed, can fail where the cut said ready.
-  `check` names the error; `--copy` or a wider cut holds the module
-  instead.
+  one (an auth client whose types are inferred from the server's
+  configuration, outside the slice): the cut's check reads packages
+  untyped, and the folder's build, with them installed, can fail where the
+  cut said ready. `check` names the error; a wider cut that holds the
+  module the type is inferred from fixes it.
 - **Lockfiles.** Peers and locked versions are read from an npm
   `package-lock.json`. pnpm and Yarn repositories fall back to the versions
   in their package.json files; a `catalog:` pin takes the catalog's
