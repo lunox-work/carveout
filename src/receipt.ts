@@ -61,6 +61,12 @@ export interface Receipt {
   readonly readiness?: Readiness;
   /** Files every cut of this folder reads as absent: the owner's acceptance tests. */
   readonly unseen?: readonly string[];
+  /**
+   * The test side of the slice as the folder held it at the cut (its tests,
+   * their helpers, the setup files), by folder path: what an acceptance
+   * run puts back where patch keeps the folder's edit out.
+   */
+  readonly testText?: Readonly<Record<string, string>>;
 }
 
 /** The record as the folder holds it: what its files are measured against. */

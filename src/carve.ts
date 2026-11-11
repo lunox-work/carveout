@@ -87,6 +87,7 @@ import {
   exactToFolder,
   fromFolder,
   specifierPackages,
+  toFolder,
   keptNames,
   looseLeaks,
   maskKept,
@@ -2186,14 +2187,32 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
       );
     leakScan = { vocabulary, kept: keptPackages };
   }
-  // The generated files' text as the folder holds them, which the receipt keeps.
+  // The generated files' text as the folder holds them, which the receipt
+  // keeps; and the test side's (tests, their helpers, setup files).
   const generatedText: Record<string, string> = {};
+  const testText: Record<string, string> = {};
+  const testSide = (() => {
+    const importersOf = new Map<string, string[]>();
+    for (const edge of computed.manifest.internalImports) importersOf.set(edge.to, [...(importersOf.get(edge.to) ?? []), edge.from]);
+    const setup = new Set(computed.manifest.params.setupFiles ?? []);
+    const side = new Set([...(computed.tests?.carried ?? []), ...setup]);
+    // The code is never test side: an entry point, or what code outside imports.
+    const code = new Set([...computed.request.entryPoints, ...computed.manifest.cuts.inbound.map((edge) => edge.to)]);
+    for (const file of computed.manifest.included) {
+      if (code.has(file.path)) continue;
+      if (isTestPath(file.path)) side.add(file.path);
+      const importers = importersOf.get(file.path) ?? [];
+      if (importers.length > 0 && importers.every((from) => isTestPath(from) || setup.has(from))) side.add(file.path);
+    }
+    return side;
+  })();
   for (const file of files) {
     const path = pathOf(file.path);
     const text = folderText(file.path, file.text);
     await mkdir(dirname(join(out, path)), { recursive: true });
     await writeFile(join(out, path), text, "utf8");
     if (file.class !== "source") generatedText[path] = text;
+    else if (testSide.has(file.path)) testText[path] = text;
   }
   for (const path of [...binaryPaths, ...textExtras]) {
     const target = pathOf(path);
@@ -2358,6 +2377,7 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
       // The advice a public folder keeps out of its own record.
       readiness,
       generatedText,
+      ...(Object.keys(testText).length === 0 ? {} : { testText }),
       ...(request.unseen === undefined || request.unseen.length === 0 ? {} : { unseen: [...request.unseen] }),
     });
   await writeFile(join(out, RECORD_PATH), `${JSON.stringify(folderRecord, null, 2)}\n`, "utf8");
@@ -2649,6 +2669,13 @@ export async function checkProject(
      * baseline, and never in the folder itself.
      */
     readonly accept?: readonly { readonly path: string; readonly text: string }[];
+    /**
+     * With `accept`: the slice files patch keeps out, by repository path.
+     * The acceptance run puts back the test side's as the cut wrote them
+     * and takes out the ones the folder added, so it runs on what patch
+     * would carry.
+     */
+    readonly held?: readonly string[];
   } = {},
 ): Promise<readonly CheckStep[]> {
   // The receipt's record and baseline when there is one: a folder that
@@ -2771,6 +2798,18 @@ export async function checkProject(
     if (work === source)
       return [{ command: "accept", ok: false, output: "Acceptance tests run in a copy of the folder, never in it: check without --in-place." }];
     const table = trusted.receipt?.pseudonyms;
+    // What patch keeps out does not reach the acceptance run: a test, a
+    // helper or a setup file the folder edited is put back as the cut wrote
+    // it, a file it added is taken out.
+    const cutPaths = new Set([...record.manifest.included.map((file) => file.path), ...record.generated.map((file) => file.path)]);
+    for (const path of options.held ?? []) {
+      const folderPath = table === undefined ? path : (exactToFolder(table, path, "")?.path ?? toFolder(table, path, "").path);
+      const original = trusted.receipt?.testText?.[folderPath];
+      if (original !== undefined) {
+        await mkdir(dirname(join(work, folderPath)), { recursive: true });
+        await writeFile(join(work, folderPath), original);
+      } else if (!cutPaths.has(folderPath)) await rm(join(work, folderPath), { force: true });
+    }
     for (const test of options.accept) {
       const folder = table === undefined ? { path: test.path, text: test.text } : exactToFolder(table, test.path, test.text);
       if (folder === null)

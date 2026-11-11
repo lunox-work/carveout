@@ -718,10 +718,12 @@ class, `never[]` under the relaxed `noImplicitAny`).
 - **Linting.** The folder runs the package's tests and build, and names
   the repository's Prettier at its locked version; its ESLint (or other
   linter) never runs there. The repository's CI does.
-- **Acceptance in the folder.** `check --accept` runs the owner's tests
-  with the folder as it came back, the files `patch` keeps out included
-  (a weakened helper the tests import, say); it names those files, so
-  read them first.
+- **Acceptance in the folder.** `check --accept` runs the owner's tests on
+  what `patch` would carry of the test side: a test, helper or setup file
+  `patch` keeps out is put back as the cut wrote it, and a file it keeps
+  out that the folder added is taken out. Another file it keeps out (a
+  module that gained new reach, say) runs as the folder holds it; the
+  command names each.
 - **Folders named like build output.** Files under `build/`, `dist/`,
   `vendor/` and `third_party/` are not parsed: a source folder named
   `build` is copied when reached, but its own imports are not followed.

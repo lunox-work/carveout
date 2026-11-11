@@ -806,20 +806,21 @@ async function main(argv: readonly string[]) {
       if (dir === undefined) fail("check needs the folder a cut wrote.");
       readRecord(dir);
       const accept = acceptOption(values.accept, values.repo);
-      const steps = await checkProject(dir, {
-        ...(values["in-place"] === true ? { inPlace: true } : {}),
-        ...(values.isolated === true ? { isolated: true } : {}),
-        ...(accept.length === 0 ? {} : { accept }),
-        ...receiptOption,
-      });
-      // What patch keeps out still ran with the acceptance tests, as the
-      // folder holds it (a weakened helper they import, say): named.
+      // What patch keeps out never reaches the acceptance run (a weakened
+      // helper the acceptance tests import, say): read first, without
+      // running anything of the folder's.
       const heldBack =
         accept.length === 0
           ? []
           : await patchProject(dir, { ...(values.repo === undefined ? {} : { repo: resolve(values.repo) }), ...receiptOption })
               .then((patch) => patch.refused.map((refusal) => refusal.path))
               .catch(() => []);
+      const steps = await checkProject(dir, {
+        ...(values["in-place"] === true ? { inPlace: true } : {}),
+        ...(values.isolated === true ? { isolated: true } : {}),
+        ...(accept.length === 0 ? {} : { accept, held: heldBack }),
+        ...receiptOption,
+      });
       const ok = steps.length === 3 && steps.every((step) => step.ok);
       const checked = trustedCut(dir, values.receipt, { optional: true }).record;
       const testStep = steps.find((step) => step.command === "npm test");
@@ -915,7 +916,7 @@ async function main(argv: readonly string[]) {
               ? []
               : [
                   ok
-                    ? `The owner's ${accept.length} acceptance test file(s) ran with the folder's tests, in the check's copy, and pass.${heldBack.length === 0 ? "" : ` patch keeps ${heldBack.length} file(s) out (${heldBack.join(", ")}), which ran as the folder holds them: read those before trusting the pass.`}`
+                    ? `The owner's ${accept.length} acceptance test file(s) ran with the folder's tests, in the check's copy, and pass.${heldBack.length === 0 ? "" : ` patch keeps ${heldBack.length} file(s) out (${heldBack.join(", ")}): the run had the tests, helpers and setup files among them as the cut wrote them and none the folder added; any other ran as the folder holds it.`}`
                     : `The owner's ${accept.length} acceptance test file(s) ran with the folder's tests, in the check's copy; npm test's failures above name what failed.`,
                 ]),
           ].join("\n")}\n`,
