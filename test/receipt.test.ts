@@ -525,3 +525,30 @@ test("after refresh, an import the repository added reads back as it wrote it", 
   const patch = await patchProject(cut.out, { repo: moving });
   assert.deepEqual(patch.changed, ["apps/shop/src/tax.ts"], patch.diff);
 });
+
+test("an overlap merged by hand is taken as resolved, and the folder patches at the new HEAD", async () => {
+  const { refreshProject } = await import("../src/mergeback.js");
+  const { patchProject } = await import("../src/carve.js");
+  const moving = join(scratch, "moving-resolved");
+  git(scratch, ["clone", "-q", repo, moving]);
+  const cut = await cutSlice({ repo: moving, out: join(scratch, "refresh-resolved"), entryPoints: [ENTRY], budget: { maxFiles: 40, maxDepth: 1 }, offline: true });
+  const held = join(cut.out, ENTRY);
+  writeFileSync(held, readFileSync(held, "utf8").replace("export function subtotal", "export function subtotalMine"));
+  const cart = join(moving, ENTRY);
+  writeFileSync(cart, readFileSync(cart, "utf8").replace("export function subtotal", "export function subtotalTheirs"));
+  const tax = join(moving, "apps/shop/src/tax.ts");
+  writeFileSync(tax, readFileSync(tax, "utf8").replace("0.1", "0.2"));
+  git(moving, ["commit", "-qam", "upstream: overlap"]);
+  const first = await refreshProject(cut.out);
+  assert.deepEqual(first?.applied.conflicts, [ENTRY]);
+  // Merged by hand: the contributor keeps its name, and takes upstream's too.
+  writeFileSync(held, readFileSync(held, "utf8").replace("export function subtotalMine", "export function subtotalMine(lines: readonly Line[]): number {\n  return subtotalTheirs(lines);\n}\n\nexport function subtotalTheirs"));
+  const second = await refreshProject(cut.out, { resolved: [ENTRY] });
+  assert.ok(second !== null);
+  assert.deepEqual(second.applied.conflicts, []);
+  const patch = await patchProject(cut.out, { repo: moving });
+  assert.deepEqual(patch.changed, [ENTRY], patch.diff);
+  assert.doesNotMatch(patch.diff, /0\.2/);
+  writeFileSync(join(scratch, "resolved.patch"), patch.diff);
+  git(moving, ["apply", "--check", join(scratch, "resolved.patch")]);
+});

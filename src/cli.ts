@@ -98,7 +98,7 @@ const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript r
       imports rewritten as a cut writes them. --stubs also writes the stubs the
       change needs from the modules the slice cuts.
 
-  carveout refresh <dir> [--repo <checkout>] [--receipt <file>] [--json]
+  carveout refresh <dir> [--resolved <path>...] [--repo <checkout>] [--receipt <file>] [--json]
       The repository's commits since the cut, brought into the folder: the
       change in the slice's packages and the modules it stubs, merged into
       the folder's own edits (an overlap is left, and named: exit 7).
@@ -287,6 +287,7 @@ async function main(argv: readonly string[]) {
       copy: { type: "string", multiple: true },
       "in-place": { type: "boolean" },
       accept: { type: "string", multiple: true },
+      resolved: { type: "string", multiple: true },
       stubs: { type: "boolean" },
       into: { type: "string" },
       verify: { type: "string" },
@@ -1077,6 +1078,7 @@ async function main(argv: readonly string[]) {
       const given = repoFor(dir);
       const refreshed = await refreshProject(dir, {
         ...(given === undefined ? {} : { repo: given }),
+        ...(values.resolved === undefined ? {} : { resolved: values.resolved }),
         ...receiptOption,
         log: (line) => {
           if (values.json !== true) process.stderr.write(`${line}\n`);
@@ -1092,7 +1094,9 @@ async function main(argv: readonly string[]) {
             ...(applied.merged.length === 0 ? [] : [`Merged into the folder's own edits:\n${list(applied.merged)}`]),
             ...(applied.conflicts.length === 0
               ? []
-              : [`The folder's edits and the change overlap here; left as the folder had them, to merge by hand:\n${list(applied.conflicts)}`]),
+              : [
+                  `The folder's edits and the change overlap here; left as the folder had them, to merge by hand:\n${list(applied.conflicts)}\nMerge each by hand, then: carveout refresh ${dir} --resolved <path> (each), which takes the folder's text as resolved.`,
+                ]),
             ...(applied.stubs.length === 0 ? [] : [`Stubs written:\n${list(applied.stubs.map((stub) => `${stub.path}: ${stub.detail}`))}`]),
             "",
           ].join("\n"),

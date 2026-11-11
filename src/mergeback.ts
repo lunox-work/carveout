@@ -764,6 +764,12 @@ export async function refreshProject(
     readonly receipt?: string;
     readonly noReceipt?: boolean;
     readonly log?: (line: string) => void;
+    /**
+     * Slice files the folder's holder merged by hand after an overlap, by
+     * repository path: the folder's text stands as resolved, the change
+     * leaves them alone, and their base moves to the new commit.
+     */
+    readonly resolved?: readonly string[];
   } = {},
 ): Promise<{ readonly from: string; readonly to: string; readonly applied: Applied } | null> {
   const root = resolve(dir);
@@ -776,10 +782,14 @@ export async function refreshProject(
   const packages = [...new Set(record.manifest.included.map((file) => packageDirOf(repo, file.path)))];
   const stubbed = [...new Set(record.manifest.cuts.outbound.map((edge) => edge.to))];
   const paths = [...new Set([...packages.map((dir) => (dir === "" ? "." : dir)), ...stubbed])].sort(compare);
-  const change = git(repo, ["diff", "--binary", "--full-index", from, to, "--", ...paths]);
-  if (change.trim() === "") return null;
+  const resolved = [...new Set(options.resolved ?? [])];
+  const change = git(repo, ["diff", "--binary", "--full-index", from, to, "--", ...paths, ...resolved.map((path) => `:(exclude)${path}`)]);
+  if (change.trim() === "" && resolved.length === 0) return null;
   const written = new Map<string, { folderPath: string; sha256: string; folderSha256: string }>();
-  const applied = await applyPatch(root, change, {
+  const applied: Applied =
+    change.trim() === ""
+      ? { changed: [], added: [], deleted: [], outside: [], stubs: [], merged: [], conflicts: [], leaks: [], unmapped: [] }
+      : await applyPatch(root, change, {
     stubs: true,
     repo,
     written,
@@ -787,6 +797,19 @@ export async function refreshProject(
     ...(options.noReceipt === true ? { noReceipt: true } : {}),
     ...(options.log === undefined ? {} : { log: options.log }),
   });
+  // A file resolved by hand moves to the new base as the folder holds it:
+  // the repository's bytes there are its base, the folder's text an edit.
+  const table = trusted.receipt?.pseudonyms;
+  for (const path of resolved) {
+    let bytes: Buffer;
+    try {
+      bytes = execFileSync("git", ["show", `${to}:${path}`], { cwd: repo, maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+    } catch {
+      continue;
+    }
+    const folderPath = table === undefined ? path : (exactToFolder(table, path, "")?.path ?? toFolder(table, path, "").path);
+    written.set(path, { folderPath, sha256: sha256(bytes), folderSha256: sha256(bytes) });
+  }
   // The repository holds these commits: the folder's base moves to them, so
   // a patch of it carries the contributor's work alone, not the commits it
   // was brought (and `git apply` takes it at the new HEAD). Each file
