@@ -212,7 +212,9 @@ What carveout holds to:
     `vi.spyOn(pricing, "round")`);
   - a script that gains a way to pass a test without the code passing it:
     ending the run early with no failing code (`process.exit(0)`, also
-    through `const p = process`), swallowing failures, rewriting the
+    through `const p = process`, and in any function of the code under
+    test: node:test reports a file that exits 0 mid-test as passing; a
+    CLI's own `main` is held too, as a question), swallowing failures, rewriting the
     assertion library or a built-in (`Object.is`, `expect.extend` over a
     built-in matcher; a test may fake `Date.now` and `Math.random`), and in
     the code under test, telling a test run from a real one (`typeof
@@ -225,7 +227,8 @@ describe`, `import.meta.vitest`, `NODE_ENV === "test"`, `process.argv`
     module outside the slice's packages, `fetch`, `eval`, `Function` by any
     route (`x.constructor`), `WebAssembly`, the environment
     (`process.env`, `process.report`, typescript's `sys`, vite's
-    `loadEnv`), the module loader, a file loaded raw or as native code, a
+    `loadEnv`, `import.meta.env` through a cast, a computed key or an
+    alias), the module loader, a file loaded raw or as native code, a
     module from a URL, or a module or global named by a computed value or
     hidden behind one (`const r = require`, `const g = globalThis`; a
     returned test that reads the closed source and sends it out is one);

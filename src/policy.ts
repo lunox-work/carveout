@@ -563,13 +563,6 @@ function reachCounts(path: string, text: string, context: ReachContext = {}): Ma
       } else if (ts.isIdentifier(target) && target.text === "module" && key !== null && MODULE_LOADER.has(key)) {
         add("the module loader (module.require)");
       }
-      if (
-        key === "env" &&
-        ts.isPropertyAccessExpression(node) &&
-        ts.isMetaProperty(target) &&
-        target.keywordToken === ts.SyntaxKind.ImportKeyword
-      )
-        add("import.meta.env");
       // `x.constructor`, and `x.constructor.constructor`, are `Function` by
       // another name: only its `.name`, a comparison and `this.constructor`
       // in a class are not.
@@ -587,6 +580,41 @@ function reachCounts(path: string, text: string, context: ReachContext = {}): Ma
             ].includes(parent.operatorToken.kind));
         if (!harmless) add("a constructor reached through .constructor");
       }
+    } else if (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.ImportKeyword && node.name.text === "meta") {
+      // `import.meta.env`, also through a cast (`(import.meta as any).env`),
+      // a computed key, a destructuring or an alias (`const m = import.meta`):
+      // only a named member other than `env` (`url`, `dirname`, `glob`) is
+      // no reach.
+      let outer: ts.Node = node;
+      while (
+        ts.isParenthesizedExpression(outer.parent) ||
+        ts.isAsExpression(outer.parent) ||
+        ts.isNonNullExpression(outer.parent) ||
+        ts.isSatisfiesExpression(outer.parent) ||
+        ts.isTypeAssertionExpression(outer.parent)
+      )
+        outer = outer.parent;
+      const parent = outer.parent;
+      if ((ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) && parent.expression === outer) {
+        const key = ts.isPropertyAccessExpression(parent) ? parent.name.text : literal(parent.argumentExpression);
+        if (key === "env") add("import.meta.env");
+        else if (key === null) add("import.meta named by a computed value");
+      } else if (ts.isVariableDeclaration(parent) && parent.initializer === outer && ts.isObjectBindingPattern(parent.name)) {
+        for (const element of parent.name.elements) {
+          const key =
+            element.dotDotDotToken !== undefined
+              ? null
+              : element.propertyName === undefined
+                ? ts.isIdentifier(element.name)
+                  ? element.name.text
+                  : null
+                : ts.isIdentifier(element.propertyName) || ts.isStringLiteralLike(element.propertyName)
+                  ? element.propertyName.text
+                  : null;
+          if (key === "env") add("import.meta.env");
+          else if (key === null) add("import.meta named by a computed value");
+        }
+      } else if (!ts.isTypeOfExpression(parent)) add("import.meta taken as a value");
     } else if (ts.isIdentifier(node) && REACHING_GLOBALS.has(node.text) && !named(node)) {
       add(node.text);
     } else if (ts.isIdentifier(node) && node.text === "require" && !named(node)) {
@@ -666,7 +694,7 @@ const TEST_RUNNER_ENV: ReadonlySet<string> = new Set([
 ]);
 
 /** What, matched against `process.argv`, names a test run. */
-const RUNNER_ARGUMENT = /\b(vitest|jest|mocha|ava)\b|--test(?![\w-])|\.(test|spec)\.|test[-_]runner|node:test/i;
+const RUNNER_ARGUMENT = /\b(vitest|jest|mocha|ava)\b|--test(?![\w-])|\.(test|spec)\.|(?:^|[\\/._-])(?:tests?|spec)\.[cm]?[jt]sx?$|test[-_]runner|node:test/i;
 
 /** What, searched for anywhere in `process.argv` (not one argument's place), names a test run too. */
 const RUNNER_WORD = /(?<![\w-])(tests?|spec)(?![\w-])/i;
@@ -891,7 +919,11 @@ function integrityCounts(path: string, text: string): Map<string, number> {
       const killsItself =
         name !== "kill" ||
         (called !== null && /^(globalThis\.)?process\.p?pid$/.test(called.arguments[0]?.getText(source).replace(/\s+/g, "") ?? ""));
-      if (name !== null && ENDING_PROCESS.has(name) && killsItself && !failing && !onSignal(node) && (testCode || runsOnLoad(node)))
+      // Anywhere, not only when the module loads: a function of the code
+      // under test that exits 0 when a test calls it ends the test file
+      // there, and node:test reports the file as passing, the failing
+      // assertion after it and the tests below never run.
+      if (name !== null && ENDING_PROCESS.has(name) && killsItself && !failing && !onSignal(node))
         add(`process.${name}`);
       if (!testCode && (name === "argv" || name === "execArgv")) {
         // Read from the code under test and matched against a runner's name.

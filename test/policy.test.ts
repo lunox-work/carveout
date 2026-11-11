@@ -321,10 +321,36 @@ test("round two: reach and integrity a reviewer found", () => {
   assert.deepEqual(integrity("apps/shop/src/checkout.ts", "queueMicrotask(() => process.exit(0));\n"), ["process.exit"]);
   assert.deepEqual(integrity("apps/shop/src/checkout.ts", "try { if (it) {} } catch {}\n"), ["it read as a global"]);
   // What is fine: a failing exit, a CLI's own argv, a test's fake clock, a signal's exit.
-  assert.deepEqual(integrity("apps/shop/src/cli.ts", 'if (process.argv.includes("--with-tests")) process.exit(1);\nif (process.argv[2] === "test") run();\nexport async function main() { process.exit(0); }\n'), []);
+  assert.deepEqual(integrity("apps/shop/src/cli.ts", 'if (process.argv.includes("--with-tests")) process.exit(1);\nif (process.argv[2] === "test") run();\n'), []);
   assert.deepEqual(integrity("apps/shop/src/checkout.test.ts", "Date.now = () => 0;\n"), []);
   assert.deepEqual(integrity("apps/shop/test/server.ts", 'process.on("SIGTERM", () => process.exit(0));\n'), []);
   assert.deepEqual(integrity("apps/shop/src/errors.ts", "Error.stackTraceLimit = 50;\n"), []);
+});
+
+test("round three: a red-team of a returned folder", () => {
+  const integrity = (file: string, text: string) => integrityOf(file, text);
+  const reach = (text: string) => reachOf("apps/shop/src/x.ts", text);
+  // An exit in a function of the code under test: a test that calls it ends
+  // its file there, and node:test reports the file as passing. A CLI's own
+  // exit is held too, as a question; a failing code and a signal's are not.
+  assert.deepEqual(integrity("apps/shop/src/step.ts", "export function bail(x: number) { if (x < 0) process.exit(0); return x; }\n"), ["process.exit"]);
+  assert.deepEqual(integrity("apps/shop/src/cli.ts", "export async function main() { process.exit(0); }\n"), ["process.exit"]);
+  assert.deepEqual(integrity("apps/shop/src/cli.ts", "export function done(code: number) { process.exitCode = code; }\n"), ["process.exitCode"]);
+  assert.deepEqual(integrity("apps/shop/src/cli.ts", "export function fail() { process.exit(1); }\n"), []);
+  // The test file's own name, read from argv.
+  assert.deepEqual(integrity("apps/shop/src/step.ts", 'export const isTest = () => String(process.argv[1]).endsWith("test.js");\n'), ["process.argv matched against a test runner"]);
+  assert.deepEqual(integrity("apps/shop/src/step.ts", 'export const t = () => process.argv[1]?.endsWith("/spec.mjs");\n'), ["process.argv matched against a test runner"]);
+  // import.meta.env through a cast, a computed key, a destructuring or an alias.
+  assert.deepEqual(reach("export const e = () => (import.meta as any).env;\n"), ["import.meta.env"]);
+  assert.deepEqual(reach('export const e = () => import.meta["env"];\n'), ["import.meta.env"]);
+  assert.deepEqual(reach("const { env } = import.meta;\n"), ["import.meta.env"]);
+  assert.deepEqual(reach("const m = import.meta;\nexport const e = () => m.env;\n"), ["import.meta taken as a value"]);
+  assert.deepEqual(reach("export const e = (k: string) => (import.meta as any)[k];\n"), ["import.meta named by a computed value"]);
+  // What is fine: the members that read no environment.
+  assert.deepEqual(
+    reach('const u = import.meta.url;\nconst d = import.meta.dirname;\nconst g = import.meta.glob("./*.ts");\nconst { url } = import.meta;\nimport.meta.hot?.accept();\n'),
+    [],
+  );
 });
 
 test("round two: paths a reviewer found", () => {
