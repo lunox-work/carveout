@@ -352,9 +352,13 @@ export interface CoverageGate {
  * runner's defaults, which find a test anywhere.
  */
 export function testsGlobOf(script: string): string | undefined {
-  // The script runs compiled tests: its glob, back at the sources.
   const glob = /\s--test\s+["']?([^\s"'-][^\s"']*)/.exec(script)?.[1];
-  return glob === undefined ? undefined : glob.replace(/^dist[^/]*\//, "").replace(/\.js$/, ".ts");
+  if (glob === undefined) return undefined;
+  // Compiled tests (`dist-test/test/*.test.js`): the glob back at the
+  // sources. Any other names the files as written (`*.test.cjs`).
+  return /^dist[^/]*\//.test(glob)
+    ? glob.replace(/^dist[^/]*\//, "").replace(/\.js$/, ".ts").replace(/\.mjs$/, ".mts").replace(/\.cjs$/, ".cts")
+    : glob;
 }
 
 /** The thresholds a package's test script passes to `node --test`, if any. */
@@ -1137,7 +1141,13 @@ function interfaceTests(
  * after the cut runs too. Each goes to the runner it imports; Node runs the
  * compiled `.js`, Vitest the source.
  */
-export function testRunnerScript(coverage: CoverageGate | undefined, globals = false, waived: readonly string[] = []): string {
+export function testRunnerScript(
+  coverage: CoverageGate | undefined,
+  globals = false,
+  waived: readonly string[] = [],
+  /** The test files the package's Vitest runs (its config's include), as globs from the folder's root. */
+  vitestInclude: readonly string[] = [],
+): string {
   // The gate covers the package's compiled sources the folder holds: a
   // \`.js\` beside its \`.ts\`, never a stub's mock or a test.
   const gate =
@@ -1196,6 +1206,12 @@ export function testRunnerScript(coverage: CoverageGate | undefined, globals = f
     "    const path = dir === \"\" ? entry.name : `${dir}/${entry.name}`;",
     "    if (SKIP.has(path) || entry.name === \"node_modules\") continue;",
     "    if (entry.isDirectory()) walk(path);",
+    "    else if (TEST.test(path) && /\\.[cm]?js$/.test(path) && ![\".ts\", \".tsx\", \".mts\", \".cts\"].some((ext) => existsSync(path.replace(/\\.[cm]?js$/, ext)))) {",
+    "      // A test written in JavaScript, which no build writes: run as it is.",
+    "      const text = readFileSync(path, \"utf8\");",
+    "      if (/['\"]node:test['\"]/.test(text)) node.push(path);",
+    "      else if (/['\"]vitest(\\/[^'\"]*)?['\"]/.test(text)) vitest.push(path);",
+    "    }",
     "    else if (TEST.test(path) && /\\.[cm]?tsx?$/.test(path) && !/\\.d\\.[cm]?ts$/.test(path)) {",
     "      const text = readFileSync(path, \"utf8\");",
     "      if (/['\"]node:test['\"]/.test(text)) node.push(path.replace(/\\.tsx?$/, \".js\").replace(/\\.mts$/, \".mjs\").replace(/\\.cts$/, \".cjs\"));",
@@ -1427,6 +1443,24 @@ export function testRunnerScript(coverage: CoverageGate | undefined, globals = f
     "    }",
     "  }",
     "}",
+    ...(vitestInclude.length === 0
+      ? []
+      : [
+          "// A Vitest test the repository's Vitest would not find (its include",
+          "// leaves it out): it runs here and never there.",
+          `const INCLUDE = ${JSON.stringify(vitestInclude)};`,
+          "const globRegExp = (glob) => new RegExp(\"^\" + glob.split(/(\\*\\*\\/|\\*|\\?|\\{[^}]*\\})/).map((part) =>",
+          "  part === \"**/\" ? \"(?:.*/)?\" : part === \"*\" ? \"[^/]*\" : part === \"?\" ? \"[^/]\" :",
+          "  /^\\{.*\\}$/.test(part) ? \"(?:\" + part.slice(1, -1).split(\",\").map((each) => each.replace(/[.+^${}()|[\\]\\\\]/g, \"\\\\$&\")).join(\"|\") + \")\" :",
+          "  part.replace(/[.+^${}()|[\\]\\\\]/g, \"\\\\$&\")).join(\"\") + \"$\");",
+          "const included = INCLUDE.map(globRegExp);",
+          "const cutCopied = new Set(JSON.parse(readFileSync(\"carveout.json\", \"utf8\")).manifest.included.map((file) => file.path));",
+          "const outside = vitest.filter((path) => !cutCopied.has(path) && !included.some((pattern) => pattern.test(path)));",
+          "if (outside.length > 0) {",
+          "  failed = true;",
+          "  process.stdout.write(`\\nThe repository's Vitest runs only ${INCLUDE.join(\", \")}, so it would not run these, and they would test nothing there. Move them:\\n${outside.map((path) => `  ${path}`).join(\"\\n\")}\\n`);",
+          "}",
+        ]),
     "if (typeof unrun !== \"undefined\" && unrun.length > 0) {",
     "  failed = true;",
     `  process.stdout.write(\`\\nThe repository's npm test runs only \${folder}/${coverage?.tests ?? ""}, so it would not run these, and they would cover nothing there. Move them:\\n\${unrun.map((path) => \`  \${path}\`).join("\\n")}\\n\`);`,
@@ -1924,7 +1958,13 @@ export function generateProject(input: ProjectInput): GeneratedProject {
     add({ path: file.path, text: file.text, class: "harness", public: true });
   add({
     path: TEST_RUNNER_PATH,
-    text: testRunnerScript(input.coverage, globals && vitestInstalled, input.keepsImplicitAny !== true ? (input.implicitAnyFiles ?? []) : []),
+    text: testRunnerScript(
+      input.coverage,
+      globals && vitestInstalled,
+      input.keepsImplicitAny !== true ? (input.implicitAnyFiles ?? []) : [],
+      // Vitest's include, when the config states it (and no project splits it).
+      input.vitest?.projects === undefined ? (input.vitest?.include ?? []) : [],
+    ),
     class: "harness",
     public: true,
   });
@@ -2043,7 +2083,7 @@ export function generateProject(input: ProjectInput): GeneratedProject {
     path: ".gitignore",
     // The build's output for any source, a new one's too, and the test
     // run's record: none of it goes back.
-    text: `${["node_modules/", "*.js", "!carveout/**/*.js", "!vitest.config.mjs", ...kept, "*.tsbuildinfo", LAST_RUN_PATH, COUNTS_PATH, VITEST_REPORT_PATH, ".npm-cache/", ...emitted].join("\n")}\n`,
+    text: `${["node_modules/", "*.js", "*.cjs", "*.mjs", "!carveout/**/*.js", "!vitest.config.mjs", ...kept, "*.tsbuildinfo", LAST_RUN_PATH, COUNTS_PATH, VITEST_REPORT_PATH, ".npm-cache/", ...emitted].join("\n")}\n`,
     class: "config",
     public: true,
   });

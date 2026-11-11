@@ -246,3 +246,42 @@ test("a test that prints the runner's count lines changes no count check reads",
   });
   assert.match(result.stdout, /npm test: 1 of 2 test\(s\) pass \(node:test\)\./);
 });
+
+test("a test written in JavaScript runs as it is; what the build writes from a TypeScript test runs once", () => {
+  const root = folder("plain-js", {
+    "scripts/test/plain.test.cjs": 'const { test } = require("node:test");\nconst assert = require("node:assert/strict");\ntest("plain js runs", () => assert.equal(1, 1));\n',
+    "src/typed.test.ts": 'import { test } from "node:test";\n',
+    "src/typed.test.js": 'import { test } from "node:test";\ntest("typed runs", () => {});\n',
+  });
+  const result = run(root);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /npm test: 2 of 2 test\(s\) pass \(node:test\)/);
+});
+
+test("where node:test's tests go is read from the script, compiled or as written", async () => {
+  const { testsGlobOf } = await import("../src/project/project.js");
+  assert.equal(testsGlobOf("tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js"), "test/*.test.ts");
+  assert.equal(testsGlobOf("vitest run && node --test scripts/test/*.test.cjs"), "scripts/test/*.test.cjs");
+  assert.equal(testsGlobOf("vitest run"), undefined);
+});
+
+test("a new Vitest test the repository's Vitest would not find fails the run, and is named", () => {
+  const report = (paths: string[], here: string) => ({
+    testResults: paths.map((path) => ({ name: join(here, path), status: "passed", message: "", assertionResults: [{ ancestorTitles: [], title: "ok", status: "passed" }] })),
+  });
+  const root = folder("vitest-include", {
+    "carveout/test.js": testRunnerScript(undefined, false, [], ["src/**/*.{test,spec}.{ts,tsx}"]),
+    "carveout.json": JSON.stringify({ manifest: { included: [] } }),
+    "src/lib/a.test.ts": 'import { it } from "vitest";\n',
+    "scripts/test/b.test.cts": 'import { it } from "vitest";\n',
+  });
+  const here = realpathSync(root);
+  vitest(root, report(["src/lib/a.test.ts", "scripts/test/b.test.cts"], here), 0);
+  const outside = run(root);
+  assert.equal(outside.status, 1, outside.stdout + outside.stderr);
+  assert.match(outside.stdout, /The repository's Vitest runs only src\/\*\*\/\*\.\{test,spec\}\.\{ts,tsx\}[\s\S]*scripts\/test\/b\.test\.cts/);
+  assert.doesNotMatch(outside.stdout, /src\/lib\/a\.test\.ts\n/);
+  rmSync(join(root, "scripts"), { recursive: true });
+  vitest(root, report(["src/lib/a.test.ts"], here), 0);
+  assert.equal(run(root).status, 0);
+});

@@ -84,6 +84,7 @@ import { scanSecrets, secretBlockers } from "./project/secrets.js";
 import { checkRecordPaths, handoffPolicy, trustedRepo, type Refusal } from "./policy.js";
 import { configuredFolders, liveCandidates, type Readiness } from "./readiness.js";
 import {
+  exactToFolder,
   fromFolder,
   keptNames,
   looseLeaks,
@@ -161,7 +162,7 @@ export function renderSliceAgents(input: {
     "- Edit the copied source, and add files beside it in the same packages. The stubs, everything under `carveout/`, `package.json`, the lockfile and the root configuration are generated: edits to them do not go back.",
     "- A mock answers any call with another mock. To make one return something in a test, read the README's Mocks section; nothing else under `carveout/` needs reading.",
     "- If `carveout/baseline.json` is there, the tests it lists failed on the mocks before any edit and are not counted; with none, every test counts.",
-    "- The build writes a `.js` beside each `.ts`, a new file's too: leave them. Only the `.ts` comes back.",
+    "- The build writes a `.js` beside each `.ts` (`.cjs` beside `.cts`, `.mjs` beside `.mts`), a new file's too: leave them. Only the source comes back, never what the build wrote from it.",
     `- ${tests}${left} A pass here is a pass against mocks.`,
     ...(input.runner === undefined
       ? []
@@ -1553,8 +1554,14 @@ export async function computeCut(
       ).scripts?.["test"];
       if (typeof script === "string") {
         coverage = coverageGateOf(packageDir, script);
+        // node:test's glob says where its tests go; a package whose tests
+        // run on Vitest takes Vitest's include (another runner's glob in
+        // the same script, `node --test scripts/*.cjs`, is not theirs).
         const glob = testsGlobOf(script);
-        if (glob !== undefined) testsAt = posix.join(packageDir, glob);
+        if (testRunner === "vitest") {
+          const include = vitest?.include?.[0];
+          if (include !== undefined) testsAt = include;
+        } else if (glob !== undefined) testsAt = posix.join(packageDir, glob);
       }
     } catch {
       // No readable package.json: no gate.
@@ -2571,6 +2578,13 @@ export async function checkProject(
     readonly receipt?: string;
     /** No receipt: the folder's own record and baseline are all there is. */
     readonly noReceipt?: boolean;
+    /**
+     * The owner's acceptance tests, never sent: each at its repository
+     * path, in the repository's names. Put in the check's copy in the
+     * folder's names and run with the folder's tests; never recorded in a
+     * baseline, and never in the folder itself.
+     */
+    readonly accept?: readonly { readonly path: string; readonly text: string }[];
   } = {},
 ): Promise<readonly CheckStep[]> {
   // The receipt's record and baseline when there is one: a folder that
@@ -2685,6 +2699,25 @@ export async function checkProject(
       ? { use: null, edited: folderBaseline ?? [] }
       : trustedBaseline(trusted.receipt, folderBaseline);
   const baselineEdited = chosen.edited.length > 0 ? chosen.edited : undefined;
+  // The owner's acceptance tests, in the check's copy only.
+  if (options.accept !== undefined && options.accept.length > 0) {
+    if (work === source)
+      return [{ command: "accept", ok: false, output: "Acceptance tests run in a copy of the folder, never in it: check without --in-place." }];
+    const table = trusted.receipt?.pseudonyms;
+    for (const test of options.accept) {
+      const folder = table === undefined ? { path: test.path, text: test.text } : exactToFolder(table, test.path, test.text);
+      if (folder === null)
+        return [
+          {
+            command: "accept",
+            ok: false,
+            output: `${test.path} would not map into the folder's names byte for byte; rename what it names, or check a folder cut with --keep-names.`,
+          },
+        ];
+      await mkdir(dirname(join(work, folder.path)), { recursive: true });
+      await writeFile(join(work, folder.path), folder.text);
+    }
+  }
   if (chosen.use === null) await rm(join(work, BASELINE_PATH), { force: true });
   else if (chosen.use !== "folder") {
     await mkdir(dirname(join(work, BASELINE_PATH)), { recursive: true });
@@ -2709,7 +2742,7 @@ export async function checkProject(
     } catch (error) {
       const output = error instanceof Error ? error.message : String(error);
       const baseline =
-        argv[1] === "test"
+        argv[1] === "test" && (options.accept ?? []).length === 0
           ? await recordBaseline(
               source,
               work,

@@ -25,6 +25,8 @@ export interface VitestSettings {
   readonly setupPackages?: readonly string[];
   readonly testTimeout?: number;
   readonly globals?: boolean;
+  /** The test files it runs (`test.include`), as globs from the repository's root. */
+  readonly include?: readonly string[];
   /**
    * The config's inline projects (`test.projects`), each with what it
    * sets: Vitest runs a test under the project whose `include` matches it.
@@ -218,6 +220,7 @@ export function vitestSettings(repo: string, dir: string): VitestSettings | null
     ...(top.setupPackages === undefined ? {} : { setupPackages: top.setupPackages }),
     ...(top.testTimeout === undefined ? {} : { testTimeout: top.testTimeout }),
     ...(top.globals === true ? { globals: true } : {}),
+    ...(top.include === undefined ? {} : { include: top.include }),
     ...(projects.length === 0 ? {} : { projects }),
   };
   return settings.environment === undefined &&
