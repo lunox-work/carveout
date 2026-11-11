@@ -125,6 +125,7 @@ export function gateRepository(options: {
   const changes = changesSince(root, baseCommit);
   const judge = handoffPolicy({
     checks: true,
+    integrity: true,
     testNoun: "a test",
     ...(options.allow === undefined ? {} : { allow: options.allow }),
   });

@@ -17,7 +17,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { posix, resolve } from "node:path";
 import ts from "typescript";
-import { isTestPath, pathMatcher } from "./core.js";
+import { isTestPath, isTestSupportPath, pathMatcher } from "./core.js";
 import { isNodeBuiltin } from "./extract/typescript.js";
 import { PURE_NODE_MODULES, serviceOf } from "./slice/externals.js";
 
@@ -212,6 +212,13 @@ export function handoffPolicy(options: {
    * the whole repository, the closed part included, so `patch` turns it on.
    */
   readonly reach?: boolean;
+  /**
+   * Also refuse a script that gains a way to pass a test without the code
+   * passing it (`integrityOf`): ending the test run early, swallowing its
+   * failures, telling a test run from a real one, rewriting the assertion
+   * library or a built-in. `patch` and `gate` turn it on.
+   */
+  readonly integrity?: boolean;
 }): (
   path: string,
   change: "added" | "changed" | "deleted",
@@ -235,10 +242,28 @@ export function handoffPolicy(options: {
       !packages.has(packageOf(path))
     )
       return "a new file outside the slice's packages";
+    const script = /\.[cm]?[jt]sx?$/.test(path) && !/\.d\.[cm]?ts$/.test(path);
+    // A fake, a builder or a fixture decides what a test sees as much as
+    // the test does: an edit to one is a test edit.
+    const support = !isTestPath(path) && isTestSupportPath(path);
     if (change === "deleted" && isTestPath(path)) return `deletes ${noun}`;
-    if (change === "changed" && isTestPath(path) && texts !== undefined && texts.before !== null) {
-      const weakened = weakenedTest(path, texts.before, texts.after, noun);
+    if (change === "deleted" && support)
+      return "deletes a test's helper or fixture: review it and pass --allow to carry it";
+    if (
+      change === "changed" &&
+      (isTestPath(path) || (support && script)) &&
+      texts !== undefined &&
+      texts.before !== null
+    ) {
+      const weakened = weakenedTest(path, texts.before, texts.after, support ? "a test's helper" : noun);
       if (weakened !== null) return `${weakened}: review it and pass --allow to carry it`;
+    }
+    if (change === "changed" && support && !script && texts !== undefined && texts.before !== texts.after)
+      return "changes a test fixture (data a test reads): review it and pass --allow to carry it";
+    if (options.integrity === true && change !== "deleted" && texts !== undefined) {
+      const gained = gainedIntegrity(path, texts.before, texts.after);
+      if (gained.length > 0)
+        return `could pass a test without the code passing it (${gained.join(", ")}): review it and pass --allow to carry it`;
     }
     if (options.checks === true && change !== "deleted" && texts !== undefined && /\.[cm]?[jt]sx?$/.test(path)) {
       const more = suppressionsOf(texts.after) - suppressionsOf(texts.before ?? "");
@@ -280,10 +305,14 @@ const REACHING_GLOBALS: ReadonlySet<string> = new Set([
   "EventSource",
   "eval",
   "Function",
+  "WebAssembly",
   "Worker",
   "Deno",
   "Bun",
 ]);
+
+/** A module specifier that loads code from somewhere other than a package or a file. */
+const URL_SPECIFIER = /^(data|https?|file|blob):/i;
 
 /** What a `process` member reaches: its environment, or native code. */
 const REACHING_PROCESS: ReadonlySet<string> = new Set([
@@ -310,7 +339,8 @@ export function reachOf(path: string, text: string): string[] {
   const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, kind);
   const found = new Set<string>();
   const specifier = (name: string) => {
-    if (isNodeBuiltin(name)) {
+    if (URL_SPECIFIER.test(name)) found.add("a module loaded from a URL");
+    else if (isNodeBuiltin(name)) {
       const root = (name.startsWith("node:") ? name.slice(5) : name).split("/")[0] ?? name;
       if (!QUIET_NODE_MODULES.has(root)) found.add(`node:${root}`);
     } else if (serviceOf(name) !== null) found.add(name);
@@ -346,13 +376,22 @@ export function reachOf(path: string, text: string): string[] {
       const name = literal(node.moduleReference.expression);
       if (name === null) found.add(computed);
       else specifier(name);
-    } else if (ts.isCallExpression(node)) {
+    } else if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
       const callee = node.expression;
-      if (callee.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(callee) && callee.text === "require")) {
-        const name = literal(node.arguments[0]);
+      if (
+        ts.isCallExpression(node) &&
+        (callee.kind === ts.SyntaxKind.ImportKeyword || (ts.isIdentifier(callee) && callee.text === "require"))
+      ) {
+        const name = literal(node.arguments?.[0]);
         if (name === null) found.add(computed);
         else specifier(name);
       }
+      // `({}).constructor.constructor("…")` is `Function`, by another name.
+      if (
+        (ts.isPropertyAccessExpression(callee) && callee.name.text === "constructor") ||
+        (ts.isElementAccessExpression(callee) && literal(callee.argumentExpression) === "constructor")
+      )
+        found.add("a constructor called through .constructor");
     } else if (ts.isPropertyAccessExpression(node)) {
       if (isProcess(node.expression) && REACHING_PROCESS.has(node.name.text)) found.add(`process.${node.name.text}`);
       if (
@@ -374,11 +413,302 @@ export function reachOf(path: string, text: string): string[] {
       }
     } else if (ts.isIdentifier(node) && REACHING_GLOBALS.has(node.text) && !named(node)) {
       found.add(node.text);
+    } else if (ts.isIdentifier(node) && node.text === "require" && !named(node)) {
+      // `require("x")` names its module and `require.resolve` loads nothing;
+      // `const r = require` loads whatever `r` is later given.
+      const parent = node.parent;
+      const called = ts.isCallExpression(parent) && parent.expression === node;
+      const resolves = ts.isPropertyAccessExpression(parent) && parent.name.text === "resolve";
+      if (!called && !resolves) found.add("require taken as a value");
+    } else if (ts.isIdentifier(node) && (node.text === "globalThis" || node.text === "global") && !named(node)) {
+      // `globalThis.fetch` and `globalThis["fetch"]` are judged by name above;
+      // `const g = globalThis` hides every later access behind `g`.
+      const parent = node.parent;
+      const accessed =
+        (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) && parent.expression === node;
+      if (!accessed) found.add("the global object taken as a value");
     }
     ts.forEachChild(node, visit);
   };
   visit(source);
   return [...found].sort();
+}
+
+/** Test runners' globals: read from code that is not a test, they tell a test run from a real one. */
+const TEST_RUNNER_GLOBALS: ReadonlySet<string> = new Set([
+  "describe",
+  "it",
+  "test",
+  "expect",
+  "vi",
+  "jest",
+  "suite",
+  "beforeEach",
+  "afterEach",
+  "beforeAll",
+  "afterAll",
+  "__vitest_worker__",
+  "__vitest_environment__",
+]);
+
+/** Environment variables a test runner sets in the processes it starts. */
+const TEST_RUNNER_ENV: ReadonlySet<string> = new Set([
+  "VITEST",
+  "VITEST_WORKER_ID",
+  "VITEST_POOL_ID",
+  "VITEST_MODE",
+  "JEST_WORKER_ID",
+  "NODE_TEST_CONTEXT",
+  "MOCHA_WORKER_ID",
+]);
+
+/** `process` members that end the run, or set the code it ends with. */
+const ENDING_PROCESS: ReadonlySet<string> = new Set(["exit", "exitCode", "abort", "reallyExit", "kill"]);
+
+/** Process events a listener can use to swallow a test's failure, or rewrite its exit. */
+const FAILURE_EVENTS: ReadonlySet<string> = new Set([
+  "uncaughtException",
+  "uncaughtExceptionMonitor",
+  "unhandledRejection",
+  "exit",
+  "beforeExit",
+]);
+
+/** Built-ins whose members code under test calls: rewritten, they change every test's answer. */
+const BUILTIN_OBJECTS: ReadonlySet<string> = new Set([
+  "Object",
+  "Array",
+  "String",
+  "Number",
+  "Boolean",
+  "BigInt",
+  "Symbol",
+  "Promise",
+  "JSON",
+  "Math",
+  "Date",
+  "Function",
+  "RegExp",
+  "Error",
+  "Map",
+  "Set",
+  "WeakMap",
+  "WeakSet",
+  "Reflect",
+  "Intl",
+]);
+
+/** Modules a test takes its runner or its assertions from. */
+const RUNNER_MODULES = /^(node:)?(assert(\/strict)?|test)$|^(vitest|chai|expect|@jest\/globals|mocha)$/;
+
+/**
+ * How a script could make a test pass without the code under test passing
+ * it, read from its syntax and never run. In any script: ending the
+ * process early (`process.exit(0)` before the tests run reports success),
+ * listening for the failures it would otherwise die of
+ * (`process.on("uncaughtException", …)`), and rewriting the assertion
+ * library or the runner (`assert.equal = () => {}`). In code that is not a
+ * test nor a test's helper: telling a test run from a real one
+ * (`typeof describe`, `import.meta.vitest`, `process.env.VITEST`,
+ * `NODE_ENV === "test"`, `process.argv` matched against "test"), and
+ * rewriting a built-in (`Array.prototype.includes = …`). A test's own code
+ * may mock `Date.now`; the code under test may not. Each as a short label,
+ * sorted. Text-level, like `reachOf`: a hold for a reader, not a sandbox.
+ */
+export function integrityOf(path: string, text: string): string[] {
+  const kind = /\.[cm]?tsx$|\.jsx$/.test(path) ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+  const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, kind);
+  const testCode = isTestPath(path) || isTestSupportPath(path);
+  const found = new Set<string>();
+  // The names this file binds to its runner and assertion modules.
+  const runnerBindings = new Set<string>();
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    if (!RUNNER_MODULES.test(statement.moduleSpecifier.text)) continue;
+    const clause = statement.importClause;
+    if (clause?.name !== undefined) runnerBindings.add(clause.name.text);
+    const bindings = clause?.namedBindings;
+    if (bindings !== undefined && ts.isNamespaceImport(bindings)) runnerBindings.add(bindings.name.text);
+    else if (bindings !== undefined)
+      for (const element of bindings.elements) runnerBindings.add(element.name.text);
+  }
+  const literal = (node: ts.Node | undefined): string | null =>
+    node !== undefined && ts.isStringLiteralLike(node) ? node.text : null;
+  const isProcess = (node: ts.Expression): boolean =>
+    (ts.isIdentifier(node) && node.text === "process") ||
+    (ts.isPropertyAccessExpression(node) &&
+      node.name.text === "process" &&
+      ts.isIdentifier(node.expression) &&
+      GLOBAL_OBJECTS.has(node.expression.text));
+  /** `x.name` or `x["name"]`: the member's name when it is written out. */
+  const memberName = (node: ts.Node): string | null =>
+    ts.isPropertyAccessExpression(node)
+      ? node.name.text
+      : ts.isElementAccessExpression(node)
+        ? literal(node.argumentExpression)
+        : null;
+  /** The identifier a member chain starts at: `assert` for `assert.strict.equal`. */
+  const rootOf = (node: ts.Expression): ts.Identifier | null => {
+    let current: ts.Expression = node;
+    for (;;) {
+      if (ts.isIdentifier(current)) return current;
+      if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) current = current.expression;
+      else if (ts.isParenthesizedExpression(current) || ts.isNonNullExpression(current)) current = current.expression;
+      else return null;
+    }
+  };
+  /** Whether a member chain is rooted at the runner or the assertion library. */
+  const onRunner = (node: ts.Expression): boolean => {
+    const root = rootOf(node);
+    return root !== null && root !== node && runnerBindings.has(root.text);
+  };
+  /** `Array.prototype.x` or `Math.x`: a built-in's member, written out. */
+  const builtinMember = (node: ts.Expression): string | null => {
+    if (!(ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node))) return null;
+    const root = rootOf(node);
+    if (root === null || !BUILTIN_OBJECTS.has(root.text)) return null;
+    return node.getText(source).replace(/\s+/g, "");
+  };
+  /** Whether a node sits in a function body, not at the module's top level. */
+  const inFunction = (node: ts.Node): boolean => {
+    for (let current = node.parent; current !== undefined; current = current.parent)
+      if (ts.isFunctionLike(current)) return true;
+    return false;
+  };
+  const isTestEnv = (node: ts.Node): string | null => {
+    // `process.env.VITEST`, `process.env["JEST_WORKER_ID"]`
+    if (!(ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node))) return null;
+    const name = memberName(node);
+    const target = node.expression;
+    if (name === null || !(ts.isPropertyAccessExpression(target) && target.name.text === "env" && isProcess(target.expression)))
+      return null;
+    return TEST_RUNNER_ENV.has(name) ? `process.env.${name}` : name === "NODE_ENV" ? "NODE_ENV" : null;
+  };
+  const visit = (node: ts.Node): void => {
+    // Ending the run: `process.exit(0)`, `process.exitCode = 0`, `process.kill(process.pid)`.
+    if ((ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) && isProcess(node.expression)) {
+      const name = memberName(node);
+      // `process.kill(child.pid)` stops a server a test started; only the
+      // run's own pid ends the run.
+      const killsItself =
+        name !== "kill" ||
+        (ts.isCallExpression(node.parent) &&
+          node.parent.expression === node &&
+          /^(globalThis\.)?process\.p?pid$/.test(node.parent.arguments[0]?.getText(source).replace(/\s+/g, "") ?? ""));
+      if (name !== null && ENDING_PROCESS.has(name) && killsItself && (testCode || !inFunction(node)))
+        found.add(`process.${name}`);
+      if (!testCode && (name === "argv" || name === "execArgv")) {
+        // Read from the code under test and matched against a runner's name.
+        let statement: ts.Node = node;
+        while (statement.parent !== undefined && !ts.isStatement(statement)) statement = statement.parent;
+        const said: string[] = [];
+        const strings = (child: ts.Node): void => {
+          if (ts.isStringLiteralLike(child)) said.push(child.text);
+          ts.forEachChild(child, strings);
+        };
+        strings(statement);
+        if (said.some((value) => /\b(test|tests|spec|vitest|jest|mocha)\b/i.test(value)))
+          found.add(`process.${name} matched against a test runner`);
+      }
+    }
+    // Swallowing a failure: `process.on("uncaughtException", () => {})`.
+    if (ts.isCallExpression(node) && testCode) {
+      const callee = node.expression;
+      const method = memberName(callee);
+      const event = literal(node.arguments[0]);
+      if (
+        (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) &&
+        isProcess(callee.expression) &&
+        method !== null &&
+        ["on", "once", "addListener", "prependListener", "prependOnceListener"].includes(method) &&
+        event !== null &&
+        FAILURE_EVENTS.has(event)
+      )
+        found.add(`process.${method}("${event}")`);
+    }
+    // Rewriting the runner, the assertions, or (from the code under test) a built-in.
+    const written: ts.Expression[] = [];
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+    )
+      written.push(node.left);
+    if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      const target = ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression) ? callee.expression.text : null;
+      const method = ts.isPropertyAccessExpression(callee) ? callee.name.text : null;
+      const first = node.arguments[0];
+      if (
+        first !== undefined &&
+        ((target === "Object" && ["assign", "defineProperty", "defineProperties", "setPrototypeOf"].includes(method ?? "")) ||
+          (target === "Reflect" && ["set", "defineProperty", "setPrototypeOf", "deleteProperty"].includes(method ?? "")))
+      )
+        written.push(first);
+    }
+    for (const target of written) {
+      if (onRunner(target) || (ts.isIdentifier(target) && runnerBindings.has(target.text)))
+        found.add("rewrites the test runner or the assertion library");
+      else if (!testCode) {
+        const member = builtinMember(target);
+        if (member !== null) found.add(`rewrites ${member}`);
+      }
+    }
+    if (!testCode) {
+      // Telling a test run from a real one.
+      if (ts.isTypeOfExpression(node) && ts.isIdentifier(node.expression) && TEST_RUNNER_GLOBALS.has(node.expression.text))
+        found.add(`typeof ${node.expression.text}`);
+      if (
+        (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+        ts.isIdentifier(node.expression) &&
+        GLOBAL_OBJECTS.has(node.expression.text)
+      ) {
+        const name = memberName(node);
+        if (name !== null && TEST_RUNNER_GLOBALS.has(name)) found.add(`${node.expression.text}.${name}`);
+      }
+      if (
+        ts.isPropertyAccessExpression(node) &&
+        node.name.text === "vitest" &&
+        ts.isMetaProperty(node.expression) &&
+        node.expression.keywordToken === ts.SyntaxKind.ImportKeyword
+      )
+        found.add("import.meta.vitest");
+      if (ts.isIdentifier(node) && (node.text === "__vitest_worker__" || node.text === "__vitest_environment__"))
+        found.add(node.text);
+      const env = isTestEnv(node);
+      if (env !== null && env !== "NODE_ENV") found.add(env);
+      // `process.env.NODE_ENV === "test"`, either way round.
+      if (
+        ts.isBinaryExpression(node) &&
+        [
+          ts.SyntaxKind.EqualsEqualsEqualsToken,
+          ts.SyntaxKind.EqualsEqualsToken,
+          ts.SyntaxKind.ExclamationEqualsEqualsToken,
+          ts.SyntaxKind.ExclamationEqualsToken,
+        ].includes(node.operatorToken.kind)
+      ) {
+        const sides = [node.left, node.right];
+        if (
+          sides.some((side) => isTestEnv(side) === "NODE_ENV") &&
+          sides.some((side) => /^test(ing)?$/i.test(literal(side) ?? ""))
+        )
+          found.add('NODE_ENV === "test"');
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return [...found].sort();
+}
+
+/**
+ * The ways to pass a test without the code that a script's new text has
+ * and its old text did not (`integrityOf`), or nothing when it is no script.
+ */
+export function gainedIntegrity(path: string, before: string | null, after: string): string[] {
+  if (!/\.[cm]?[jt]sx?$/.test(path) || /\.d\.[cm]?ts$/.test(path)) return [];
+  const had = new Set(before === null ? [] : integrityOf(path, before));
+  return integrityOf(path, after).filter((label) => !had.has(label));
 }
 
 /**
@@ -426,28 +756,58 @@ function assertionsOf(
   path: string,
   text: string,
 ): { assertions: string[]; skips: number; focused: number } {
-  const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
-  const roots = new Set(["assert", "expect"]);
-  for (const statement of source.statements) {
-    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
-    if (!ASSERTION_MODULES.test(statement.moduleSpecifier.text)) continue;
-    const clause = statement.importClause;
-    if (clause?.name !== undefined) roots.add(clause.name.text);
-    const bindings = clause?.namedBindings;
-    if (bindings !== undefined && ts.isNamespaceImport(bindings)) roots.add(bindings.name.text);
-    else if (bindings !== undefined) for (const element of bindings.elements) roots.add(element.name.text);
-  }
-  const rootOf = (node: ts.Expression): string | null => {
-    let current: ts.Expression = node;
-    for (;;) {
-      if (ts.isIdentifier(current)) return current.text;
-      if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current))
-        current = current.expression;
-      else if (ts.isCallExpression(current)) current = current.expression;
-      else if (ts.isNonNullExpression(current) || ts.isParenthesizedExpression(current))
-        current = current.expression;
-      else return null;
+  const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, scriptKindOf(path));
+  const roots = assertionRoots(source);
+  const rootOf = chainRoot;
+  const flat = (node: ts.Node) =>
+    node.getText(source).replace(/\s+/g, "").replace(/,(?=[)\]}])/g, "");
+  /**
+   * What an assertion runs under: the conditions, loops and callbacks
+   * between it and its test, outermost first. Part of its identity, so an
+   * assertion moved under `if (result)` or into a callback nothing may
+   * call counts as rewritten; a condition that always holds adds nothing.
+   */
+  const guardsOf = (node: ts.Node): string => {
+    const guards: string[] = [];
+    let child: ts.Node = node;
+    for (let current = node.parent; current !== undefined && !ts.isSourceFile(current); current = current.parent) {
+      if (ts.isIfStatement(current)) {
+        const known = constantOf(current.expression);
+        if (child === current.thenStatement && known !== true) guards.push(`if(${flat(current.expression)})`);
+        if (child === current.elseStatement && known !== false) guards.push(`else(${flat(current.expression)})`);
+      } else if (ts.isConditionalExpression(current)) {
+        if (child === current.whenTrue) guards.push(`?(${flat(current.condition)})`);
+        if (child === current.whenFalse) guards.push(`:(${flat(current.condition)})`);
+      } else if (ts.isBinaryExpression(current) && child === current.right) {
+        const operator = current.operatorToken.kind;
+        const known = constantOf(current.left);
+        if (operator === ts.SyntaxKind.AmpersandAmpersandToken && known !== true) guards.push(`&&(${flat(current.left)})`);
+        if (operator === ts.SyntaxKind.BarBarToken && known !== false) guards.push(`||(${flat(current.left)})`);
+        if (operator === ts.SyntaxKind.QuestionQuestionToken) guards.push(`??(${flat(current.left)})`);
+      } else if (ts.isForOfStatement(current) || ts.isForInStatement(current)) {
+        if (child === current.statement) guards.push(`for(${flat(current.expression)})`);
+      } else if (ts.isForStatement(current) || ts.isWhileStatement(current)) {
+        if (child === current.statement)
+          guards.push(`loop(${ts.isForStatement(current) ? (current.condition === undefined ? "" : flat(current.condition)) : flat(current.expression)})`);
+      } else if (ts.isCaseClause(current)) {
+        guards.push(`case(${flat(current.expression)})`);
+      } else if (ts.isFunctionLike(current)) {
+        // A test's or a hook's own body adds nothing; any other function
+        // runs only when something calls it.
+        const call = current.parent;
+        const structural =
+          call !== undefined &&
+          ts.isCallExpression(call) &&
+          call.arguments.some((argument) => argument === current) &&
+          TEST_STRUCTURE.has(chainRoot(call.expression) ?? "");
+        if (!structural)
+          guards.push(
+            `fn(${call !== undefined && ts.isCallExpression(call) ? flat(call.expression) : ts.isFunctionDeclaration(current) ? (current.name?.text ?? "") : current.kind})`,
+          );
+      }
+      child = current;
     }
+    return guards.reverse().join(">");
   };
   const assertions: string[] = [];
   let skips = 0;
@@ -483,7 +843,8 @@ function assertionsOf(
       if (base !== null && roots.has(base)) {
         // The outermost call of a chain is the assertion: `expect(x).toBe(y)`.
         // Formatting is not a change: whitespace and trailing commas go.
-        assertions.push(node.getText(source).replace(/\s+/g, "").replace(/,(?=[)\]}])/g, ""));
+        const guards = guardsOf(node);
+        assertions.push(guards === "" ? flat(node) : `${guards}>${flat(node)}`);
         return;
       }
     }
@@ -549,13 +910,180 @@ function assertionsOf(
   return { assertions, skips, focused };
 }
 
+/** Calls whose function arguments hold a test or its hooks. */
+const TEST_STRUCTURE: ReadonlySet<string> = new Set([
+  "describe",
+  "suite",
+  "context",
+  "it",
+  "test",
+  "specify",
+  "bench",
+  "beforeEach",
+  "afterEach",
+  "beforeAll",
+  "afterAll",
+  "before",
+  "after",
+]);
+
+/** The script kind TypeScript should parse a path as. */
+const scriptKindOf = (path: string) =>
+  /\.[cm]?tsx$|\.jsx$/.test(path) ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+
+/**
+ * The names a test file's calls to its assertion modules go by: `assert`
+ * and `expect`, and every name imported from an assertion module.
+ */
+function assertionRoots(source: ts.SourceFile): Set<string> {
+  const roots = new Set(["assert", "expect"]);
+  for (const statement of source.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    if (!ASSERTION_MODULES.test(statement.moduleSpecifier.text)) continue;
+    const clause = statement.importClause;
+    if (clause?.name !== undefined) roots.add(clause.name.text);
+    const bindings = clause?.namedBindings;
+    if (bindings !== undefined && ts.isNamespaceImport(bindings)) roots.add(bindings.name.text);
+    else if (bindings !== undefined) for (const element of bindings.elements) roots.add(element.name.text);
+  }
+  return roots;
+}
+
+/** The identifier a call or member chain starts at, or null. */
+function chainRoot(node: ts.Expression): string | null {
+  let current: ts.Expression = node;
+  for (;;) {
+    if (ts.isIdentifier(current)) return current.text;
+    if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current))
+      current = current.expression;
+    else if (ts.isCallExpression(current)) current = current.expression;
+    else if (ts.isNonNullExpression(current) || ts.isParenthesizedExpression(current))
+      current = current.expression;
+    else return null;
+  }
+}
+
+/**
+ * The statements of a test file that a change may add to but not alter,
+ * each as its whitespace-free text: the code a test's verdict rests on
+ * besides its assertions (its data, its setup, its mocks, its helpers).
+ * The walk descends into the bodies of `describe`, `it`, `test` and the
+ * hooks, so a test added inside a `describe` leaves the others' statements
+ * as they were, and into class bodies, so a method added to a fake leaves
+ * the others. Imports count by the names they bind, so an import that
+ * gains a name keeps its old ones. Assertions are judged by
+ * `assertionsOf`, and left out here.
+ */
+function statementsOf(path: string, text: string): string[] {
+  const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, scriptKindOf(path));
+  const roots = assertionRoots(source);
+  const flat = (node: ts.Node) =>
+    node.getText(source).replace(/\s+/g, "").replace(/,(?=[)\]}])/g, "");
+  const out: string[] = [];
+  const statement = (node: ts.Statement): void => {
+    if (ts.isImportDeclaration(node)) {
+      const from = flat(node.moduleSpecifier);
+      const clause = node.importClause;
+      if (clause === undefined) {
+        out.push(`import${from}`);
+        return;
+      }
+      if (clause.name !== undefined) out.push(`import${clause.name.text}from${from}`);
+      const bindings = clause.namedBindings;
+      if (bindings !== undefined && ts.isNamespaceImport(bindings)) out.push(`import*as${bindings.name.text}from${from}`);
+      else if (bindings !== undefined) for (const element of bindings.elements) out.push(`import{${flat(element)}}from${from}`);
+      return;
+    }
+    if (ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)) {
+      const call = node.expression;
+      const root = chainRoot(call.expression);
+      if (root !== null && roots.has(root)) return;
+      if (root !== null && TEST_STRUCTURE.has(root)) {
+        const bodies = call.arguments.filter(
+          (argument): argument is ts.ArrowFunction | ts.FunctionExpression =>
+            ts.isArrowFunction(argument) || ts.isFunctionExpression(argument),
+        );
+        out.push(
+          `${flat(call.expression)}(${call.arguments
+            .filter((argument) => !ts.isArrowFunction(argument) && !ts.isFunctionExpression(argument))
+            .map(flat)
+            .join(",")})`,
+        );
+        for (const body of bodies) {
+          if (ts.isBlock(body.body)) for (const inner of body.body.statements) statement(inner);
+          else out.push(flat(body.body));
+        }
+        return;
+      }
+    }
+    if (ts.isClassDeclaration(node)) {
+      out.push(source.text.slice(node.getStart(source), node.members.pos).replace(/\s+/g, ""));
+      for (const member of node.members) out.push(flat(member));
+      return;
+    }
+    out.push(flat(node));
+  };
+  for (const node of source.statements) statement(node);
+  return out;
+}
+
+/**
+ * The modules a test file mocks by module specifier (`vi.mock("./cart")`,
+ * `jest.mock`, `mock.module` from `node:test`) that are the code's own:
+ * relative or absolute paths, and any named by a computed value. A mock of
+ * a package (`vi.mock("stripe")`) stands in for a service, not for the code.
+ */
+function ownModuleMocks(path: string, text: string): string[] {
+  const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, scriptKindOf(path));
+  const mocked: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const callee = node.expression;
+      const method = callee.name.text;
+      const target = callee.expression;
+      const runner =
+        (["mock", "doMock", "unstable_mockModule"].includes(method) &&
+          ts.isIdentifier(target) &&
+          (target.text === "vi" || target.text === "jest")) ||
+        (method === "module" &&
+          ((ts.isIdentifier(target) && target.text === "mock") ||
+            (ts.isPropertyAccessExpression(target) && target.name.text === "mock")));
+      if (runner) {
+        const first = node.arguments[0];
+        const name = first !== undefined && ts.isStringLiteralLike(first) ? first.text : null;
+        if (name === null) mocked.push("a module named by a computed value");
+        else if (name.startsWith(".") || name.startsWith("/")) mocked.push(name);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return mocked;
+}
+
+/** What `before` holds that `after` does not, counted as multisets. */
+function removedFrom(before: readonly string[], after: readonly string[]): string[] {
+  const left = new Map<string, number>();
+  for (const item of after) left.set(item, (left.get(item) ?? 0) + 1);
+  const removed: string[] = [];
+  for (const item of before) {
+    const count = left.get(item) ?? 0;
+    if (count > 0) left.set(item, count - 1);
+    else removed.push(item);
+  }
+  return removed;
+}
+
 /**
  * Why a change to a test the slice was handed weakens it, or null: an
  * assertion removed or rewritten (an expected value changed), a test
- * skipped, or one focused with `.only`. Assertions only added pass. A
- * rewritten assertion may be the change itself (a behaviour the
- * contributor was asked to change), so it is refused for a maintainer to
- * read, not judged wrong.
+ * skipped, or one focused with `.only`; a statement the assertions rest
+ * on rewritten or removed (the data a test passes in, the value it
+ * compares with, its setup or helpers); and a mock added of the code's own
+ * module, which can stand in for the code under test. Assertions, tests
+ * and statements only added pass. A rewritten assertion may be the change
+ * itself (a behaviour the contributor was asked to change), so it is
+ * refused for a maintainer to read, not judged wrong.
  */
 export function weakenedTest(
   path: string,
@@ -565,6 +1093,8 @@ export function weakenedTest(
 ): string | null {
   const old = assertionsOf(path, before);
   const now = assertionsOf(path, after);
+  const rewritten = removedFrom(statementsOf(path, before), statementsOf(path, after)).length;
+  const mocks = [...new Set(removedFrom(ownModuleMocks(path, after), ownModuleMocks(path, before)))].sort();
   const left = new Map<string, number>();
   for (const assertion of now.assertions) left.set(assertion, (left.get(assertion) ?? 0) + 1);
   let removed = 0;
@@ -581,6 +1111,14 @@ export function weakenedTest(
   if (now.focused > old.focused)
     reasons.push(
       `focuses ${now.focused - old.focused} more test${now.focused - old.focused === 1 ? "" : "s"} with .only, which skips the rest of the file`,
+    );
+  if (rewritten > 0)
+    reasons.push(
+      `rewrites or removes ${rewritten} other statement${rewritten === 1 ? "" : "s"} of ${noun} (the data, setup, mocks or helpers its assertions rest on)`,
+    );
+  if (mocks.length > 0)
+    reasons.push(
+      `mocks ${mocks.length} more of the code's own modules (${mocks.join(", ")}), which can stand in for the code under test`,
     );
   return reasons.length === 0 ? null : reasons.join(", and ");
 }

@@ -1984,6 +1984,8 @@ export async function patchProject(
     packages,
     packageOf,
     reach: true,
+    integrity: true,
+    checks: true,
     ...(options.allow === undefined ? {} : { allow: options.allow }),
   });
   const refused: Refusal[] = [];

@@ -52,10 +52,15 @@ back to the package's whole `npm test`, which the output marks. It traces
 imports and names, not runtime: say so when you report a clean result.
 
 `gate` exits 6 and lists each hold with why: protected paths, edited check
-configuration (tsconfig, linter, test runner), deleted tests, assertions
-removed, rewritten, skipped, focused with `.only`, made unreachable or
-swallowed by a `catch`, new suppressions (`@ts-ignore`, `eslint-disable`,
-coverage ignores), and with `--scope`, files outside it. Run it before you
+configuration (tsconfig, linter, test runner), deleted tests, helpers or
+fixtures, assertions removed, rewritten, skipped, focused with `.only`,
+made unreachable, put under a new condition or swallowed by a `catch`, a
+test's data, setup or helpers rewritten, a new mock of the code's own
+module, code that could pass a test without the code passing it (an early
+`process.exit`, swallowed failures, a rewritten assertion library, code
+under test that tells a test run from a real one or rewrites a built-in),
+new suppressions (`@ts-ignore`, `eslint-disable`, coverage ignores), and
+with `--scope`, files outside it. Run it before you
 call a change done. Undo a hold the task did not ask for; keep one the
 task did ask for (the behaviour an assertion held was meant to change),
 and name it in your reply. `--allow` is for the person, after they have
@@ -340,13 +345,20 @@ It leaves out, and names:
   the packages the slice holds files of; a protected path (CI workflows,
   hooks, `.vscode`, `.devcontainer`, `package.json`, lockfiles, `.npmrc`,
   `.env*`, Dockerfiles, Makefiles, `*.sh`, `CODEOWNERS`,
-  `carveout.config.json`); a deleted test; an edited test that removes or
-  rewrites an assertion, skips or focuses (`.only`) a test, or leaves an
-  assertion unreachable or in a `catch` that swallows it; a script, new or
-  edited, that gains a reach it did not have (Node's disk, network or
-  process modules, a service SDK, `fetch`, `eval`, the environment, a
-  module or global named by a computed value). Show the person the list;
-  `--allow <path|glob>` carries one they reviewed.
+  `carveout.config.json`); a deleted test, helper or fixture; an edited
+  test that removes or rewrites an assertion, skips or focuses (`.only`) a
+  test, leaves an assertion unreachable, under a new condition or in a
+  `catch` that swallows it, rewrites the data, setup or helpers its
+  assertions rest on, or mocks the code's own module; an edited fixture; a
+  script that gains a way to pass a test without the code (an early
+  `process.exit`, swallowed failures, a rewritten assertion library, code
+  under test that detects the test runner or rewrites a built-in); new
+  suppressions or edited check configuration; a script, new or edited,
+  that gains a reach it did not have (Node's disk, network or process
+  modules, a service SDK, `fetch`, `eval`, `Function` also through
+  `.constructor`, the environment, a module loaded from a URL, a module or
+  global named by a computed value or hidden behind one). Show the person
+  the list; `--allow <path|glob>` carries one they reviewed.
 
 `patch` runs none of the folder's code and takes nothing in it on trust: a
 `carveout.json` that names a path outside the folder is refused, and the

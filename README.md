@@ -128,18 +128,32 @@ What carveout holds to:
   new files in other packages (a cut module's folder among them);
   protected paths (CI workflows, hooks, `.vscode`, `.devcontainer`,
   `package.json`, lockfiles, `.npmrc`, `.env*`, Dockerfiles, Makefiles,
-  `*.sh`, `CODEOWNERS`, `carveout.config.json`); deleted tests; and edited
-  tests that remove or rewrite an assertion, skip or focus (`.only`) a
-  test, or leave an assertion unreachable or in a `catch` that swallows it
-  (an expected value changed may be the change itself, or a test bent to
-  pass: the maintainer reads it); and a script, new or edited, that gains
-  a reach it did not have: Node's disk, network or process modules, a
-  service SDK, `fetch`, `eval`, the environment, or a module or global
-  named by a computed value (a returned test that reads the closed source
-  and sends it out is one). `--allow <path|glob>` lets a reviewed one
-  through. `merge` applies nothing while any is refused. The policy reads
-  syntax, not intent: a new runner configuration (`vitest.config.ts`), or
-  code that does harm with only the reach its file already had, passes it.
+  `*.sh`, `CODEOWNERS`, `carveout.config.json`); deleted tests, test
+  helpers and fixtures; edited tests that remove or rewrite an assertion,
+  skip or focus (`.only`) a test, leave an assertion unreachable, in a
+  `catch` that swallows it, or under a new condition, loop or callback,
+  rewrite a statement the assertions rest on (the data passed in, the
+  value compared with, a setup line, a fake's method), or mock the code's
+  own module (`vi.mock("./cart")`), and edited fixtures (an expected value
+  changed may be the change itself, or a test bent to pass: the maintainer
+  reads it); a script, new or edited, that gains a way to pass a test
+  without the code passing it: ending the run early (`process.exit`,
+  `process.exitCode`), swallowing failures (`process.on("uncaughtException")`),
+  rewriting the assertion library, or, in the code under test, telling a
+  test run from a real one (`typeof describe`, `import.meta.vitest`,
+  `NODE_ENV === "test"`, `process.argv` matched against a runner) or
+  rewriting a built-in (`Array.prototype.includes = …`); new suppressions
+  (`@ts-ignore`, `eslint-disable`, coverage ignores) and edited check
+  configuration; and a script that gains a reach it did not have: Node's
+  disk, network or process modules, a service SDK, `fetch`, `eval`,
+  `Function` (also through `.constructor`), `WebAssembly`, the environment,
+  a module loaded from a URL, or a module or global named by a computed
+  value or hidden behind one (`const r = require`, `const g = globalThis`;
+  a returned test that reads the closed source and sends it out is one).
+  `--allow <path|glob>` lets a reviewed one through. `merge` applies
+  nothing while any is refused. The policy reads syntax, not intent: a new
+  runner configuration (`vitest.config.ts`), or code that does harm with
+  only the reach its file already had, passes it.
 - **Running what came back.** The contributor's tests, and every new file
   the patch carries, are code that runs beside the whole repository, the
   part the slice kept closed included. A branch pushed to the repository
@@ -418,9 +432,15 @@ hops away; naming the whole file selects 156.
   Dockerfiles; the hand-off policy's list above);
 - configuration a check reads, when edited: `tsconfig*.json`, ESLint,
   Biome, Vitest, Jest, coverage settings;
-- a deleted test, and a test whose assertions were removed or rewritten,
-  skipped, focused with `.only`, made unreachable (an early `return`,
-  `if (false)`), or wrapped in a `catch` that swallows their failure;
+- a deleted test, helper or fixture, and a test whose assertions were
+  removed or rewritten, skipped, focused with `.only`, made unreachable
+  (an early `return`, `if (false)`), put under a new condition, loop or
+  callback, or wrapped in a `catch` that swallows their failure; a test
+  whose data, setup or helpers were rewritten, or that newly mocks the
+  code's own module; an edited fixture;
+- a script that could pass a test without the code passing it: ending the
+  run early, swallowing failures, rewriting the assertion library, or code
+  under test that tells a test run from a real one or rewrites a built-in;
 - new suppressions in a script: `@ts-ignore`, `@ts-expect-error`,
   `eslint-disable`, coverage ignores;
 - with `--scope <path|glob>`, any file outside it.
@@ -600,7 +620,8 @@ What to tell them, accurately:
 - For someone outside the repository, cut with `--public`, take the folder
   back with `carveout patch` (it runs none of the folder's code and keeps
   out CI, hook, manifest and lockfile files, new files in other packages,
-  deleted tests and code that newly reaches the disk, network or
+  deleted or bent tests, code that could pass a test without the code
+  under test, and code that newly reaches the disk, network or
   environment), read the whole patch before anything runs it (its
   tests and new files are code beside the closed repository, and a branch
   pushed there gets CI's secrets and network), then let the repository's
