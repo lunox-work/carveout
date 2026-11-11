@@ -18,10 +18,10 @@
 
 <table>
 <tr>
-<td align="center" width="25%"><h3>under 1%</h3>of the repository<br>is what they see<br><sub>median 0.7% of 245k lines</sub></td>
+<td align="center" width="25%"><h3>under 1%</h3>of the repository<br>is what they see<br><sub>median 0.7% of 245k lines (default cut; 11% with the hand-off's flags)</sub></td>
 <td align="center" width="25%"><h3>0 lines</h3>of their code run<br>to make the patch<br><sub>it is read, never executed</sub></td>
-<td align="center" width="25%"><h3>52 of 52</h3>returned patches<br>applied to the repository<br><sub>real commits, sliced and merged back</sub></td>
-<td align="center" width="25%"><h3>89%</h3>still apply after<br>the repository moved on<br><sub>every one typechecks</sub></td>
+<td align="center" width="25%"><h3>0 names</h3>of the repository's<br>in a public folder<br><sub>renamed under a table only the maintainer's receipt holds</sub></td>
+<td align="center" width="25%"><h3>52 of 52</h3>replayed commits<br>round-trip and apply<br><sub>89% with --3way after the repository moved</sub></td>
 </tr>
 </table>
 
@@ -579,6 +579,31 @@ names the importers and tests the contractor never saw.
 
 ## Tested on
 
+With the hand-off's flags (`--public --with-tests --whole-package
+--copy-pure`, in pseudonyms), on 2026-11-11, eleven of the slices below
+were cut and checked again. Ten pass `check` on their own:
+sandbox-factory's worker (413 of 466 tests pass at the baseline), shared
+package (380 of 415), pricing, API cutter and a React component (in jsdom,
+after the package's setup file); command-center's articles, auth (an SDK
+installed for its types) and web app (75 of 75); and two of landing's,
+which no test runs. Tests that fail at the baseline test what the slice
+mocks, and `check` names what would run them on real code (a database
+driver, `--live postgres`). No public folder held a name of its
+repository. The eleventh, sandbox-factory's 200-file components folder,
+does not build: a stub of a value typed from a large generic package is
+narrower than the source (Limits). Getting there fixed what the earlier
+runs had not met: a lock npm 11 left short, a component's Vitest
+environment and setup, a Vite virtual module, a path alias taken for a
+package, a re-exported import's kind, an SDK whose types the code is built
+from, the whole-folder `noImplicitAny` relax, and the pseudonyms of
+multi-word names.
+
+An agent given only a public hand-off folder, its `AGENTS.md` and
+`TASK.md`, delivered the task with `npm test` green; `carveout patch`
+gave it back in the repository's names, it merged with `git apply
+--3way`, and the owner's hidden acceptance tests passed on the merged
+code.
+
 Thirteen real slices from three TypeScript repositories, sandbox-factory
 among them. They range from 1 to 173 files, and cover Node services, React
 components and a whole Vite app's `src` at depth 1, with npm workspaces and
@@ -642,8 +667,11 @@ class, `never[]` under the relaxed `noImplicitAny`).
 - **Languages.** Stubs are extracted from TypeScript only. A JavaScript
   source in a slice is reported as `language_unsupported`.
 - **Inferred types.** A stub can be narrower than the source when a type is
-  inferred from a package carveout could not read. The cut reports this; it
-  does not hide it.
+  inferred from a package carveout could not read, or from a large generic
+  one (an auth client's): the cut's check reads packages untyped, and the
+  folder's build, with them installed, can fail where the cut said ready.
+  `check` names the error; `--copy` or a wider cut holds the module
+  instead.
 - **Lockfiles.** Peers and locked versions are read from an npm
   `package-lock.json`. pnpm and Yarn repositories fall back to the versions
   in their package.json files; a `catalog:` pin takes the catalog's
