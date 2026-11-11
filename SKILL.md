@@ -391,7 +391,10 @@ It leaves out, and names:
 - **Boundary edits** (exit code 5): an edit to a stub or a mock, or a
   dependency added to the folder's package.json. The change needs more
   than the slice holds, so the patch alone is short of it. Cut again with
-  more entries, or make that part of the change in the repository.
+  more entries, or make that part of the change in the repository. A
+  dependency is named with its pin and the repository `package.json` it
+  goes into; the files that import it are held (exit code 6) until the
+  person adds it there and passes `--allow` for them.
 - **Slice-only files**: a new or edited file that imports `carveout/`,
   such as a test against the mocks. The repository has no `carveout/`.
 - Edits to other generated files.
