@@ -1156,9 +1156,11 @@ async function main(argv: readonly string[]) {
         );
         if (applied.leaks.length > 0) process.stdout.write(leaksText(applied.leaks));
         if (applied.unmapped.length > 0) process.stdout.write(unmappedText(applied.unmapped));
+        if (refreshed.copiedTaken !== undefined)
+          process.stdout.write(`Copied files the folder had not edited, taken as the repository has them:\n${list(refreshed.copiedTaken)}\n`);
         if (refreshed.copiedLeft !== undefined)
           process.stdout.write(
-            `Changed in the repository, in a folder the cut copied: not written over the folder's copy. Bring each change by hand, then: carveout refresh ${dir} --resolved <path>:\n${list(refreshed.copiedLeft)}\n`,
+            `Changed in the repository, in a folder the cut copied, and edited in the folder: not written over its copy. Bring each change by hand, then: carveout refresh ${dir} --resolved <path>:\n${list(refreshed.copiedLeft)}\n`,
           );
         if (refreshed.droppedUpstream !== undefined)
           process.stdout.write(

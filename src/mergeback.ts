@@ -782,6 +782,8 @@ export async function refreshProject(
   readonly droppedUpstream?: readonly string[];
   /** Copied folders' files the repository changed, left as the folder holds them. */
   readonly copiedLeft?: readonly string[];
+  /** Copied folders' files the folder had not edited, taken as the repository has them. */
+  readonly copiedTaken?: readonly string[];
 } | null> {
   const root = resolve(dir);
   const trusted = trustedCut(root, options.receipt, options.noReceipt === true ? { noReceipt: true } : {});
@@ -861,6 +863,28 @@ export async function refreshProject(
   // deleted: one the cut no longer reaches, or a copied folder's, keeps the
   // bytes of the old base, which the new commit does not hold.
   const changedNames = git(repo, ["diff", "--name-only", from, to, "--", ...paths]).split("\n").filter((name) => name !== "");
+  // A copied file the folder never edited takes the repository's bytes as
+  // they are: nothing of the folder's to merge. In pseudonyms, where the
+  // bytes would need renaming, it is left to the person, named.
+  const copiedTaken: string[] = [];
+  if (table === undefined) {
+    const copiedHashes = new Map((trusted.record.extras ?? []).map((file) => [file.path, file.sha256]));
+    for (const name of changedNames) {
+      const original = copiedHashes.get(name);
+      const at = join(root, name);
+      if (original === undefined || written.has(name) || !existsSync(at) || sha256(readFileSync(at)) !== original) continue;
+      let bytes: Buffer;
+      try {
+        bytes = execFileSync("git", ["show", `${to}:${name}`], { cwd: repo, maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
+      } catch {
+        // Gone upstream: left in the folder, named.
+        continue;
+      }
+      writeFileSync(at, bytes);
+      written.set(name, { folderPath: name, sha256: sha256(bytes), folderSha256: sha256(bytes) });
+      copiedTaken.push(name);
+    }
+  }
   const held = new Set([
     ...trusted.record.manifest.included.map((file) => file.path),
     ...(trusted.record.extras ?? []).map((file) => file.path),
@@ -919,5 +943,6 @@ export async function refreshProject(
     applied,
     ...(droppedUpstream.length === 0 ? {} : { droppedUpstream }),
     ...(copiedLeft.length === 0 ? {} : { copiedLeft }),
+    ...(copiedTaken.length === 0 ? {} : { copiedTaken }),
   };
 }

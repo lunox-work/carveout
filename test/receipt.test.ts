@@ -621,7 +621,7 @@ test("check names the packages a folder's package.json added, which its run does
   assert.deepEqual(packagesAdded("{", cut), []);
 });
 
-test("refresh leaves a copied folder's files to the folder, and --resolved moves them as copies", async () => {
+test("refresh takes a copied file the folder never edited, names one it did, and --resolved moves it as a copy", async () => {
   const { refreshProject } = await import("../src/mergeback.js");
   const { patchProject } = await import("../src/carve.js");
   const moving = join(scratch, "copied-moving");
@@ -641,14 +641,15 @@ test("refresh leaves a copied folder's files to the folder, and --resolved moves
   git(moving, ["commit", "-qam", "upstream"]);
   const first = await refreshProject(cut.out);
   assert.ok(first !== null);
-  // Not written into the folder: named, and the folder's base stays.
-  assert.deepEqual(first.applied.outside, [migration, seed]);
-  assert.deepEqual(first.copiedLeft, [migration, seed]);
+  // The seed, unedited, comes in as the repository has it; the edited
+  // migration is not written over: named, and its base stays.
+  assert.deepEqual(first.copiedTaken, [seed]);
+  assert.deepEqual(first.copiedLeft, [migration]);
+  assert.equal(readFileSync(join(cut.out, seed), "utf8"), "insert into carts values (2);\n");
   assert.match(readFileSync(join(cut.out, migration), "utf8"), /id int, total int/);
-  // Brought by hand, and taken as resolved: still copies, at the new base.
+  // Brought by hand, and taken as resolved: still a copy, at the new base.
   writeFileSync(join(cut.out, migration), "create table carts (id bigint, total int);\n");
-  writeFileSync(join(cut.out, seed), "insert into carts values (2);\n");
-  const resolved = await refreshProject(cut.out, { resolved: [migration, seed] });
+  const resolved = await refreshProject(cut.out, { resolved: [migration] });
   assert.ok(resolved !== null);
   const record = JSON.parse(readFileSync(join(cut.out, "carveout.json"), "utf8")) as { manifest: { included: { path: string }[] }; extras?: { path: string }[] };
   assert.ok(!record.manifest.included.some((file) => file.path === migration || file.path === seed));
