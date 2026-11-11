@@ -128,6 +128,16 @@ test("the folder's build does not count the implicit anys the stubs leave, and c
   const other = run("src/a.ts(2,2): error TS2322: Type 'string' is not assignable to type 'number'.\n  The expected type comes from here.");
   assert.equal(other.status, 1);
   assert.match(other.stdout, /TS2322[\s\S]*The expected type comes from here/);
+  // The 7xxx checks that are no implicit any hold in a waived file too.
+  assert.equal(run("src/a.ts(9,3): error TS7030: Not all code paths return a value.").status, 1);
+  // An error of the project's, with no file before it, fails it.
+  assert.equal(run("error TS18003: No inputs were found in config file 'tsconfig.json'.").status, 1);
+  // So does a compiler that fails saying nothing, or is not there.
+  assert.equal(run("").status, 1);
+  rmSync(join(folder, "node_modules"), { recursive: true, force: true });
+  const missing = spawnSync(process.execPath, ["carveout/build.js"], { cwd: folder, encoding: "utf8" });
+  assert.equal(missing.status, 1);
+  assert.match(missing.stdout, /tsc did not run to the end/);
 });
 
 test("a service package the code's own types are built from is installed, not mocked", async () => {

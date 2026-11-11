@@ -954,6 +954,15 @@ export const BUILD_SCRIPT_PATH = `${HARNESS_DIR}/build.js`;
  * no parameter types to take): those errors are the stubs', and are not
  * counted. Any other error, an implicit any elsewhere included, fails it.
  */
+/**
+ * The implicit-any diagnostics, by code: TypeScript's 7xxx family but its
+ * other checks there (TS7027 unreachable code, TS7028 an unused label,
+ * TS7029 a switch case that falls through, TS7030 a path that returns
+ * nothing), which hold the code to the repository's rules and are never
+ * the stubs' doing. The source of a regular expression over the digits.
+ */
+export const IMPLICIT_ANY_CODE = "7(?!02[7-9]|030)\\d{3}";
+
 export function buildScript(waived: readonly string[]): string {
   // Raw, so the backslashes of its regular expressions reach the file as
   // written; no `${` in it, which a raw template would read.
@@ -961,9 +970,15 @@ export function buildScript(waived: readonly string[]): string {
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 const WAIVED = new Set(__WAIVED__);
+const IMPLICIT = new RegExp("^(.+?)\\(\\d+,\\d+\\): error TS(" + __CODE__ + "):");
 // The installed compiler's own command: typescript 7 exports no bin/tsc to resolve.
 const tsc = join("node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
 const result = spawnSync(tsc, ["-p", "tsconfig.json", "--pretty", "false"], { encoding: "utf8", shell: process.platform === "win32" });
+// A compiler that did not run, or did not finish, passed nothing.
+if (result.error || result.signal) {
+  process.stdout.write("tsc did not run to the end (" + (result.error ? result.error.message : result.signal) + "): run npm ci first.\n");
+  process.exit(1);
+}
 const lines = ((result.stdout || "") + (result.stderr || "")).split("\n");
 const kept = [];
 let waivedCount = 0;
@@ -975,7 +990,7 @@ for (const line of lines) {
     if (!skipping) kept.push(line);
     continue;
   }
-  const match = /^(.+?)\(\d+,\d+\): error TS(7\d{3}):/.exec(line);
+  const match = IMPLICIT.exec(line);
   skipping = match !== null && WAIVED.has(match[1].split("\\").join("/"));
   if (skipping) waivedCount += 1;
   else kept.push(line);
@@ -983,8 +998,12 @@ for (const line of lines) {
 if (kept.length > 0) process.stdout.write(kept.join("\n") + "\n");
 if (waivedCount > 0)
   process.stdout.write(waivedCount + " implicit any(s) the stubs leave (a callback into a mocked package) not counted: the repository's types give them.\n");
-process.exitCode = kept.some((line) => / error TS\d+:/.test(line)) ? 1 : 0;
-`.replace("__WAIVED__", JSON.stringify(waived));
+// Any error but those, a file's or the project's (TS18003, TS5083), fails
+// the build; so does tsc failing with nothing it printed waived or kept.
+process.exitCode = kept.some((line) => /(^|\s)error TS\d+:/.test(line)) || (result.status !== 0 && waivedCount === 0) ? 1 : 0;
+`
+    .replace("__WAIVED__", JSON.stringify(waived))
+    .replace("__CODE__", JSON.stringify(IMPLICIT_ANY_CODE));
 }
 
 export function scanNamedImports(
@@ -1087,7 +1106,7 @@ function interfaceTests(
  * after the cut runs too. Each goes to the runner it imports; Node runs the
  * compiled `.js`, Vitest the source.
  */
-export function testRunnerScript(coverage: CoverageGate | undefined, globals = false): string {
+export function testRunnerScript(coverage: CoverageGate | undefined, globals = false, waived: readonly string[] = []): string {
   // The gate covers the package's compiled sources the folder holds: a
   // \`.js\` beside its \`.ts\`, never a stub's mock or a test.
   const gate =
@@ -1276,12 +1295,20 @@ export function testRunnerScript(coverage: CoverageGate | undefined, globals = f
     "  const lines = readFileSync(\"carveout/surface/check.ts\", \"utf8\").split(\"\\n\");",
     "  const DECLARATIONS = \"the public surface's declarations compile\";",
     "  const failures = new Map();",
+    "  // The implicit anys the stubs leave, which the build does not count either.",
+    "  let waivedHere = 0;",
+    `  const waived = new Set(${JSON.stringify(waived)});`,
+    `  const implicit = new RegExp(${JSON.stringify(`^TS${IMPLICIT_ANY_CODE}$`)});`,
     "  for (const [, file, line, code, message] of output.matchAll(/^(.+?)\\((\\d+),\\d+\\): error (TS\\d+): (.*)$/gm)) {",
+    "    if (implicit.test(code) && waived.has(file.replaceAll(\"\\\\\", \"/\"))) {",
+    "      waivedHere += 1;",
+    "      continue;",
+    "    }",
     "    const label = file.replaceAll(\"\\\\\", \"/\").endsWith(\"carveout/surface/check.ts\") ? / \\/\\/ (.+) \\| (.+) \\| (value|type)$/.exec(lines[Number(line) - 1] ?? \"\") : null;",
     "    const name = label === null ? DECLARATIONS : `${label[1]} keeps the type of ${label[2]}`;",
     "    failures.set(name, [...(failures.get(name) ?? []), `${code}: ${message}`]);",
     "  }",
-    "  if (result.status !== 0 && failures.size === 0) failures.set(DECLARATIONS, [output.trim().slice(0, 2000) || `tsc exited ${result.status}`]);",
+    "  if (result.status !== 0 && failures.size === 0 && waivedHere === 0) failures.set(DECLARATIONS, [output.trim().slice(0, 2000) || `tsc exited ${result.status}`]);",
     "  const known = existsSync(\"carveout/baseline.json\") ? new Set(JSON.parse(readFileSync(\"carveout/baseline.json\", \"utf8\")).failing) : new Set();",
     "  const names = [...failures.keys()].sort();",
     "  surface.checks += Math.max(lines.filter((line) => / \\/\\/ (.+) \\| (.+) \\| (value|type)$/.test(line)).length, names.length);",
@@ -1829,7 +1856,7 @@ export function generateProject(input: ProjectInput): GeneratedProject {
     add({ path: file.path, text: file.text, class: "harness", public: true });
   add({
     path: TEST_RUNNER_PATH,
-    text: testRunnerScript(input.coverage, globals && vitestInstalled),
+    text: testRunnerScript(input.coverage, globals && vitestInstalled, input.keepsImplicitAny !== true ? (input.implicitAnyFiles ?? []) : []),
     class: "harness",
     public: true,
   });

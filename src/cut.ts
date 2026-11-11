@@ -15,6 +15,7 @@ import { open, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import {
   BOUNDARY_CONTRACT_SCHEMA_VERSION,
+  IMPLICIT_ANY_CODE,
   OPERATION_POLICY,
   SLICE_MANIFEST_SCHEMA_VERSION,
   SLICE_TOOL_VERSION,
@@ -801,10 +802,9 @@ export async function analyseSlice(input: {
       options["noImplicitAny"] === true ||
       (options["noImplicitAny"] === undefined && options["strict"] === true);
     if (sourceImplicitAny && compilation.ok) {
-      // TS7xxx: the implicit-any family.
-      const implicit = compile(fixture, stubModules, false).diagnostics.filter(
-        ({ code }) => /^(TS)?7\d{3}$/.test(String(code)),
-      );
+      // The implicit-any family (TS7xxx but the checks that share it).
+      const implicitCode = new RegExp(`^(TS)?${IMPLICIT_ANY_CODE}$`);
+      const implicit = compile(fixture, stubModules, false).diagnostics.filter(({ code }) => implicitCode.test(String(code)));
       keepsImplicitAny = implicit.length === 0;
       implicitAnyFiles = [...new Set(implicit.flatMap((d) => (d.file === undefined || d.file === null ? [] : [String(d.file)])))].sort();
       if (!keepsImplicitAny)

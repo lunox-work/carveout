@@ -169,3 +169,23 @@ test("a TAP from a folder cut before the runner's counts is read as node:test's 
   assert.deepEqual(countsOf("TAP version 13\nok 1 - a\n# tests 1\n# pass 1\n# fail 0\n"), { tests: 1, pass: 1, fail: 0 });
   assert.equal(countsOf("TAP version 13\n"), undefined);
 });
+
+test("the surface's type check does not count the implicit anys the build does not, and counts any other error", () => {
+  const surface = (name: string, diagnostics: string, waived: string[]) => {
+    const root = folder(name, {
+      "carveout/test.js": testRunnerScript(undefined, false, waived),
+      "carveout/surface/check.ts": "export const c0 = 0; // apps/api/src/db.ts | pool | value\n",
+      "carveout/surface/tsconfig.json": "{}\n",
+      "node_modules/.bin/tsc": `#!/bin/sh\ncat <<'EOF'\n${diagnostics}\nEOF\nexit 2\n`,
+    });
+    chmodSync(join(root, "node_modules/.bin/tsc"), 0o755);
+    return run(root);
+  };
+  const implicit = "apps/api/src/db.ts(3,10): error TS7006: Parameter 'err' implicitly has an 'any' type.";
+  const waived = surface("surface-waived", implicit, ["apps/api/src/db.ts"]);
+  assert.equal(waived.status, 0, waived.stdout);
+  assert.match(waived.stdout, /1 of 1 check\(s\) of the public surface hold/);
+  const counted = surface("surface-counted", implicit, []);
+  assert.equal(counted.status, 1);
+  assert.match(counted.stdout, /the public surface's declarations compile/);
+});
