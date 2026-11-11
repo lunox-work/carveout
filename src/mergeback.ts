@@ -38,6 +38,7 @@ import {
 import { symbolDiff } from "./status.js";
 import { trustedRepo } from "./policy.js";
 import { saveRecord, trustedCut } from "./receipt.js";
+import { fromFolder, toFolder, type FolderPseudonyms } from "./pseudonyms/index.js";
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const sha256 = (data: string | Buffer) =>
@@ -97,10 +98,9 @@ export async function applyPatch(
 ): Promise<Applied> {
   const root = resolve(dir);
   let trusted = trustedCut(root, options.receipt, options.noReceipt === true ? { noReceipt: true } : {});
-  if (trusted.receipt?.pseudonyms !== undefined)
-    throw new Error(
-      "apply does not write into a folder in pseudonyms yet: cut again from the repository as it is now, with the same flags.",
-    );
+  // A public folder in pseudonyms takes the change in its own names: each
+  // file at its folder path, its text renamed by the receipt's table.
+  const names = namesOf(trusted.receipt?.pseudonyms);
   const record = trusted.record;
   const source = trustedRepo(record, options.repo);
   checkRecordFiles(record, source);
@@ -191,7 +191,7 @@ export async function applyPatch(
     for (const [path, status] of [...touched.entries()].sort(([a], [b]) => compare(a, b))) {
       if (status === "D") {
         if (included.has(path)) {
-          await rm(join(root, path), { force: true });
+          await rm(join(root, names.path(path)), { force: true });
           deleted.push(path);
         } else outside.push(path);
         continue;
@@ -208,9 +208,9 @@ export async function applyPatch(
         outside.push(path);
         continue;
       }
-      await mkdir(dirname(join(root, path)), { recursive: true });
-      if (text === null) await copyFile(join(repo, path), join(root, path));
-      else await writeFile(join(root, path), text);
+      await mkdir(dirname(join(root, names.path(path))), { recursive: true });
+      if (text === null) await copyFile(join(repo, path), join(root, names.path(path)));
+      else await writeFile(join(root, names.path(path)), names.text(path, text));
       if (!included.has(path) && status === "M") {
         // A repository file the slice did not hold: it joins the slice at
         // the bytes of the cut's commit, so `patch` diffs it from there.
@@ -219,7 +219,7 @@ export async function applyPatch(
       }
       (included.has(path) || status === "M" ? changed : added).push(path);
     }
-    const stubs = await neededStubs(root, record, cuts, options.stubs === true, (updated, written) => {
+    const stubs = await neededStubs(root, record, cuts, options.stubs === true, names, (updated, written) => {
       trusted = saveRecord(root, trusted, updated, written);
     });
     if (grown.length > 0) {
@@ -242,6 +242,23 @@ export async function applyPatch(
   }
 }
 
+/** How a path and a text in the repository's names are put in the folder's, and back. */
+interface Names {
+  readonly path: (path: string) => string;
+  readonly text: (path: string, text: string) => string;
+  readonly back: (folderPath: string, text: string) => string;
+}
+
+/** The folder's names for a cut in pseudonyms (its table), or the repository's own. */
+function namesOf(table: FolderPseudonyms | undefined): Names {
+  if (table === undefined) return { path: (path) => path, text: (_path, text) => text, back: (_path, text) => text };
+  return {
+    path: (path) => toFolder(table, path, "").path,
+    text: (path, text) => toFolder(table, path, text).text,
+    back: (path, text) => fromFolder(table, path, text).text,
+  };
+}
+
 /** A file as the slice's record holds it, at the clone's HEAD (the cut's commit). */
 function includedAt(repo: string, path: string): IncludedFile {
   const bytes = execFileSync("git", ["show", `HEAD:${path}`], { cwd: repo, maxBuffer: 256 * 1024 * 1024 });
@@ -255,6 +272,7 @@ async function neededStubs(
   record: CarveoutRecord,
   cuts: readonly ComputedCut[],
   write: boolean,
+  names: Names,
   save: (updated: CarveoutRecord, written: Readonly<Record<string, string>>) => void,
 ): Promise<Applied["stubs"]> {
   const generated = new Map(record.generated.map((file) => [file.path, file.sha256]));
@@ -270,7 +288,8 @@ async function neededStubs(
     writes.push({ path, text });
     // The declaration names the difference; its runtime follows it.
     if (!/\.d\.[cm]?ts$/.test(path)) continue;
-    const old = existsSync(join(root, path)) ? readFileSync(join(root, path), "utf8") : null;
+    const held = join(root, names.path(path));
+    const old = existsSync(held) ? names.back(names.path(path), readFileSync(held, "utf8")) : null;
     found.push({
       path,
       detail:
@@ -282,8 +301,8 @@ async function neededStubs(
   }
   if (write && writes.length > 0) {
     for (const { path, text } of writes) {
-      await mkdir(dirname(join(root, path)), { recursive: true });
-      await writeFile(join(root, path), text);
+      await mkdir(dirname(join(root, names.path(path))), { recursive: true });
+      await writeFile(join(root, names.path(path)), names.text(path, text));
     }
     const hashes = new Map(generated);
     for (const { path, text } of writes) hashes.set(path, sha256(text));
@@ -293,7 +312,7 @@ async function neededStubs(
         .map(([path, hash]) => ({ path, sha256: hash }))
         .sort((a, b) => compare(a.path, b.path)),
     };
-    save(updated, Object.fromEntries(writes.map(({ path, text }) => [path, text])));
+    save(updated, Object.fromEntries(writes.map(({ path, text }) => [names.path(path), names.text(path, text)])));
   }
   return found;
 }

@@ -82,7 +82,6 @@ import {
   keptNames,
   maskKept,
   pseudonymize,
-  recordToFolder,
   vocabularyBlockers,
   vocabularyLeaks,
   workspaceNames,
@@ -93,9 +92,9 @@ import {
 } from "./pseudonyms/index.js";
 import {
   RECEIPT_SCHEMA_VERSION,
+  folderRecordFor,
   folderView,
   newCutId,
-  publicRecord,
   receiptPathFor,
   trustedBaseline,
   trustedCut,
@@ -1767,16 +1766,13 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
         vocabulary,
       );
   }
-  // What each file hashes to as the folder holds it, by its folder path,
-  // and the generated files' text, which the receipt keeps.
-  const folderHash = new Map<string, string>();
+  // The generated files' text as the folder holds them, which the receipt keeps.
   const generatedText: Record<string, string> = {};
   for (const file of files) {
     const path = pathOf(file.path);
     const text = folderText(file.path, file.text);
     await mkdir(dirname(join(out, path)), { recursive: true });
     await writeFile(join(out, path), text, "utf8");
-    folderHash.set(path, sha256(text));
     if (file.class !== "source") generatedText[path] = text;
   }
   for (const path of [...binaryPaths, ...textExtras]) {
@@ -1785,10 +1781,8 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
     if (table !== null && extraText.has(path)) {
       const text = folderText(path, extraText.get(path) ?? "");
       await writeFile(join(out, target), text, "utf8");
-      folderHash.set(target, sha256(text));
     } else {
       await copyFile(join(repo, path), join(out, target));
-      folderHash.set(target, sha256(readFileSync(join(repo, path))));
     }
   }
   log(`Wrote ${files.length + binaries.length + extras.length} files to ${out}.`);
@@ -1875,7 +1869,6 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
   }
   const lockText = lockfile ? readFileSync(join(out, "package-lock.json"), "utf8") : null;
   if (lockText !== null) {
-    folderHash.set("package-lock.json", sha256(lockText));
     generatedText["package-lock.json"] = lockText;
   }
   const generated = [
@@ -1912,41 +1905,8 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
   // repository beyond the slice, and one in pseudonyms holds its files by
   // the paths and hashes the folder has. A leak's blocker there does not
   // say the name it is about.
-  let folderRecord: CarveoutRecord = record;
-  if (receipt !== null && publicCut) {
-    const scrubbed = publicRecord(record);
-    const quiet: CarveoutRecord = {
-      ...scrubbed,
-      blockers: scrubbed.blockers.map((blocker) =>
-        blocker.code === "vocabulary_leaked"
-          ? { code: blocker.code, file: null, detail: "A name the repository goes by is still in the folder; the maintainer has the list." }
-          : blocker,
-      ),
-    };
-    if (table === null) folderRecord = quiet;
-    else {
-      const renamed = recordToFolder(table, quiet);
-      const asWritten = (entry: { readonly path: string; readonly sha256: string }) => ({
-        path: pathOf(entry.path),
-        sha256: folderHash.get(pathOf(entry.path)) ?? "",
-      });
-      folderRecord = {
-        ...renamed,
-        manifest: {
-          ...renamed.manifest,
-          included: record.manifest.included.map((file) => ({
-            ...file,
-            path: pathOf(file.path),
-            blobId: "",
-            sha256: folderHash.get(pathOf(file.path)) ?? "",
-          })),
-        },
-        generated: record.generated.map(asWritten),
-        ...(record.copied === undefined ? {} : { copied: record.copied.map(asWritten) }),
-        ...(record.extras === undefined ? {} : { extras: record.extras.map(asWritten) }),
-      };
-    }
-  }
+  const folderRecord: CarveoutRecord =
+    receipt !== null && publicCut ? folderRecordFor(record, table ?? undefined, out) : record;
   // The maintainer's copy, outside the folder: what a folder that comes
   // back is judged by, with the pseudonyms' table.
   if (receipt !== null)

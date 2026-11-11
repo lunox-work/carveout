@@ -20,11 +20,11 @@
  * `publicRecord` leaves them out.
  */
 
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { RECORD_PATH, carveoutHome, readRecord, type CarveoutRecord } from "./carve.js";
-import type { FolderPseudonyms } from "./pseudonyms/index.js";
+import { recordToFolder, toFolder, type FolderPseudonyms } from "./pseudonyms/index.js";
 import type { Readiness } from "./readiness.js";
 
 export const RECEIPT_SCHEMA_VERSION = 1;
@@ -232,6 +232,43 @@ export function publicRecord(record: CarveoutRecord): CarveoutRecord {
 }
 
 /**
+ * The record a public folder holds, made from the cut's: scrubbed
+ * (`publicRecord`), a leak's blocker kept without the name it is about,
+ * and for a folder in pseudonyms, in its names, with its files' folder
+ * paths and the hashes of what the folder holds at them (`dir`), so its
+ * own commands (the coverage guard, check) read it as written.
+ */
+export function folderRecordFor(record: CarveoutRecord, table: FolderPseudonyms | undefined, dir: string): CarveoutRecord {
+  const scrubbed = publicRecord(record);
+  const quiet: CarveoutRecord = {
+    ...scrubbed,
+    blockers: scrubbed.blockers.map((blocker) =>
+      blocker.code === "vocabulary_leaked"
+        ? { code: blocker.code, file: null, detail: "A name the repository goes by is still in the folder; the maintainer has the list." }
+        : blocker,
+    ),
+  };
+  if (table === undefined) return quiet;
+  const renamed = recordToFolder(table, quiet);
+  const pathOf = (path: string) => toFolder(table, path, "").path;
+  const hashAt = (path: string) => {
+    const at = join(resolve(dir), path);
+    return existsSync(at) ? createHash("sha256").update(readFileSync(at)).digest("hex") : "";
+  };
+  const asWritten = (entry: { readonly path: string }) => ({ path: pathOf(entry.path), sha256: hashAt(pathOf(entry.path)) });
+  return {
+    ...renamed,
+    manifest: {
+      ...renamed.manifest,
+      included: record.manifest.included.map((file) => ({ ...file, path: pathOf(file.path), blobId: "", sha256: hashAt(pathOf(file.path)) })),
+    },
+    generated: record.generated.map(asWritten),
+    ...(record.copied === undefined ? {} : { copied: record.copied.map(asWritten) }),
+    ...(record.extras === undefined ? {} : { extras: record.extras.map(asWritten) }),
+  };
+}
+
+/**
  * Writes a record a command changed (`apply` growing the slice, writing
  * stubs) to the folder and, when the cut has one, to its receipt: the
  * folder's copy public-scrubbed as the cut wrote it.
@@ -244,7 +281,7 @@ export function saveRecord(
   written: Readonly<Record<string, string>> = {},
 ): TrustedCut {
   const scrub = trusted.receipt !== null && updated.request.public === true;
-  const folder = scrub ? publicRecord(updated) : updated;
+  const folder = scrub ? folderRecordFor(updated, trusted.receipt?.pseudonyms, dir) : updated;
   writeFileSync(join(resolve(dir), RECORD_PATH), `${JSON.stringify(folder, null, 2)}\n`);
   if (trusted.receipt === null || trusted.receiptPath === null) return { ...trusted, record: updated, folder };
   // The receipt keeps the record as the cut makes it, checkout included,

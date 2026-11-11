@@ -429,8 +429,8 @@ person and add a rename for it (`pseudonyms` in the configuration), or a
 `--mock` renames one. `patch` renames the folder back before anything
 else, so the maintainer reads the change, and the policy judges it, in the
 repository's names; a name the contributor made in a placeholder
-(`AcmeDiscount`) comes back as the term (`LunoxDiscount`). `apply` does
-not write into a folder in pseudonyms yet: cut again. `--keep-names`
+(`AcmeDiscount`) comes back as the term (`LunoxDiscount`). `apply`
+writes a repository change into such a folder in its names. `--keep-names`
 writes the repository's names.
 
 To let a contributor work on one part of a closed repository: `plan`,

@@ -209,3 +209,31 @@ test("a name left in a public folder is a blocker, and --keep-names leaves them 
   assert.match(folder, /vocabulary_leaked/);
   assert.doesNotMatch(JSON.stringify(JSON.parse(folder).blockers), /lunox/i);
 });
+
+test("apply brings the repository's change into a folder in pseudonyms, in its names", async () => {
+  const { applyPatch } = await import("../src/mergeback.js");
+  const cut = await cutSlice(request("applied"));
+  // The repository moves on: a new method, written in its own names.
+  const work = join(scratch, "applied-work");
+  git(scratch, ["clone", "-q", repo, work]);
+  const cart = join(work, "apps/web/src/LunoxCart.ts");
+  writeFileSync(
+    cart,
+    readFileSync(cart, "utf8").replace("  total(): string {", "  /** Empties a Lunox cart. */\n  clear(): this {\n    this.lines.length = 0;\n    return this;\n  }\n  total(): string {"),
+  );
+  const change = git(work, ["diff"]);
+  const applied = await applyPatch(cut.out, change);
+  assert.deepEqual(applied.changed, ["apps/web/src/LunoxCart.ts"]);
+  const held = readFileSync(join(cut.out, "apps/web/src/AcmeCart.ts"), "utf8");
+  assert.match(held, /\/\*\* Empties a Acme cart\. \*\/\n {2}clear\(\): this/);
+  assert.equal(tree(cut.out).filter((file) => NAMES.test(file.path) || NAMES.test(file.text)).length, 0);
+  // A patch is against the cut's commit, so it gives the applied change
+  // back, with the contributor's edit on top, in the repository's names.
+  const acme = join(cut.out, "apps/web/src/AcmeCart.ts");
+  writeFileSync(acme, readFileSync(acme, "utf8").replace("this.lines.length = 0;", "this.lines.splice(0);"));
+  const patch = await patchProject(cut.out);
+  assert.deepEqual(patch.refused, []);
+  assert.deepEqual(patch.changed, ["apps/web/src/LunoxCart.ts"]);
+  assert.match(patch.diff, /\+ {2}\/\*\* Empties a Lunox cart\. \*\/\n\+ {2}clear\(\): this \{\n\+ {4}this\.lines\.splice\(0\);/);
+  assert.doesNotMatch(patch.diff, /acme/i);
+});
