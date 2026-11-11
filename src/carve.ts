@@ -9,7 +9,7 @@
  * lockfile with npm; `offline` skips both.
  */
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -2939,13 +2939,7 @@ export async function checkProject(
           lines.push(`FAIL ${path}: it runs on Vitest, which the folder does not install (cut again with --install vitest)`);
           continue;
         }
-        const result = spawnSync(bin, ["run", "--config", "vitest.config.mjs", "--reporter=json", `--outputFile.json=${report}`, path], {
-          cwd: work,
-          encoding: "utf8",
-          env: acceptEnv,
-          timeout: 10 * 60_000,
-          maxBuffer: 256 * 1024 * 1024,
-        });
+        const result = await runGroup(bin, ["run", "--config", "vitest.config.mjs", "--reporter=json", `--outputFile.json=${report}`, path], work, acceptEnv);
         output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
         try {
           const json = JSON.parse(readFileSync(report, "utf8")) as { testResults?: { assertionResults?: { status?: string }[]; status?: string }[] };
@@ -2961,10 +2955,11 @@ export async function checkProject(
         }
       } else {
         const compiled = path.replace(/\.tsx?$/, ".js").replace(/\.mts$/, ".mjs").replace(/\.cts$/, ".cjs");
-        const result = spawnSync(
+        const result = await runGroup(
           process.execPath,
           [`--env-file=${ENV_FILE}`, `--import=./${ASSETS_LOADER_PATH}`, "--test", "--test-reporter=tap", "--test-reporter-destination=stdout", compiled],
-          { cwd: work, encoding: "utf8", env: acceptEnv, timeout: 10 * 60_000, maxBuffer: 256 * 1024 * 1024 },
+          work,
+          acceptEnv,
         );
         output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
         // The tests it holds: a file with none is reported as one test named
@@ -3078,6 +3073,45 @@ export async function checkProject(
   }
   if (scratch !== null) await rm(scratch, { recursive: true, force: true });
   return steps;
+}
+
+/**
+ * Runs a command in its own process group and gathers what it prints: at
+ * the time limit the whole group is killed, workers and anything the
+ * folder's code started included, not only the first process.
+ */
+function runGroup(
+  executable: string,
+  args: readonly string[],
+  cwd: string,
+  env: Record<string, string>,
+  limitMs = 10 * 60_000,
+): Promise<{ stdout: string; stderr: string; status: number | null }> {
+  return new Promise((resolvePromise) => {
+    const group = process.platform !== "win32";
+    const child = spawn(executable, [...args], { cwd, env, detached: group, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
+    const timer = setTimeout(() => {
+      try {
+        if (group && child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+        else child.kill("SIGKILL");
+      } catch {
+        // Already gone.
+      }
+    }, limitMs);
+    const done = (status: number | null) => {
+      clearTimeout(timer);
+      resolvePromise({ stdout, stderr, status });
+    };
+    child.on("error", (error) => {
+      stderr += error.message;
+      done(null);
+    });
+    child.on("close", (code) => done(code));
+  });
 }
 
 /** The dependencies one package.json text pins that another does not. */

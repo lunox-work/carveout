@@ -733,9 +733,6 @@ class, `never[]` under the relaxed `noImplicitAny`).
   it, deleted included (outside pseudonyms), and names one it edited, to
   bring by hand and pass as `--resolved`. A copied folder the repository
   deletes whole stops `apply` and `refresh`: cut again.
-- **Acceptance timeouts.** `check --accept` stops an acceptance run after
-  ten minutes, but only its first process: workers it started may outlive
-  it.
 - **Folders named like build output.** Files under `build/`, `dist/`,
   `vendor/` and `third_party/` are not parsed: a source folder named
   `build` is copied when reached, but its own imports are not followed.
