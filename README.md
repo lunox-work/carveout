@@ -619,15 +619,22 @@ alone, which `--name` hides. The eleventh, sandbox-factory's 200-file
 components folder, does not build: a type the client infers from a server
 outside the slice is narrower in its stub than in the source (Limits).
 
-Three agents, each given only a public hand-off folder, its `AGENTS.md`
-and `TASK.md`, delivered their tasks with `npm test` green: a function in
-a fixture, a pricing function in sandbox-factory's core (71 of 71), and a
-React dialog's keyboard behaviour in jsdom (19 of 19 Vitest tests).
-`carveout patch` gave each back in the repository's names, each applied
-with `git apply --3way`, and the owner's hidden acceptance tests passed in
-a slice of the merged code. What they found unclear in the folder was
-fixed: where new tests go, what the coverage gate measures, what may grow
-in a test, and that Vitest read the last build rather than the source.
+Six agents, each given only a public hand-off folder, its `AGENTS.md` and
+`TASK.md`, delivered their tasks with `npm test` green: a function in a
+fixture; in sandbox-factory, a pricing function (71 of 71), a React
+dialog's keyboard behaviour in jsdom (19 of 19 Vitest tests) and a schema
+filter on a red baseline (372 of 407, the 35 failing on the mocks not
+counted); landing's string helper in a folder no test came with (8 of 8);
+command-center's allowlist (99 of 99). `carveout patch` gave each back in
+the repository's names, each applied with `git apply`, and the owner's
+hidden acceptance tests passed on each (the last two with
+`carveout check --accept`, on the folder that came back). One folder was
+then refreshed against a moving repository: the merge kept the work, and
+the next patch carried it alone and applied at the new HEAD. What the
+agents found unclear in the folder was fixed: where new tests go and on
+which runner, what the coverage gate measures, what may grow in a test,
+that Vitest read the last build rather than the source, and counts that
+read as failures.
 
 Thirteen real slices from three TypeScript repositories, sandbox-factory
 among them. They range from 1 to 173 files, and cover Node services, React
