@@ -21,6 +21,7 @@ import {
   BASELINE_PATH,
   HARNESS_DIR,
   LAST_RUN_PATH,
+  TOOL_DIRS,
   VITEST_REPORT_PATH,
   SLICE_BUDGET_DEFAULTS,
   coverageGateOf,
@@ -2495,6 +2496,9 @@ export async function checkProject(
     work = join(scratch, "project");
     execFileSync("cp", ["-R", source, work]);
     await rm(join(work, "node_modules"), { recursive: true, force: true });
+    // A tool's folder is no part of a change, and a patch never judges what
+    // it holds: none of it runs (a test there could write the baseline).
+    for (const tool of toolDirsIn(work, record)) await rm(join(work, tool), { recursive: true, force: true });
   }
   const steps: CheckStep[] = [];
   // The generated files the folder changed, put back from the receipt; the
@@ -2787,12 +2791,6 @@ function listTree(root: string, dir = "", into: string[] = [], skip: ReadonlySet
   return into;
 }
 
-/**
- * Folders a contributor's tools write at a folder's root: npm's cache kept
- * in the folder (`npm ci --cache .npm-cache`), a coverage report, a build
- * tool's cache. None is part of a change.
- */
-const TOOL_DIRS = [".npm-cache", ".npm", ".pnpm-store", ".cache", "coverage", ".nyc_output", ".turbo"];
 
 /**
  * The tool folders at a returned folder's root that hold none of the

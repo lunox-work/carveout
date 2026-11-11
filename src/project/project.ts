@@ -67,6 +67,13 @@ export const SURFACE_CONFIG_PATH = `${SURFACE_DIR}/tsconfig.json`;
  * runner's counts. What `check` reads the baseline and the counts from.
  */
 export const LAST_RUN_PATH = `${HARNESS_DIR}/.last-run.tap`;
+/**
+ * Folders a contributor's tools write at a folder's root: npm's cache kept
+ * in the folder (`npm ci --cache .npm-cache`), a coverage report, a build
+ * tool's cache. None is part of a change: a patch leaves them out, and
+ * nothing in them is built or run.
+ */
+export const TOOL_DIRS: readonly string[] = [".npm-cache", ".npm", ".pnpm-store", ".cache", "coverage", ".nyc_output", ".turbo"];
 /** The last Vitest run's JSON report, which the runner reads into the TAP. */
 export const VITEST_REPORT_PATH = `${HARNESS_DIR}/.vitest.json`;
 /** The tests that failed when the folder was first checked: they fail on the mocks. */
@@ -955,7 +962,7 @@ export function tsconfigFor(
       },
       include: ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"],
       // The surface check has its own config, which `npm test` compiles.
-      exclude: ["node_modules", MOCKS_DIR, SURFACE_DIR, ...excluded],
+      exclude: ["node_modules", MOCKS_DIR, SURFACE_DIR, ...TOOL_DIRS, ...excluded],
     },
     null,
     2,
@@ -1175,7 +1182,9 @@ export function testRunnerScript(coverage: CoverageGate | undefined, globals = f
     'import { dirname, join, relative as relativeTo } from "node:path";',
     "",
     `const TEST = ${TEST_PATH_PATTERN.toString()};`,
-    `const SKIP = new Set(["node_modules", ".git", "${MOCKS_DIR}"]);`,
+    // A tool's folder at the root (npm's cache, a coverage report) holds no
+    // test of the folder's: the patch leaves it out, so nothing in it runs.
+    `const SKIP = new Set(["node_modules", ".git", "${MOCKS_DIR}", ${TOOL_DIRS.map((dir) => JSON.stringify(dir)).join(", ")}]);`,
     "const node = [];",
     "const vitest = [];",
     "const walk = (dir) => {",
@@ -1329,7 +1338,8 @@ export function testRunnerScript(coverage: CoverageGate | undefined, globals = f
     "    failures.set(name, [...(failures.get(name) ?? []), `${code}: ${message}`]);",
     "  }",
     "  if (result.status !== 0 && failures.size === 0 && waivedHere === 0) failures.set(DECLARATIONS, [output.trim().slice(0, 2000) || `tsc exited ${result.status}`]);",
-    "  const known = existsSync(\"carveout/baseline.json\") ? new Set(JSON.parse(readFileSync(\"carveout/baseline.json\", \"utf8\")).failing) : new Set();",
+    "  // The baseline as it was read before any test ran: a test may write the file.",
+    "  const known = baseline ?? new Set();",
     "  const names = [...failures.keys()].sort();",
     "  surface.checks += Math.max(lines.filter((line) => / \\/\\/ (.+) \\| (.+) \\| (value|type)$/.test(line)).length, names.length);",
     "  surface.fail += names.length;",

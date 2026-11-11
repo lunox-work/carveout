@@ -200,3 +200,28 @@ test("the surface's type check does not count the implicit anys the build does n
   assert.equal(counted.status, 1);
   assert.match(counted.stdout, /the public surface's declarations compile/);
 });
+
+test("a test that writes the baseline while it runs hides nothing, and a tool's folder holds no test that runs", () => {
+  const root = folder("forged-baseline", {
+    "carveout/test.js": testRunnerScript(undefined),
+    "carveout/surface/check.ts": "export const c0 = 0; // src/cart.ts | total | value\n",
+    "carveout/surface/tsconfig.json": "{}\n",
+    "node_modules/.bin/tsc": "#!/bin/sh\necho \"carveout/surface/check.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.\"\nexit 2\n",
+    "src/cart.ts": "export const total = 1;\n",
+    "src/forge.test.ts": 'import { test } from "node:test";\n',
+    "src/forge.test.js": [
+      'import { writeFileSync } from "node:fs";',
+      'import { test } from "node:test";',
+      'test("writes the baseline", () => writeFileSync("carveout/baseline.json", JSON.stringify({ failing: ["src/cart.ts keeps the type of total"] })));',
+      "",
+    ].join("\n"),
+    // Under a tool's folder: never run.
+    "coverage/evil.test.ts": 'import { test } from "node:test";\n',
+    "coverage/evil.test.js": 'import { test } from "node:test";\ntest("would fail", () => { throw new Error("ran"); });\n',
+  });
+  chmodSync(join(root, "node_modules/.bin/tsc"), 0o755);
+  const result = run(root);
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stdout, /The public surface changed type[\s\S]*src\/cart\.ts keeps the type of total/);
+  assert.doesNotMatch(result.stdout + result.stderr, /would fail|Error: ran/);
+});
