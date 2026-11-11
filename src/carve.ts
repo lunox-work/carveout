@@ -64,6 +64,7 @@ import { packageModules, packageUses } from "./extract/fixture.js";
 import { npmPackageTypes, typesPackageOf } from "./extract/package-types.js";
 import { NODE_BUILTINS, isNodeBuiltin } from "./extract/typescript.js";
 import { walkGraph } from "./graph.js";
+import { ENVIRONMENT_PACKAGES, vitestSettings, type VitestSettings } from "./project/vitest-config.js";
 import {
   extensionStyles,
   packageFolder,
@@ -399,6 +400,27 @@ function entriesOf(request: SliceRequest): string[] {
   ].sort(compare);
 }
 
+/**
+ * The Vitest settings the entry points' package runs its tests under, when
+ * the cut brings tests (`vitest-config.ts`), and the entries with its setup
+ * files among them: a component's test that needs jsdom and the setup that
+ * registers its matchers runs in the folder as in the repository.
+ */
+function withTestSetup(
+  repo: string,
+  entries: readonly string[],
+  tests: boolean,
+): { entries: string[]; settings: VitestSettings | null } {
+  if (!tests) return { entries: [...entries], settings: null };
+  const packageOf = packageFolder(resolve(repo));
+  const dirs = [...new Set(entries.map((entry) => packageOf(`${entry}/x`)))];
+  const settings = dirs.map((dir) => vitestSettings(repo, dir)).find((found) => found !== null) ?? null;
+  return {
+    entries: [...new Set([...entries, ...(settings?.setupFiles ?? [])])].sort(compare),
+    settings,
+  };
+}
+
 export interface Plan {
   readonly repo: string;
   readonly entryPoints: readonly string[];
@@ -462,7 +484,7 @@ export function planSlice(request: SliceRequest): Plan {
   const settled = settle(request);
   const repo = resolve(request.repo);
   const budget = request.budget ?? SLICE_BUDGET_DEFAULTS;
-  const entryPoints = entriesOf(request);
+  const { entries: entryPoints } = withTestSetup(repo, entriesOf(request), request.tests === true);
   const { built, walk } = walkGraph(repo, entryPoints, budget, walkOptions(settled, repo));
   const texts = walk.included.map((path) => ({
     path,
@@ -993,7 +1015,7 @@ export async function computeCut(
   const repo = resolve(request.repo);
   const log = request.log ?? (() => {});
   const budget = request.budget ?? SLICE_BUDGET_DEFAULTS;
-  const entryPoints = entriesOf(request);
+  const { entries: entryPoints } = withTestSetup(repo, entriesOf(request), request.tests === true);
   const { built } = walkGraph(repo, entryPoints, budget, walkOptions(settled, repo));
   log(`Read the imports of ${built.files.length} files.`);
   const commitSha = git(repo, ["rev-parse", "HEAD"]);
@@ -1062,6 +1084,14 @@ export async function computeCut(
     ...request.choices,
     ...Object.fromEntries(live.map((name) => [name, "approved-package" as const])),
   };
+  // The environment the package's Vitest tests run in, installed as the
+  // repository locks it (`jsdom` for a component's tests).
+  const { settings: vitest } = withTestSetup(repo, entryPoints, request.tests === true);
+  for (const name of ENVIRONMENT_PACKAGES[vitest?.environment ?? ""] ?? [])
+    if (choices[name] === undefined && lockedVersion(repo, name) !== null) {
+      choices[name] = "approved-package";
+      log(`Installs ${name}: the package's Vitest tests run in the ${vitest?.environment} environment.`);
+    }
   // So is a package whose class a carried test patches by its prototype
   // (`S3Client.prototype.send = ...`): a mock has no prototype to patch, so
   // the test fails on the mock before any change (E6c: 30 such tests).
@@ -1210,6 +1240,8 @@ export async function computeCut(
     ...(coverage === null ? {} : { coverage }),
     ...(live.length === 0 ? {} : { live, liveEnvironment }),
     keepsImplicitAny: analysis.keepsImplicitAny,
+    implicitAnyFiles: analysis.implicitAnyFiles,
+    ...(vitest === null ? {} : { vitest }),
     hasNodeTypes: nodeTypes !== null,
   });
   // Peers the installed packages need, and packages asked for by name
@@ -1757,18 +1789,41 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
   }
   if (request.offline !== true)
     try {
-      await command(
-        "npm",
-        [
-          "install",
-          "--package-lock-only",
-          "--ignore-scripts",
-          "--no-audit",
-          "--no-fund",
-          "--loglevel=error",
-        ],
-        { cwd: out, signal: AbortSignal.timeout(5 * 60_000) },
-      );
+      const resolveLock = () =>
+        command(
+          "npm",
+          ["install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"],
+          { cwd: out, signal: AbortSignal.timeout(5 * 60_000) },
+        );
+      /** Whether `npm ci` would take the lock: it refuses one out of step with package.json. */
+      const lockHolds = async () => {
+        try {
+          await command("npm", ["ci", "--dry-run", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"], {
+            cwd: out,
+            signal: AbortSignal.timeout(5 * 60_000),
+          });
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      await resolveLock();
+      // npm 11 can leave a seeded lock short of entries (vite's and
+      // vitest's own dependencies), which npm ci then refuses: a second
+      // pass fills them and keeps the repository's versions; failing
+      // that, a lock resolved from the registry alone.
+      if (existsSync(join(out, "package-lock.json")) && !(await lockHolds())) {
+        await resolveLock();
+        if (!(await lockHolds())) {
+          await rm(join(out, "package-lock.json"), { force: true });
+          await resolveLock();
+          if (!(await lockHolds())) {
+            await rm(join(out, "package-lock.json"), { force: true });
+            throw new Error("npm ci would not take the lock npm resolved");
+          }
+          log("Resolved package-lock.json from the registry: the repository's own did not resolve into one npm ci takes.");
+        }
+      }
       lockfile = existsSync(join(out, "package-lock.json"));
       log("Resolved package-lock.json.");
     } catch (error) {

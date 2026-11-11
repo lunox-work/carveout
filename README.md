@@ -286,11 +286,20 @@ billing-slice/
   under Node.
 - **The repository's checks.** The compiler options that only reject
   code (`strict`, `noUnusedLocals` and the like) come from the
-  repository's tsconfig. `noImplicitAny` too, unless the slice does not
-  compile under it with its stubs and untyped packages, which the cut says. Node's types come at the repository's version.
-  When the package's own test sets coverage thresholds, `npm test` holds
-  the source files you add to them, and fails, as the package's script
-  does, on a file you add that no test loads (`assert-all-covered`).
+  repository's tsconfig, `noImplicitAny` included: where the stubs leave
+  an implicit any the repository's types would give (a callback passed to
+  a mocked package), the folder's build (`carveout/build.js`) does not
+  count those, and counts every other error. Node's types come at the
+  repository's version. When the package's own test sets coverage
+  thresholds, `npm test` holds the source files you add to them, and
+  fails, as the package's script does, on a file you add that no test
+  loads (`assert-all-covered`).
+- **The package's Vitest settings.** A cut that brings Vitest tests reads
+  the package's `vitest.config.*` (never runs it): its `environment` (the
+  environment's package, `jsdom` or `happy-dom`, installed as the
+  repository locks it), its `setupFiles` (brought along as entry points),
+  `testTimeout` and `globals`, into the folder's `vitest.config.mjs`. A
+  component's tests run in the folder as in the repository.
 - **The public surface.** Every export code outside the slice imports
   must stay exported (the interface test) and keep its type: `npm test`
   type-checks `carveout/surface/check.ts`, which holds each such value to
@@ -305,7 +314,9 @@ billing-slice/
 The plan and the cut read the repository and never run its code. The cut
 fetches package types from the public registry with install scripts off,
 and resolves a lockfile; when the repository has an npm lockfile, the
-slice starts from its locked versions. `--offline` skips both.
+slice starts from its locked versions, and the cut checks `npm ci` takes
+the result (npm 11 can leave a seeded lock short; a second pass, then a
+lock from the registry alone, mends it). `--offline` skips both.
 
 ## What the walk follows
 

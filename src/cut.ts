@@ -304,6 +304,12 @@ export interface SliceAnalysis {
    * folder can hold its code to it; false when the source has it off.
    */
   readonly keepsImplicitAny: boolean;
+  /**
+   * The files where the stubs leave an implicit any, when the source holds
+   * its code to noImplicitAny: the folder relaxes it for them alone when
+   * nothing else in the slice imports them.
+   */
+  readonly implicitAnyFiles: readonly string[];
   /** The walk the slice was cut from. */
   readonly walk: ReachResult;
 }
@@ -483,6 +489,7 @@ export async function analyseSlice(input: {
   let surface: readonly { path: string; text: string }[] = [];
   let configs: string[] = [];
   let keepsImplicitAny = false;
+  let implicitAnyFiles: string[] = [];
   let compilation: CompilationResult = {
     attempted: false,
     ok: false,
@@ -795,6 +802,7 @@ export async function analyseSlice(input: {
         ({ code }) => /^(TS)?7\d{3}$/.test(String(code)),
       );
       keepsImplicitAny = implicit.length === 0;
+      implicitAnyFiles = [...new Set(implicit.flatMap((d) => (d.file === undefined || d.file === null ? [] : [String(d.file)])))].sort();
       if (!keepsImplicitAny)
         input.log(
           `noImplicitAny is relaxed in the folder: ${implicit.length} implicit any with the stubs (${implicit
@@ -949,6 +957,7 @@ export async function analyseSlice(input: {
     surface,
     ready: readiness.ready,
     keepsImplicitAny,
+    implicitAnyFiles,
     walk,
   };
 }

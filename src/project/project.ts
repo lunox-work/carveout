@@ -19,6 +19,7 @@
  */
 
 import ts from "typescript";
+import { vitestConfigText, type VitestSettings } from "./vitest-config.js";
 import type {
   BoundaryContract,
   BoundaryModule,
@@ -264,6 +265,10 @@ export interface ProjectInput {
   readonly coverage?: CoverageGate;
   /** Keep the source's noImplicitAny: the slice compiled under it. */
   readonly keepsImplicitAny?: boolean;
+  /** Where the stubs leave an implicit any; see `SliceAnalysis.implicitAnyFiles`. */
+  readonly implicitAnyFiles?: readonly string[];
+  /** The package's Vitest settings, for the folder's `vitest.config.mjs`; see `vitest-config.ts`. */
+  readonly vitest?: VitestSettings;
   /** The folder installs Node's own types instead of the fallback globals. */
   readonly hasNodeTypes?: boolean;
   /** Service packages kept real rather than mocked, sorted. */
@@ -883,17 +888,61 @@ export function projectCompilerOptions(
 export function tsconfigFor(
   options: Readonly<Record<string, unknown>> | undefined,
   types: readonly string[] = [],
+  excluded: readonly string[] = [],
 ) {
   return `${JSON.stringify(
     {
       compilerOptions: { ...projectCompilerOptions(options), types: [...types] },
       include: ["**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"],
       // The surface check has its own config, which `npm test` compiles.
-      exclude: ["node_modules", MOCKS_DIR, SURFACE_DIR],
+      exclude: ["node_modules", MOCKS_DIR, SURFACE_DIR, ...excluded],
     },
     null,
     2,
   )}\n`;
+}
+
+/** The folder's build when the stubs leave implicit anys: tsc, with those not counted. */
+export const BUILD_SCRIPT_PATH = `${HARNESS_DIR}/build.js`;
+
+/**
+ * `carveout/build.js`: runs the folder's tsc, holding the code to the
+ * repository's noImplicitAny but for the files where the cut found the
+ * stubs leave an implicit any (a callback passed to a mocked package has
+ * no parameter types to take): those errors are the stubs', and are not
+ * counted. Any other error, an implicit any elsewhere included, fails it.
+ */
+export function buildScript(waived: readonly string[]): string {
+  // Raw, so the backslashes of its regular expressions reach the file as
+  // written; no `${` in it, which a raw template would read.
+  return String.raw`// The folder's build: tsc, with the implicit anys the cut's stubs leave not counted.
+import { spawnSync } from "node:child_process";
+import { join } from "node:path";
+const WAIVED = new Set(__WAIVED__);
+// The installed compiler's own command: typescript 7 exports no bin/tsc to resolve.
+const tsc = join("node_modules", ".bin", process.platform === "win32" ? "tsc.cmd" : "tsc");
+const result = spawnSync(tsc, ["-p", "tsconfig.json", "--pretty", "false"], { encoding: "utf8", shell: process.platform === "win32" });
+const lines = ((result.stdout || "") + (result.stderr || "")).split("\n");
+const kept = [];
+let waivedCount = 0;
+let skipping = false;
+for (const line of lines) {
+  if (line.trim() === "") continue;
+  // An indented line belongs to the diagnostic above it.
+  if (/^\s/.test(line)) {
+    if (!skipping) kept.push(line);
+    continue;
+  }
+  const match = /^(.+?)\(\d+,\d+\): error TS(7\d{3}):/.exec(line);
+  skipping = match !== null && WAIVED.has(match[1].split("\\").join("/"));
+  if (skipping) waivedCount += 1;
+  else kept.push(line);
+}
+if (kept.length > 0) process.stdout.write(kept.join("\n") + "\n");
+if (waivedCount > 0)
+  process.stdout.write(waivedCount + " implicit any(s) the stubs leave (a callback into a mocked package) not counted: the repository's types give them.\n");
+process.exitCode = kept.some((line) => / error TS\d+:/.test(line)) ? 1 : 0;
+`.replace("__WAIVED__", JSON.stringify(waived));
 }
 
 export function scanNamedImports(
@@ -1663,10 +1712,18 @@ export function generateProject(input: ProjectInput): GeneratedProject {
     class: "harness",
     public: true,
   });
+  // When the stubs leave an implicit any where the repository's types give
+  // one, the folder keeps noImplicitAny and its build does not count those
+  // (`buildScript`): relaxed for the whole folder, every `[]` would type as
+  // `never[]` under strictNullChecks, and code that pushes into one would
+  // stop compiling (E5: touched-repos).
+  const waived = input.keepsImplicitAny !== true ? [...(input.implicitAnyFiles ?? [])] : [];
   const scripts = {
     ...SANDBOX_SCRIPTS,
+    ...(waived.length === 0 ? {} : { build: `node ${BUILD_SCRIPT_PATH}` }),
     test: `npm run build && node ${TEST_RUNNER_PATH}`,
   };
+  if (waived.length > 0) add({ path: BUILD_SCRIPT_PATH, text: buildScript(waived), class: "harness", public: true });
 
   // Configuration.
   const liveEnvironment = new Set(input.liveEnvironment ?? []);
@@ -1697,13 +1754,16 @@ export function generateProject(input: ProjectInput): GeneratedProject {
     text: tsconfigFor(
       {
         ...input.compilerOptions,
-        ...(input.keepsImplicitAny === true ? {} : UNTYPED_PACKAGE_OPTIONS),
+        ...(input.keepsImplicitAny === true ? {} : waived.length > 0 ? { noEmitOnError: false } : UNTYPED_PACKAGE_OPTIONS),
       },
       globals && vitestInstalled ? ["vitest/globals"] : [],
     ),
     class: "config",
     public: true,
   });
+  if (input.vitest !== undefined && vitestTests.length > 0)
+    add({ path: "vitest.config.mjs", text: vitestConfigText(input.vitest), class: "config", public: true });
+
   add({
     path: ".nvmrc",
     text: `${toolchain.node}\n`,

@@ -55,6 +55,21 @@ export const PSEUDONYM_PLACEHOLDERS: readonly string[] = [
   "tyrell",
 ];
 
+/**
+ * Every placeholder in the order tried: the fictional companies first, then
+ * made-up words any source is unlikely to hold, so a corpus that holds the
+ * companies' names (a pseudonym tool of its own) still gets one per term.
+ */
+function* placeholderCandidates(): Generator<string> {
+  yield* PSEUDONYM_PLACEHOLDERS;
+  const onsets = ["zor", "vel", "quar", "brix", "tov", "mun", "kel", "dro", "fen", "sav"];
+  const codas = ["vex", "lane", "dor", "mira", "tune", "quist", "brook", "nell"];
+  for (const onset of onsets) for (const coda of codas) yield `${onset}${coda}`;
+}
+
+/** The generator's words as a list, for `find`. */
+const placeholderList = [...placeholderCandidates()];
+
 const IDENTIFIER_CHAR = /[A-Za-z0-9_$]/;
 const IDENTIFIER_START = /^[A-Za-z_$]/;
 const IDENTIFIER_RUN = /^[A-Za-z0-9_$]+$/;
@@ -157,7 +172,7 @@ export function draftPseudonyms(input: {
     const chosen = placeholders.get(term);
     if (chosen !== undefined) return chosen;
     const taken = new Set(placeholders.values());
-    const word = PSEUDONYM_PLACEHOLDERS.find(
+    const word = placeholderList.find(
       (candidate) =>
         !taken.has(candidate) &&
         !corpus.includes(candidate) &&
