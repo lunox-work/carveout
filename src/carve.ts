@@ -186,7 +186,7 @@ export function renderSliceAgents(input: {
     ...(input.coverage === undefined
       ? []
       : [
-          `- The package's test script requires coverage (${coverageTerms(input.coverage)}). \`npm test\` holds each file you add under \`${input.coverage.folder}\` to it${input.coverage.allCovered === undefined ? "" : ", and fails on one no test loads"}; code you add to a file that came with the folder is not measured here, and the repository measures it with its whole package: test it as you would a new file.`,
+          `- The package's test script requires coverage (${coverageTerms(input.coverage)}). \`npm test\` holds each file you add under \`${input.coverage.folder}\` to it${input.coverage.allCovered === undefined ? "" : ", and fails on one no test loads"}; code you add to a file that came with the folder is not held to it here, and the repository measures it with its whole package: test it as you would a new file. \`CARVEOUT_COVERAGE=1 npm test\` prints node's coverage of every file.`,
         ]),
     "- When done, leave the edits in place: the repository's owner turns them into a patch with `carveout patch`.",
     "",

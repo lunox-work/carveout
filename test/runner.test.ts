@@ -322,3 +322,18 @@ test("the last line says which surface checks fail as before any edit, and which
   assert.match(result.stdout, /1 of 2 check\(s\) of the public surface hold \(1 failing as before any edit, not counted\)/);
   assert.match(result.stdout, /Ran the tests of 1 file\(s\) the cut did not bring: src\/mine\.test\.ts\./);
 });
+
+test("CARVEOUT_COVERAGE=1 prints node's coverage of the folder's code, its tests left out", () => {
+  const root = folder("coverage-report", {
+    "src/sum.ts": "export const sum = (a: number, b: number): number => a + b;\n",
+    "src/sum.js": "export const sum = (a, b) => a + b;\n",
+    "src/sum.test.ts": 'import { test } from "node:test";\n',
+    "src/sum.test.js": 'import assert from "node:assert/strict";\nimport { test } from "node:test";\nimport { sum } from "./sum.js";\ntest("sums", () => assert.equal(sum(1, 2), 3));\n',
+  });
+  const env: Record<string, string | undefined> = { ...process.env, CARVEOUT_COVERAGE: "1" };
+  delete env["NODE_TEST_CONTEXT"];
+  const result = spawnSync(process.execPath, ["carveout/test.js"], { cwd: root, encoding: "utf8", env });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stderr, /sum\.js/);
+  assert.doesNotMatch(result.stderr, /sum\.test\.js\s*\|/);
+});

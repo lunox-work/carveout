@@ -452,7 +452,7 @@ test("an agent is told where new tests go and what the coverage gate measures, w
     coverage: { folder: "packages/core", lines: 90, branches: 90, allCovered: { dir: "src", excluded: [] } },
   });
   assert.match(agents, /New tests go where the repository's test script finds them: `packages\/core\/test\/\*\.test\.ts`/);
-  assert.match(agents, /requires coverage \(lines 90%, branches 90%\)\. `npm test` holds each file you add under `packages\/core` to it, and fails on one no test loads; code you add to a file that came with the folder is not measured here/);
+  assert.match(agents, /requires coverage \(lines 90%, branches 90%\)\. `npm test` holds each file you add under `packages\/core` to it, and fails on one no test loads; code you add to a file that came with the folder is not held to it here[\s\S]*CARVEOUT_COVERAGE=1 npm test/);
   assert.match(agents, /--cache \.npm-cache/);
   const bare = renderSliceAgents({ entryPoints: ["a.ts"], testsInFolder: 0, testsLeft: 0 });
   assert.doesNotMatch(bare, /New tests go|requires coverage/);
