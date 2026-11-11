@@ -715,6 +715,13 @@ class, `never[]` under the relaxed `noImplicitAny`).
   peers as pnpm and Yarn do (`legacy-peer-deps`).
 - **Test runners.** `node:test` and Vitest. A Jest test is named as left
   behind, never run.
+- **Linting.** The folder runs the package's tests and build, and names
+  the repository's Prettier at its locked version; its ESLint (or other
+  linter) never runs there. The repository's CI does.
+- **Acceptance in the folder.** `check --accept` runs the owner's tests
+  with the folder as it came back, the files `patch` keeps out included
+  (a weakened helper the tests import, say); it names those files, so
+  read them first.
 - **Folders named like build output.** Files under `build/`, `dist/`,
   `vendor/` and `third_party/` are not parsed: a source folder named
   `build` is copied when reached, but its own imports are not followed.
