@@ -444,7 +444,9 @@ export async function analyseSlice(input: {
   for (const dependency of walk.dependencies) {
     if (dependency.status === "path" && copied(dependency.specifier ?? "")) continue;
     if (dependency.status === "dynamic" && carriedTests.has(dependency.file)) continue;
-    if (dependency.status !== "dynamic" && isBare(dependency.specifier)) {
+    // A path read is a repository path, never a package, however it is
+    // spelled (`apps/worker/python/extract.py` is no package named `apps`).
+    if (dependency.status !== "dynamic" && dependency.status !== "path" && isBare(dependency.specifier)) {
       if (isNodeBuiltin(dependency.specifier)) continue;
       if (scripted && workspaceModule(dependency.specifier) !== null) continue;
       const files = packageFiles.get(dependency.specifier) ?? new Set();
@@ -464,7 +466,7 @@ export async function analyseSlice(input: {
           dependency.status === "dynamic"
             ? "A dynamic import of a computed name cannot be resolved."
             : dependency.status === "path"
-              ? `${dependency.specifier ?? ""} is read by path, and is a folder or a kind of file a slice does not copy.`
+              ? `${dependency.specifier ?? ""} is read by path, and is a folder or a kind of file a slice does not copy: cut again with --copy ${dependency.specifier ?? "<path>"} to bring it.`
               : `${dependency.specifier ?? ""} does not resolve to a repository file.`,
       });
   }

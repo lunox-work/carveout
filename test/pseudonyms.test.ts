@@ -188,3 +188,16 @@ test("a placeholder the inputs already use is passed over, and no vocabulary dra
   );
   assert.deepEqual(draftPseudonyms({ files, vocabulary: [], imports: [] }), []);
 });
+
+test("the owner's other repositories, written after the owner's name, join the vocabulary; a file or a word does not", async () => {
+  const { ownedNames } = await import("../src/pseudonyms/index.js");
+  const texts = [
+    { text: 'const REPOS = "lunox-work/sandbox-factory,lunox-work/sandbox-blueprint,lunox-work/landing";\n' },
+    { text: "// See https://github.com/Lunox-Work/sandbox-factory.git and lunox-work/some-notes.md\n" },
+    { text: 'import { Button } from "@lunox/ui";\n' },
+  ];
+  assert.deepEqual(
+    ownedNames(texts, ["lunox-work", "lunox"]).map((entry) => entry.name),
+    ["sandbox-blueprint", "sandbox-factory"],
+  );
+});

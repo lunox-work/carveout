@@ -90,6 +90,7 @@ import {
   vocabularyBlockers,
   vocabularyLeaks,
   workspaceNames,
+  ownedNames,
   workspaceVocabulary,
   type AliasRule,
   type FolderPseudonyms,
@@ -214,12 +215,27 @@ export function packagesTypingLines(
   }
   const found = new Set<string>();
   if (bindings.size === 0) return found;
-  /** The packages whose names a type within `node` names. */
+  // The file's own type declarations, which a type may name in place of
+  // the package's (`type Params = Anthropic.Beta.MessageCreateParams`).
+  const locals = new Map<string, ts.Node>();
+  for (const statement of source.statements)
+    if (
+      (ts.isTypeAliasDeclaration(statement) || ts.isInterfaceDeclaration(statement) || ts.isClassDeclaration(statement)) &&
+      statement.name !== undefined
+    )
+      locals.set(statement.name.text, statement);
+  const followed = new Set<ts.Node>();
+  /** The packages whose names a type within `node` names, through the file's own type declarations. */
   const typesIn = (node: ts.Node, inType: boolean): void => {
     const typed = inType || ts.isTypeNode(node);
     if (typed && ts.isIdentifier(node)) {
       const name = bindings.get(node.text);
       if (name !== undefined) found.add(name);
+      const local = locals.get(node.text);
+      if (local !== undefined && !followed.has(local)) {
+        followed.add(local);
+        typesIn(local, false);
+      }
     }
     ts.forEachChild(node, (child) => typesIn(child, typed));
   };
@@ -1996,13 +2012,18 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
   if (publicCut) {
     const packageOf = packageFolder(repo);
     const kept = new Set((config.keepNames ?? []).map((name) => workspaceVocabulary([name])[0] ?? name.toLowerCase()));
-    const vocabulary = workspaceVocabulary(
-      workspaceNames(
-        repo,
-        [...new Set(computed.manifest.included.map((file) => packageOf(file.path)))],
-        [...(config.names ?? []), ...(request.names ?? [])],
-      ),
-    ).filter((term) => !kept.has(term));
+    const names = workspaceNames(
+      repo,
+      [...new Set(computed.manifest.included.map((file) => packageOf(file.path)))],
+      [...(config.names ?? []), ...(request.names ?? [])],
+    );
+    // The owner's other repositories, by what the folder's text writes
+    // after the owner's name.
+    const owned = ownedNames(
+      [...files.map((file) => ({ text: file.text })), ...textExtras.map((path) => ({ text: extraText.get(path) ?? "" }))],
+      workspaceVocabulary(names),
+    );
+    const vocabulary = workspaceVocabulary([...names, ...owned]).filter((term) => !kept.has(term));
     // What the folder installs from the registry keeps its name: npm needs it.
     const manifestJson = JSON.parse(files.find((file) => file.path === "package.json")?.text ?? "{}") as {
       dependencies?: Record<string, string>;

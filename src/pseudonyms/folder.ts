@@ -245,6 +245,32 @@ export function workspaceNames(
   ].flatMap(spellings);
 }
 
+/**
+ * The names written after a name the repository goes by, the way its
+ * owner's other repositories are (`lunox-work/sandbox-factory` in a default
+ * list, a URL, a comment): each is the owner's too, and goes in the
+ * vocabulary. Only a name of two words or more (`sandbox-factory`): one
+ * word after a slash is as often a folder or a file (`lunox/README`), and
+ * a common word renamed everywhere hides nothing.
+ */
+export function ownedNames(texts: readonly { readonly text: string }[], vocabulary: readonly string[]): VocabularyName[] {
+  const found = new Set<string>();
+  const known = new Set(vocabulary);
+  for (const term of vocabulary) {
+    const spelled = term
+      .split("-")
+      .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("[\\s_\\-.]?");
+    const pattern = new RegExp(`(?<![A-Za-z0-9])${spelled}\\/([a-z0-9]+(?:-[a-z0-9]+)+)(?![A-Za-z0-9._-]*\\.(?!git\\b)[a-z]{1,5}\\b)`, "giu");
+    for (const { text } of texts)
+      for (const match of text.matchAll(pattern)) {
+        const name = (match[1] ?? "").toLowerCase();
+        if (name !== "" && !known.has(name)) found.add(name);
+      }
+  }
+  return [...found].sort().map((name) => ({ name, kind: "name" as const }));
+}
+
 /** Characters no source holds, around a kept name's index while the table runs. */
 const MASK_OPEN = "";
 const MASK_CLOSE = "";

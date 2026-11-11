@@ -188,7 +188,9 @@ test("a service package the code's own types are built from is installed, not mo
       'export function blank(): Pick<Stripe.Customer, "email" | "phone"> {',
       "  return {} as never;",
       "}",
-      'export function partial(): Pick<Stripe.CustomerCreateParams, "email" | "phone"> {',
+      // Through a type of the file's own, as code often names an SDK's.
+      "type Params = Stripe.CustomerCreateParams;",
+      'export function partial(): Pick<Params, "email" | "phone"> {',
       "  return {};",
       "}",
       "export const cache = () => new Redis();",
@@ -325,4 +327,26 @@ test("two modules that are no package and make one folder name each get their ow
   assert.deepEqual(Object.keys(map).sort(), ["#virtual-api", "virtual:api"]);
   assert.notEqual(map["virtual:api"], map["#virtual-api"]);
   assert.deepEqual(cut.record.blockers.filter((blocker) => blocker.code === "path_conflict"), []);
+});
+
+test("a file read by path is a path to copy, never a package named for its first folder", async () => {
+  const repo = join(scratch, "path-read");
+  cpSync(FIXTURE, repo, { recursive: true });
+  write(repo, {
+    "apps/shop/src/runner.ts": 'import { fileURLToPath } from "node:url";\n\nexport const script = (): string => fileURLToPath(new URL("../python/run.py", import.meta.url));\n',
+    "apps/shop/python/run.py": 'print("hi")\n',
+  });
+  const git = (args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, stdio: "ignore" });
+  git(["init", "-q"]);
+  git(["add", "-A"]);
+  git(["commit", "-q", "-m", "fixture"]);
+  const request = { repo, entryPoints: ["apps/shop/src/runner.ts"], budget: { maxFiles: 40, maxDepth: 1 }, offline: true };
+  const cut = await cutSlice({ ...request, out: join(scratch, "path-read-slice") });
+  assert.equal(cut.record.dependencies.some((dependency) => dependency.name === "apps"), false, JSON.stringify(cut.record.dependencies));
+  const blocker = cut.record.blockers.find((each) => each.code === "path_read");
+  assert.match(blocker?.detail ?? "", /apps\/shop\/python\/run\.py is read by path[\s\S]*--copy apps\/shop\/python\/run\.py/);
+  // Brought with --copy, it is there and nothing blocks.
+  const copied = await cutSlice({ ...request, out: join(scratch, "path-read-copied"), copy: ["apps/shop/python"] });
+  assert.ok(existsSync(join(copied.out, "apps/shop/python/run.py")));
+  assert.equal(copied.record.blockers.some((each) => each.code === "path_read"), false, JSON.stringify(copied.record.blockers));
 });

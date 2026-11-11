@@ -554,6 +554,8 @@ async function main(argv: readonly string[]) {
       });
       const verdict = verdictOf(steps, result.record);
       const record = result.record;
+      // The step that failed, and what it printed last: what to fix first.
+      const failedStep = steps.find((step) => !step.ok);
       if (values.json === true)
         print({
           out: result.out,
@@ -580,7 +582,7 @@ async function main(argv: readonly string[]) {
                   ? `its tests run, but ${verdict.baseline?.length ?? 0} fail on the mocks before any edit (not counted)`
                   : verdict.handoff === "no-tests"
                     ? "it builds, but no test of this code came with it: write the tests the work must pass"
-                    : "it does not install, build or test on its own (carveout check names the step)"
+                    : `it does not ${failedStep === undefined ? "install, build or test" : failedStep.command} on its own (below)`
           }`,
           ...(verdict.counts === undefined ? [] : [`  Tests:${countsSentence(verdict.counts, false)}`]),
           ...(record.exposure === undefined ? [] : [`  Shows ${renderExposure(record.exposure)}`]),
@@ -599,6 +601,9 @@ async function main(argv: readonly string[]) {
           ...(verdict.handoff === "red-baseline" && hasAdvice(result.readiness)
             ? ["", "To run those on real code, cut again with:", ...renderReadiness(result.readiness)]
             : []),
+          ...(failedStep === undefined
+            ? []
+            : ["", `${failedStep.command} failed; its last lines:`, ...failedStep.output.trim().split("\n").slice(-25).map((line) => `  ${line}`)]),
           "",
           result.receipt === null
             ? "No receipt: the folder that comes back will be judged by its own record (--no-receipt on patch)."
