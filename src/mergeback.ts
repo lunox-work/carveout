@@ -401,7 +401,7 @@ export async function applyPatch(
         ...(current.copied === undefined
           ? {}
           : {
-              copied: [...current.copied, ...fresh.map(([path, { sha256: hash }]) => ({ path, sha256: hash }))].sort((a, b) =>
+              copied: [...current.copied, ...fresh.map(([path, { sha256: hash }]) => ({ path, sha256: hash, applied: true as const }))].sort((a, b) =>
                 compare(a.path, b.path),
               ),
             }),
@@ -800,14 +800,16 @@ export async function refreshProject(
       ...now.record.manifest.included.filter((file) => !gone.has(file.path)).map((file) => (written.has(file.path) ? { ...file, ...atTo(file.path) } : file)),
       ...[...written.keys()].filter((path) => !known.has(path)).map(atTo),
     ].sort((a, b) => compare(a.path, b.path));
-    const copiedNow = new Map((now.record.copied ?? []).filter((file) => !gone.has(file.path)).map((file) => [file.path, file.sha256]));
-    for (const [path, { sha256: hash }] of written) copiedNow.set(path, hash);
+    // A file refresh wrote is the repository's at the new base; any other
+    // keeps what it was, a patch's mark included.
+    const copiedNow = new Map<string, { path: string; sha256: string; applied?: true }>(
+      (now.record.copied ?? []).filter((file) => !gone.has(file.path)).map((file) => [file.path, file]),
+    );
+    for (const [path, { sha256: hash }] of written) copiedNow.set(path, { path, sha256: hash });
     const updated: CarveoutRecord = {
       ...now.record,
       manifest: { ...now.record.manifest, ...(whole ? { sourceCommitSha: to } : {}), included },
-      ...(now.record.copied === undefined
-        ? {}
-        : { copied: [...copiedNow.entries()].map(([path, hash]) => ({ path, sha256: hash })).sort((a, b) => compare(a.path, b.path)) }),
+      ...(now.record.copied === undefined ? {} : { copied: [...copiedNow.values()].sort((a, b) => compare(a.path, b.path)) }),
     };
     saveRecord(root, now, updated, {}, new Map([...written.values()].map(({ folderPath, folderSha256 }) => [folderPath, folderSha256])));
   }

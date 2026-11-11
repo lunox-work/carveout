@@ -267,7 +267,11 @@ export function folderRecordFor(
     const at = join(resolve(dir), path);
     return existsSync(at) ? createHash("sha256").update(readFileSync(at)).digest("hex") : "";
   };
-  const asWritten = (entry: { readonly path: string }) => ({ path: pathOf(entry.path), sha256: hashAt(pathOf(entry.path)) });
+  const asWritten = (entry: { readonly path: string; readonly applied?: true }) => ({
+    path: pathOf(entry.path),
+    sha256: hashAt(pathOf(entry.path)),
+    ...(entry.applied === true ? { applied: true as const } : {}),
+  });
   return {
     ...renamed,
     manifest: {

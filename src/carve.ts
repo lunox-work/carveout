@@ -860,7 +860,12 @@ export interface CarveoutRecord {
    * The slice's own files as written, imports rewritten, with their hashes:
    * what an edit since the cut is measured against (the coverage gate).
    */
-  readonly copied?: readonly { path: string; sha256: string }[];
+  /**
+   * What the folder holds of each slice file as the cut (or a later apply)
+   * wrote it; `applied` marks a file a patch brought in, which no cut of
+   * the repository wrote: the folder holding one is edited.
+   */
+  readonly copied?: readonly { path: string; sha256: string; applied?: true }[];
   readonly lockfile: boolean;
   readonly blockers: readonly {
     readonly code: string;
@@ -2486,6 +2491,9 @@ function buildOutput(path: string, present: ReadonlySet<string>): boolean {
  */
 function folderEdited(dir: string, record: CarveoutRecord): boolean {
   const root = resolve(dir);
+  // A file a patch brought in is no cut's: its tests' failures are no
+  // baseline's (a failing test apply added would be recorded as one).
+  if ((record.copied ?? []).some((file) => file.applied === true)) return true;
   const written = new Map([
     ...(record.copied ?? []).map((file) => [file.path, file.sha256] as const),
     ...(record.extras ?? []).map((file) => [file.path, file.sha256] as const),

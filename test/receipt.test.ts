@@ -479,3 +479,16 @@ test("refresh keeps a file the folder deleted, and never moves the base past a f
   const patch = await patchProject(second.out, { repo: moving2 });
   assert.match(patch.diff, /the contributor's note/);
 });
+
+test("a failing test apply brings in is never recorded as the folder's baseline", async () => {
+  const cut = await cutSlice({ repo, out: join(scratch, "applied-test"), entryPoints: [ENTRY], budget: { maxFiles: 40, maxDepth: 1 }, offline: true, tests: true });
+  const work = join(scratch, `up-${Math.random().toString(36).slice(2)}`);
+  git(scratch, ["clone", "-q", repo, work]);
+  writeFileSync(join(work, "apps/shop/src/cart.test.ts"), 'import assert from "node:assert/strict";\nimport { test } from "node:test";\nimport { subtotal } from "./cart";\ntest("fails", () => assert.equal(subtotal([]), 1));\n');
+  git(work, ["add", "-A"]);
+  const applied = await applyPatch(cut.out, git(work, ["diff", "--cached"]));
+  assert.ok(applied.added.includes("apps/shop/src/cart.test.ts"), JSON.stringify(applied));
+  assert.ok(cut.receipt !== null);
+  const copied = readReceipt(cut.receipt).record.copied ?? [];
+  assert.equal(copied.find((file) => file.path === "apps/shop/src/cart.test.ts")?.applied, true);
+});
