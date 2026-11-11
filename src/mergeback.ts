@@ -780,6 +780,8 @@ export async function refreshProject(
   readonly applied: Applied;
   /** Files taken as resolved whose text leaves out some of the repository's change to them. */
   readonly droppedUpstream?: readonly string[];
+  /** Files taken as resolved where the repository changed the same lines: no merge can say what the folder's text keeps. */
+  readonly overlapResolved?: readonly string[];
   /** Copied folders' files the repository changed, left as the folder holds them. */
   readonly copiedLeft?: readonly string[];
   /** Copied folders' files the folder had not edited, taken as the repository has them. */
@@ -823,6 +825,7 @@ export async function refreshProject(
   // One whose text leaves out some of the repository's change is named.
   const table = trusted.receipt?.pseudonyms;
   const droppedUpstream: string[] = [];
+  const overlapResolved: string[] = [];
   const mergeScratch = resolved.length === 0 ? null : mkdtempSync(join(tmpdir(), "carveout-resolved-"));
   for (const path of resolved) {
     try {
@@ -832,7 +835,10 @@ export async function refreshProject(
       const folderText = readFileSync(join(root, folderPathOf), "utf8");
       const ours = table === undefined ? folderText : fromFolder(table, folderPathOf, folderText).text;
       const merged = mergeText(mergeScratch ?? tmpdir(), ours, show(baseCommit), show(to));
-      if (merged.conflicts || merged.text !== ours) droppedUpstream.push(path);
+      // Clean, a merge shows what the folder's text leaves out; over the
+      // same lines it cannot, and the person's merge stands, named.
+      if (merged.conflicts) overlapResolved.push(path);
+      else if (merged.text !== ours) droppedUpstream.push(path);
     } catch {
       // A file the commit deleted, or the folder did: nothing to compare.
     }
@@ -942,6 +948,7 @@ export async function refreshProject(
     to,
     applied,
     ...(droppedUpstream.length === 0 ? {} : { droppedUpstream }),
+    ...(overlapResolved.length === 0 ? {} : { overlapResolved }),
     ...(copiedLeft.length === 0 ? {} : { copiedLeft }),
     ...(copiedTaken.length === 0 ? {} : { copiedTaken }),
   };

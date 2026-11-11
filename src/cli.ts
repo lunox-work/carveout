@@ -1162,13 +1162,18 @@ async function main(argv: readonly string[]) {
           process.stdout.write(
             `Changed in the repository, in a folder the cut copied, and edited in the folder: not written over its copy. Bring each change by hand, then: carveout refresh ${dir} --resolved <path>:\n${list(refreshed.copiedLeft)}\n`,
           );
+        if (refreshed.overlapResolved !== undefined)
+          process.stdout.write(
+            `Taken as resolved where the repository changed the same lines: check the folder's text keeps what it needs of that change (the next patch reverts what it leaves out):\n${list(refreshed.overlapResolved)}\n`,
+          );
         if (refreshed.droppedUpstream !== undefined)
           process.stdout.write(
             `Taken as resolved, though the folder's text leaves out some of the repository's change to it (the next patch reverts those lines; merge them in if that is not meant):\n${list(refreshed.droppedUpstream)}\n`,
           );
       }
       if (refreshed !== null && (refreshed.applied.leaks.length > 0 || refreshed.applied.unmapped.length > 0)) process.exitCode = 2;
-      if (refreshed !== null && refreshed.applied.conflicts.length > 0) process.exitCode = 7;
+      // An edited copy the repository changed is an overlap too: merged by hand.
+      if (refreshed !== null && (refreshed.applied.conflicts.length > 0 || refreshed.copiedLeft !== undefined)) process.exitCode = 7;
       return;
     }
 

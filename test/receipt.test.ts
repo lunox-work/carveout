@@ -651,6 +651,10 @@ test("refresh takes a copied file the folder never edited, names one it did, and
   writeFileSync(join(cut.out, migration), "create table carts (id bigint, total int);\n");
   const resolved = await refreshProject(cut.out, { resolved: [migration] });
   assert.ok(resolved !== null);
+  // Both sides changed the one line: no merge can say what the hand merge
+  // keeps, so it is named for a look, not as leaving the change out.
+  assert.deepEqual(resolved.overlapResolved, [migration]);
+  assert.equal(resolved.droppedUpstream, undefined);
   const record = JSON.parse(readFileSync(join(cut.out, "carveout.json"), "utf8")) as { manifest: { included: { path: string }[] }; extras?: { path: string }[] };
   assert.ok(!record.manifest.included.some((file) => file.path === migration || file.path === seed));
   assert.deepEqual(record.extras?.map((file) => file.path), [migration, seed]);
