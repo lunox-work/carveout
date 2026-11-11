@@ -5,9 +5,14 @@ description:
   contractor, and take the work back, without showing them the rest. A
   slice is the files a change needs, copied at their repository paths, with
   every module it imports from the rest replaced by a .d.ts stub and a
-  recording mock, so the folder installs, builds and tests on its own; its
+  recording mock, so the folder installs, builds and tests on its own; a
+  public one is written in pseudonyms, so it does not say whose code it is.
+  `handoff` cuts, checks and says whether the folder is ready for a
+  fixed-scope job, with a TASK.md of the work and when it is accepted; its
   edits come back as a patch that runs none of their code and holds CI,
-  manifest and lockfile edits and weakened tests. Also, for a change made
+  manifest and lockfile edits, tests bent to pass and new reach, judged by
+  the maintainer's receipt; `widen` and `refresh` keep a long job going.
+  Also, for a change made
   in the repository itself: `impact` lists the files it reaches, the
   exports whose type changed and who takes them, and the tests to run;
   `gate` holds weakened or deleted tests, CI and config edits, and new
@@ -29,6 +34,27 @@ PATH.
 Run it from the repository's root, or pass `--repo <root>`: the root is where
 the lockfile and the workspace manifest are, so workspace packages resolve to
 their source. Entry points are files or directories relative to the root.
+
+## The hand-off, in short
+
+For a contractor, a contributor or an agent who must not see the rest of
+the repository, at a fixed scope:
+
+```sh
+carveout handoff <entry>... --task task.md --out ../job   # cut, check, verdict
+# send ../job without node_modules; keep the receipt the command names
+carveout patch ../job-returned --output change.patch      # runs none of its code
+git switch -c contrib/job && git apply --3way change.patch  # then CI decides
+```
+
+`handoff` exits 0 only when the folder is ready: its tests pass before
+any edit. Otherwise report the verdict as it is: tests that fail on the
+mocks (and the `--copy-pure`, `--live` or `--copy` it names), no tests (the
+work needs tests written into the task), or a step that fails. The folder's
+`AGENTS.md` tells the contributor what comes back; `TASK.md` says when the
+work is accepted. During the job, `refresh` brings the repository's new
+commits into the folder and `widen --entry` cuts it wider, the work kept.
+The sections below are each step in full.
 
 ## 0. A change in the repository: impact and gate
 
