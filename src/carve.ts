@@ -2907,6 +2907,83 @@ export async function checkProject(
     trusted.receiptPath !== null && existsSync(trusted.receiptPath) ? readFileSync(trusted.receiptPath) : null;
   let receiptNow = receiptBefore;
   let recorded: readonly string[] | null = null;
+  // The owner's acceptance tests, each on its own runner with no baseline:
+  // each must report a test, and every one must pass. Run on its own, so
+  // no file pattern, twin or name the baseline holds can pass it unseen;
+  // and on the build, before the folder's own tests run any of its code in
+  // the copy, so nothing it writes there stands in for them.
+  const accept = async () => {
+    // A child's environment is the one given, whole: PATH finds node for
+    // a runner's `#!/usr/bin/env node`, as every other step has it.
+    const acceptEnv: Record<string, string> = {
+      PATH: process.env["PATH"] ?? "",
+      ...(process.env["HOME"] === undefined ? {} : { HOME: process.env["HOME"] }),
+      ...(process.env["SystemRoot"] === undefined ? {} : { SystemRoot: process.env["SystemRoot"] }),
+      ...env,
+    };
+    const lines: string[] = [];
+    let passed = true;
+    for (const path of acceptedAt) {
+      const text = readFileSync(join(work, path), "utf8");
+      const vitestFile = /['"]vitest(\/[^'"]*)?['"]/.test(text);
+      let tests = 0;
+      let failures = 0;
+      let output = "";
+      if (vitestFile) {
+        const report = join(work, HARNESS_DIR, ".accept.json");
+        await rm(report, { force: true });
+        const bin = join(work, "node_modules", ".bin", "vitest");
+        if (!existsSync(bin)) {
+          passed = false;
+          lines.push(`FAIL ${path}: it runs on Vitest, which the folder does not install (cut again with --install vitest)`);
+          continue;
+        }
+        const result = spawnSync(bin, ["run", "--config", "vitest.config.mjs", "--reporter=json", `--outputFile.json=${report}`, path], {
+          cwd: work,
+          encoding: "utf8",
+          env: acceptEnv,
+          timeout: 10 * 60_000,
+          maxBuffer: 256 * 1024 * 1024,
+        });
+        output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+        try {
+          const json = JSON.parse(readFileSync(report, "utf8")) as { testResults?: { assertionResults?: { status?: string }[]; status?: string }[] };
+          for (const file of json.testResults ?? []) {
+            const cases = file.assertionResults ?? [];
+            tests += cases.length;
+            failures += cases.filter((each) => each.status === "failed").length + (cases.length === 0 && file.status === "failed" ? 1 : 0);
+          }
+        } catch {
+          failures += 1;
+        }
+      } else {
+        const compiled = path.replace(/\.tsx?$/, ".js").replace(/\.mts$/, ".mjs").replace(/\.cts$/, ".cjs");
+        const result = spawnSync(
+          process.execPath,
+          [`--env-file=${ENV_FILE}`, `--import=./${ASSETS_LOADER_PATH}`, "--test", "--test-reporter=tap", "--test-reporter-destination=stdout", compiled],
+          { cwd: work, encoding: "utf8", env: acceptEnv, timeout: 10 * 60_000, maxBuffer: 256 * 1024 * 1024 },
+        );
+        output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+        // The tests it holds: a file with none is reported as one test named
+        // for the file, which is no test of the work.
+        const entries = [...(result.stdout ?? "").matchAll(/^\s*(not )?ok \d+ - (.+?)(?: # .*)?$/gm)].filter(
+          (match) => !(match[2] ?? "").endsWith(compiled),
+        );
+        tests = entries.length;
+        failures = entries.filter((match) => match[1] !== undefined).length + (result.status !== 0 && entries.every((match) => match[1] === undefined) ? 1 : 0);
+      }
+      const ok = tests > 0 && failures === 0;
+      if (!ok) passed = false;
+      lines.push(
+        ok
+          ? `ok   ${path}: ${tests} test(s) pass`
+          : tests === 0
+            ? `FAIL ${path}: no test of it ran (it must name its runner and hold a test)\n${output.trim().slice(-2000)}`
+            : `FAIL ${path}: ${failures} of ${tests} test(s) fail\n${output.trim().slice(-4000)}`,
+      );
+    }
+    steps.push({ command: "accept", ok: passed, output: lines.join("\n") });
+  };
   for (const argv of run) {
     const [executable = "npm", ...args] = argv;
     try {
@@ -2916,6 +2993,7 @@ export async function checkProject(
         env,
       });
       steps.push({ command: argv.join(" "), ok: true, output });
+      if (argv[1] === "run" && argv[2] === "build" && acceptedAt.length > 0) await accept();
     } catch (error) {
       const output = error instanceof Error ? error.message : String(error);
       const baseline =
@@ -2958,72 +3036,6 @@ export async function checkProject(
         output: `The folder's code changed the maintainer's receipt (${trusted.receiptPath}) while it ran; it was put back. Do not merge this folder: read its tests and scripts first.`,
       });
     }
-  }
-  // The owner's acceptance tests, each on its own runner with no baseline:
-  // each must report a test, and every one must pass. Run on its own, so
-  // no file pattern, twin or name the baseline holds can pass it unseen.
-  if (acceptedAt.length > 0 && steps.length === run.length && steps.every((step) => step.ok)) {
-    const lines: string[] = [];
-    let passed = true;
-    for (const path of acceptedAt) {
-      const text = readFileSync(join(work, path), "utf8");
-      const vitestFile = /['"]vitest(\/[^'"]*)?['"]/.test(text);
-      let tests = 0;
-      let failures = 0;
-      let output = "";
-      if (vitestFile) {
-        const report = join(work, HARNESS_DIR, ".accept.json");
-        await rm(report, { force: true });
-        const bin = join(work, "node_modules", ".bin", "vitest");
-        if (!existsSync(bin)) {
-          passed = false;
-          lines.push(`FAIL ${path}: it runs on Vitest, which the folder does not install (cut again with --install vitest)`);
-          continue;
-        }
-        const result = spawnSync(bin, ["run", "--config", "vitest.config.mjs", "--reporter=json", `--outputFile.json=${report}`, path], {
-          cwd: work,
-          encoding: "utf8",
-          env,
-          maxBuffer: 256 * 1024 * 1024,
-        });
-        output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
-        try {
-          const json = JSON.parse(readFileSync(report, "utf8")) as { testResults?: { assertionResults?: { status?: string }[]; status?: string }[] };
-          for (const file of json.testResults ?? []) {
-            const cases = file.assertionResults ?? [];
-            tests += cases.length;
-            failures += cases.filter((each) => each.status === "failed").length + (cases.length === 0 && file.status === "failed" ? 1 : 0);
-          }
-        } catch {
-          failures += 1;
-        }
-      } else {
-        const compiled = path.replace(/\.tsx?$/, ".js").replace(/\.mts$/, ".mjs").replace(/\.cts$/, ".cjs");
-        const result = spawnSync(
-          process.execPath,
-          [`--env-file=${ENV_FILE}`, `--import=./${ASSETS_LOADER_PATH}`, "--test", "--test-reporter=tap", "--test-reporter-destination=stdout", compiled],
-          { cwd: work, encoding: "utf8", env, maxBuffer: 256 * 1024 * 1024 },
-        );
-        output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
-        // The tests it holds: a file with none is reported as one test named
-        // for the file, which is no test of the work.
-        const entries = [...(result.stdout ?? "").matchAll(/^\s*(not )?ok \d+ - (.+?)(?: # .*)?$/gm)].filter(
-          (match) => !(match[2] ?? "").endsWith(compiled),
-        );
-        tests = entries.length;
-        failures = entries.filter((match) => match[1] !== undefined).length + (result.status !== 0 && entries.every((match) => match[1] === undefined) ? 1 : 0);
-      }
-      const ok = tests > 0 && failures === 0;
-      if (!ok) passed = false;
-      lines.push(
-        ok
-          ? `ok   ${path}: ${tests} test(s) pass`
-          : tests === 0
-            ? `FAIL ${path}: no test of it ran (it must name its runner and hold a test)\n${output.trim().slice(-2000)}`
-            : `FAIL ${path}: ${failures} of ${tests} test(s) fail\n${output.trim().slice(-4000)}`,
-      );
-    }
-    steps.push({ command: "accept", ok: passed, output: lines.join("\n") });
   }
   // The run's counts, for the verdict: how many tests the folder runs and
   // how many pass before any edit.
