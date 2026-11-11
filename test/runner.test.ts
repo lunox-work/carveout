@@ -363,7 +363,7 @@ test("a node:test file added where the package's tests run on Vitest fails the r
 
 test("the include check reads globs inside braces and extglobs as globs, and [!x] as a negation", () => {
   const script = testRunnerScript(undefined, false, [], ["src/**/*.test.ts"]);
-  const start = script.indexOf("const globSource =");
+  const start = script.indexOf("const topLevel =");
   const end = script.indexOf("const included =");
   assert.ok(start >= 0 && end > start, "the runner carries the glob reader");
   const globRegExp = new Function(`${script.slice(start, end)}\nreturn globRegExp;`)() as (glob: string) => RegExp;
@@ -376,6 +376,11 @@ test("the include check reads globs inside braces and extglobs as globs, and [!x
   assert.ok(!negated.test("src/_a.test.ts"));
   // A negated class stays within one folder, as a glob's characters do.
   assert.ok(!globRegExp("src/[!_]a.test.ts").test("src//a.test.ts"));
+  // A comma inside an extglob in braces is the extglob's, not the braces'.
+  const nested = globRegExp("src/{a,+(b,c)}.ts");
+  assert.ok(nested.test("src/a.ts"));
+  assert.ok(nested.test("src/b,c.ts"));
+  assert.ok(!nested.test("src/c).ts"));
   // One it cannot read holds nothing back, and the run goes on.
   assert.ok(globRegExp("src/[\\]x.ts").test("anything"));
   const ext = globRegExp("**/*.test.?(c|m)[jt]s?(x)");

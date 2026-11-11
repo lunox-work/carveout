@@ -1463,16 +1463,33 @@ export function testRunnerScript(
           `const INCLUDE = ${JSON.stringify(vitestInclude)};`,
           // Globs as Vitest reads them: `**`, `*`, `?`, `[jt]`, `{a,b}`, `?(c|m)`.
           // An alternative inside braces or an extglob is a glob itself.
-          String.raw`const globSource = (glob) => glob.split(/(\*\*\/|\*\*$|[?@+*]\([^)]*\)|\*|\?|\[[^\]]*\]|\{[^}]*\})/).map((part) => {
+          String.raw`// Splits on a separator outside any (), {} or [] it holds.
+const topLevel = (text, separator) => {
+  const parts = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "(" || c === "{" || c === "[") depth++;
+    else if (c === ")" || c === "}" || c === "]") depth--;
+    else if (c === separator && depth === 0) {
+      parts.push(text.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(text.slice(start));
+  return parts;
+};
+const globSource = (glob) => glob.split(/(\*\*\/|\*\*$|[?@+*]\([^)]*\)|\*|\?|\[[^\]]*\]|\{[^}]*\})/).map((part) => {
   const escape = (text) => text.replace(/[.+*?^\x24{}()|[\]\\]/g, "\\$&");
   if (part === "**/") return "(?:.*/)?";
   if (part === "**") return ".*";
   const ext = /^([?@+*])\((.*)\)$/.exec(part);
-  if (ext) return "(?:" + ext[2].split("|").map(globSource).join("|") + ")" + (ext[1] === "@" ? "" : ext[1]);
+  if (ext) return "(?:" + topLevel(ext[2], "|").map(globSource).join("|") + ")" + (ext[1] === "@" ? "" : ext[1]);
   if (part === "*") return "[^/]*";
   if (part === "?") return "[^/]";
   if (/^\[.*\]$/.test(part)) return part.replace(/^\[!/, "[^/");
-  if (/^\{.*\}$/.test(part)) return "(?:" + part.slice(1, -1).split(",").map(globSource).join("|") + ")";
+  if (/^\{.*\}$/.test(part)) return "(?:" + topLevel(part.slice(1, -1), ",").map(globSource).join("|") + ")";
   return escape(part);
 }).join("");
 // A pattern it cannot read (an unclosed class, say) holds nothing back rather than stopping the run.
