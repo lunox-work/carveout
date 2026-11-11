@@ -191,7 +191,8 @@ function verdictOf(
   readonly baseline?: readonly string[];
   readonly carried: number;
 } {
-  const ok = steps.length === 3 && steps.every((step) => step.ok);
+  const own = steps.filter((step) => step.command !== "accept");
+  const ok = own.length === 3 && own.every((step) => step.ok);
   const testStep = steps.find((step) => step.command === "npm test");
   const baseline = testStep?.baselineInEffect !== undefined && testStep.baselineInEffect.length > 0 ? testStep.baselineInEffect : undefined;
   const counts = testStep?.counts;
@@ -586,15 +587,25 @@ async function main(argv: readonly string[]) {
       });
       // The owner's acceptance tests on the folder as it goes out: they
       // should not pass before the work, or they test nothing of it.
-      const vacuous =
+      const preSteps =
         accepted.length === 0 || steps.some((step) => !step.ok)
           ? null
-          : (
-              await checkProject(result.out, {
-                ...(result.receipt === null ? { noReceipt: true } : { receipt: result.receipt }),
-                accept: accepted,
-              })
-            ).every((step) => step.ok);
+          : await checkProject(result.out, {
+              ...(result.receipt === null ? { noReceipt: true } : { receipt: result.receipt }),
+              accept: accepted,
+            });
+      const vacuous = preSteps === null ? null : preSteps.every((step) => step.ok);
+      // A build that fails on an acceptance test itself (an import it makes
+      // that the folder lacks) is no failure of the work's.
+      const unbuilt =
+        preSteps === null || preSteps.some((step) => step.command === "accept")
+          ? undefined
+          : preSteps
+              .find((step) => !step.ok)
+              ?.output.split("\n")
+              // A module it imports that is not there (TS2307), not a name
+              // the work is yet to add (TS2305, TS2339: failing as it should).
+              .find((line) => /TS2307/.test(line) && accepted.some((test) => line.includes(test.path)));
       const verdict = verdictOf(steps, result.record);
       const record = result.record;
       // The step that failed, and what it printed last: what to fix first.
@@ -657,7 +668,9 @@ async function main(argv: readonly string[]) {
                 "",
                 vacuous
                   ? `The owner's ${accepted.length} acceptance test file(s) already pass on the folder as it goes out: they test nothing of the work (or it is done). Make them fail before it.`
-                  : `The owner's ${accepted.length} acceptance test file(s) fail on the folder as it goes out, as they should before the work; keep them, and run them on the folder that comes back with carveout check --accept.`,
+                  : unbuilt !== undefined
+                    ? `The owner's acceptance tests do not build in the folder, whatever the work does: ${unbuilt.trim()}. Import what they test by a relative path the folder holds, and run handoff again.`
+                    : `The owner's ${accepted.length} acceptance test file(s) fail on the folder as it goes out, as they should before the work; keep them, and run them on the folder that comes back with carveout check --accept.`,
               ]),
           "",
           result.receipt === null
@@ -833,7 +846,9 @@ async function main(argv: readonly string[]) {
         ...(accept.length === 0 ? {} : { accept, held: heldBack }),
         ...receiptOption,
       });
-      const ok = steps.length === 3 && steps.every((step) => step.ok);
+      const own = steps.filter((step) => step.command !== "accept");
+      const ok = own.length === 3 && own.every((step) => step.ok);
+      const acceptStep = steps.find((step) => step.command === "accept");
       const checked = trustedCut(dir, values.receipt, { optional: true }).record;
       const testStep = steps.find((step) => step.command === "npm test");
       const baselineOf = testStep?.baselineInEffect !== undefined && testStep.baselineInEffect.length > 0 ? testStep.baselineInEffect : undefined;
@@ -927,14 +942,16 @@ async function main(argv: readonly string[]) {
             ...(accept.length === 0
               ? []
               : [
-                  ok
-                    ? `The owner's ${accept.length} acceptance test file(s) ran with the folder's tests, in the check's copy, and pass.${heldBack.length === 0 ? "" : ` patch keeps ${heldBack.length} file(s) out (${heldBack.join(", ")}): the run had the tests, helpers and setup files among them as the cut wrote them and none the folder added; any other ran as the folder holds it.`}`
-                    : `The owner's ${accept.length} acceptance test file(s) ran with the folder's tests, in the check's copy; npm test's failures above name what failed.`,
+                  acceptStep === undefined
+                    ? `The owner's ${accept.length} acceptance test file(s) did not run: the folder's own steps failed first.`
+                    : acceptStep.ok
+                      ? `The owner's ${accept.length} acceptance test file(s) ran on their own, in the check's copy, and pass.${heldBack.length === 0 ? "" : ` patch keeps ${heldBack.length} file(s) out (${heldBack.join(", ")}): the run had the tests, helpers and setup files among them as the cut wrote them and none the folder added; any other ran as the folder holds it.`}`
+                      : `The owner's acceptance tests do not pass on the folder that came back:\n${acceptStep.output}`,
                 ]),
           ].join("\n")}\n`,
         );
       }
-      if (!ok) process.exitCode = 2;
+      if (!ok || (accept.length > 0 && acceptStep?.ok !== true)) process.exitCode = 2;
       return;
     }
 
