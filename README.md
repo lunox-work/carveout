@@ -13,12 +13,12 @@
 </p>
 
 <p align="center">
-  <img src="assets/hero.png" width="100%" alt="Zero-trust handoff for your codebase. A contractor sees 0.7% of the repository's source (median of 8 slices of a 245k-line TypeScript repository), and 0 lines of their code run before you read the patch: CI and hook files, manifests, lockfiles, deleted or weakened tests, new network or disk access and files outside the slice are kept out.">
+  <img src="assets/hero.png" width="100%" alt="Zero-trust handoff for your codebase. A hand-off folder shows 11% of the repository's source (median of 8 slices of a 245k-line TypeScript repository; 0.7% for a default cut), and 0 lines of their code run before you read the patch: CI and hook files, manifests, lockfiles, deleted or weakened tests, new network or disk access and files outside the slice are kept out.">
 </p>
 
 <table>
 <tr>
-<td align="center" width="25%"><h3>under 1%</h3>of the repository<br>is what they see<br><sub>median 0.7% of 245k lines (default cut; 11% with the hand-off's flags)</sub></td>
+<td align="center" width="25%"><h3>11%</h3>of the repository<br>is what a hand-off shows<br><sub>median of 8 slices of 245k lines (0.7% for a default cut); bound it with <code>maxExposurePercent</code></sub></td>
 <td align="center" width="25%"><h3>0 lines</h3>of their code run<br>to make the patch<br><sub>it is read, never executed</sub></td>
 <td align="center" width="25%"><h3>0 names</h3>of the repository's<br>in a public folder<br><sub>renamed under a table only the maintainer's receipt holds</sub></td>
 <td align="center" width="25%"><h3>52 of 52</h3>replayed commits<br>round-trip and apply<br><sub>89% with --3way after the repository moved</sub></td>
@@ -449,6 +449,12 @@ Options for `plan` and `cut`:
 - `--whole-package`, `--follow-workspaces`, `--copy-pure` (which follows
   the workspaces too) and `--private <path>` (see above; `--private` takes
   a path, a folder or a glob, more than once).
+- `--max-exposure-lines N` and `--max-exposure-percent P`: the most lines
+  a folder may show (every line it copies, as `plan`'s "Shows" line counts
+  them), and the most as a share of the repository's TypeScript lines
+  (`.d.ts` and `node_modules` left out). `plan` says whether the cut is
+  within them; a cut past either is written with an `exposure_exceeded`
+  blocker, so `handoff` never calls it ready.
 - `--json`
 
 A `carveout.config.json` at the repository's root sets the same for every
@@ -459,7 +465,8 @@ out: `{"wholePackage": true, "followWorkspaces": true, "private":
 Corp", "Roadrunner"], "pseudonyms": [{"before": "LNX", "after": "CUR",
 "kind": "text"}]}`. A flag overrides a boolean; the lists are joined. With
 any `private` path, or `public`, `widenLiterals` is on unless the file
-says otherwise. `names` are hidden in every public folder, word by word
+says otherwise. `maxExposureLines` and `maxExposurePercent` bound what every folder
+shows, as the flags above do (a flag overrides them). `names` are hidden in every public folder, word by word
 (a customer, a product); `pseudonyms` are renames the owner chooses
 (`identifier`, `text` or `path`), applied before the ones carveout drafts,
 for what is too short or too generic to scan for.

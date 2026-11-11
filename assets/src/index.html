@@ -1,6 +1,6 @@
 <!doctype html>
 <!-- Source of assets/hero.png; render with `PLAYWRIGHT=<dir with node_modules/playwright> node assets/src/render.mjs`.
-     "0.7%": experiments/results/hero-exposure.json (8 sandbox-factory slices, default cut, median; widest flags 11%).
+     "11%": experiments/results/hero-exposure.json (8 sandbox-factory slices, median, with the hand-off's flags --whole-package --with-tests --copy-pure; 0.7% for a default cut).
      "0 lines": carveout patch reads the returned folder and runs none of it. The held list is the patch policy. -->
 <html>
 <head>
@@ -57,7 +57,7 @@ h1 span { color: var(--muted); }
     <div class="col">
       <div class="stat">
         <div class="label">What they see</div>
-        <div class="num seen">0.7%</div>
+        <div class="num seen">11%</div>
         <div class="of">of the repository's<br>source, as written</div>
       </div>
       <div class="repo" id="repo"></div>
@@ -71,12 +71,12 @@ h1 span { color: var(--muted); }
       <ul class="held" id="held"></ul>
     </div>
   </div>
-  <div class="foot">sandbox-factory · 245k lines of TypeScript · median of 8 slices · what the folder imports arrives as type declarations only</div>
+  <div class="foot">sandbox-factory · 245k lines of TypeScript · median of 8 hand-off slices (0.7% for a default cut) · bound it with maxExposurePercent</div>
 </section>
 
 <script>
-// 1,000 cells, each ~245 lines of the repository; 7 lit = the 0.7% median, clustered like one folder.
-const lit = new Set([453, 454, 455, 456, 493, 494, 495]);
+// 1,000 cells, each ~245 lines of the repository; 112 lit = the 11% hand-off median, clustered like a few folders.
+const lit = new Set(Array.from({ length: 7 }, (_, row) => Array.from({ length: 16 }, (_, col) => (row + 8) * 40 + col + 12)).flat());
 document.getElementById("repo").innerHTML = Array.from({ length: 1000 }, (_, i) => `<u class="${lit.has(i) ? "s" : ""}"></u>`).join("");
 const x = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
 const held = ["CI and hook files", "manifests, lockfiles", "deleted or weakened tests", "new network or disk access", "files outside the slice"];

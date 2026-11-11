@@ -43,7 +43,8 @@ const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript r
 
   carveout handoff <entry>... --out <dir> [--task <file|text>] [--depth N] [--max-files N]
                  [--private <path>]... [--name <word>]... [--copy <dir>]... [--live <pkg>]...
-                 [--accept <test>...] [--no-whole-package] [--no-copy-pure] [--receipt <file>] [--json]
+                 [--accept <test>...] [--no-whole-package] [--no-copy-pure] [--receipt <file>]
+                 [--max-exposure-lines N] [--max-exposure-percent P] [--json]
       The hand-off in one step: a cut with the tests that run the code, its
       whole package and the pure code it runs, for someone outside (public,
       in pseudonyms), and its check. Prints whether the folder is ready (its
@@ -53,13 +54,18 @@ const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript r
 
   carveout plan  <entry>... [--repo <dir>] [--max-files N] [--depth N]
                  [--with-tests] [--whole-package] [--follow-workspaces]
-                 [--copy-pure] [--private <path>]... [--json]
+                 [--copy-pure] [--private <path>]... [--max-exposure-lines N]
+                 [--max-exposure-percent P] [--json]
       What a cut would hold, from the import graph alone. Writes nothing.
+      --max-exposure-lines and --max-exposure-percent (or maxExposureLines
+      and maxExposurePercent in carveout.config.json) bound the lines a
+      folder shows, and the share of the repository's TypeScript lines; a
+      cut past either is written with an exposure_exceeded blocker.
 
   carveout cut   <entry>... --out <dir> [--repo <dir>] [--max-files N] [--depth N]
                  [--with-tests] [--whole-package] [--follow-workspaces]
                  [--copy-pure] [--private <path>]... [--copy <dir>]...
-                 [--mock <package>]...
+                 [--max-exposure-lines N] [--max-exposure-percent P] [--mock <package>]...
                  [--install <package>]... [--live <package>]... [--offline]
                  [--widen-literals] [--public] [--name <word>]... [--keep-names] [--task <file|text>]
                  [--receipt <file> | --no-receipt] [--json]
@@ -284,6 +290,8 @@ async function main(argv: readonly string[]) {
       "whole-package": { type: "boolean" },
       "follow-workspaces": { type: "boolean" },
       "copy-pure": { type: "boolean" },
+      "max-exposure-lines": { type: "string" },
+      "max-exposure-percent": { type: "string" },
       private: { type: "string", multiple: true },
       copy: { type: "string", multiple: true },
       "in-place": { type: "boolean" },
@@ -367,11 +375,26 @@ async function main(argv: readonly string[]) {
     ...(values.receipt === undefined ? {} : { receipt: values.receipt }),
     ...(values["no-receipt"] === true ? { noReceipt: true } : {}),
   };
+  /** `--max-exposure-lines` and `--max-exposure-percent`: over the configuration's. */
+  const maxExposure = (() => {
+    const positive = (value: string | undefined, name: string) => {
+      if (value === undefined) return undefined;
+      const parsed = Number(value);
+      if (!Number.isFinite(parsed) || parsed <= 0) fail(`--${name} takes a number above 0, not ${value}.`);
+      return parsed;
+    };
+    const lines = positive(values["max-exposure-lines"], "max-exposure-lines");
+    const percent = positive(values["max-exposure-percent"], "max-exposure-percent");
+    return lines === undefined && percent === undefined
+      ? {}
+      : { maxExposure: { ...(lines === undefined ? {} : { lines }), ...(percent === undefined ? {} : { percent }) } };
+  })();
   const bounds = {
     ...(values["whole-package"] === true ? { wholePackage: true } : {}),
     ...(values["follow-workspaces"] === true ? { followWorkspaces: true } : {}),
     ...(values["copy-pure"] === true ? { copyPure: true } : {}),
     ...(values.private === undefined ? {} : { private: values.private }),
+    ...maxExposure,
   };
 
   switch (commandName) {
@@ -410,6 +433,7 @@ async function main(argv: readonly string[]) {
           testsVerdict: testsVerdict(plan.walk),
           originOf: plan.walk.originOf,
           exposure: plan.exposure,
+          exposureBudget: plan.exposureBudget ?? null,
           cutModules: plan.cutModules,
           typeOnlyCuts: plan.typeOnlyCuts,
           inbound: [...new Set(plan.walk.cuts.inbound.map((e) => e.from))].sort(),
@@ -438,6 +462,16 @@ async function main(argv: readonly string[]) {
           `${plan.walk.included.length} files from ${plan.entryPoints.join(", ")} (budget ${plan.budget.maxFiles} files, depth ${plan.budget.maxDepth}${plan.wholePackage ? ", the whole package" : ""}${plan.followWorkspaces ? ", workspace packages followed" : ""}${plan.copyPure ? ", pure code copied" : ""}; ${plan.graphFiles} script files read)${atLimit ? ", at the file limit: raise --max-files or narrow the entry points" : ""}.`,
           "",
           `Shows ${renderExposure(plan.exposure)}`,
+          ...(plan.exposureBudget === undefined
+            ? []
+            : [
+                plan.exposureBudget.over === null
+                  ? `Within the owner's bound on what a folder shows (${[
+                      ...(plan.exposureBudget.lines === undefined ? [] : [`${plan.exposureBudget.lines.toLocaleString("en-US")} lines`]),
+                      ...(plan.exposureBudget.percent === undefined ? [] : [`${plan.exposureBudget.percent}%; this is ${plan.exposureBudget.shownPercent ?? 0}%`]),
+                    ].join(", ")}).`
+                  : `Past the owner's bound on what a folder shows: ${plan.exposureBudget.over}. A cut would be written with an exposure_exceeded blocker, never ready.`,
+              ]),
           "",
           ...(renderOutside(plan.exposure).length === 0 ? [] : [...renderOutside(plan.exposure), ""]),
           "Included:",
@@ -570,6 +604,7 @@ async function main(argv: readonly string[]) {
         copyPure: values["copy-pure"] ?? config.copyPure ?? true,
         ...(values["follow-workspaces"] === true ? { followWorkspaces: true } : {}),
         ...(values.private === undefined ? {} : { private: values.private }),
+        ...maxExposure,
         ...(accepted.length === 0 ? {} : { unseen: accepted.map((test) => test.path) }),
         public: values.public ?? config.public ?? true,
         ...(values.offline === true ? { offline: true } : {}),

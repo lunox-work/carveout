@@ -243,3 +243,37 @@ test("specifiers are read from the syntax tree, not from comments or strings", (
   const rewritten = rewriteSpecifiers("x.ts", text, ({ specifier }) => (specifier === "real" ? "./real.js" : null));
   assert.equal(rewritten, text.replace('from "real"', 'from "./real.js"'));
 });
+
+test("the owner's bound on what a folder shows: plan says, a cut past it is never ready", async () => {
+  const plan = planSlice({ repo, entryPoints: [ENTRY], budget: { maxFiles: 40, maxDepth: 1 } });
+  assert.equal(plan.exposureBudget, undefined, "no bound, no budget");
+  const shown = plan.exposure.lines;
+  assert.ok(shown > 1);
+  // Under the bound: measured, nothing over, and the cut is as it was.
+  const within = planSlice({ repo, entryPoints: [ENTRY], budget: { maxFiles: 40, maxDepth: 1 }, maxExposure: { lines: shown, percent: 100 } });
+  assert.equal(within.exposureBudget?.over, null);
+  assert.ok((within.exposureBudget?.repositoryLines ?? 0) >= shown);
+  // Over it, by lines from the configuration and by percent from the request.
+  writeFileSync(join(repo, CONFIG_PATH), JSON.stringify({ maxExposureLines: shown - 1 }));
+  try {
+    assert.equal(readRepoConfig(repo).maxExposureLines, shown - 1);
+    const over = planSlice({ repo, entryPoints: [ENTRY], budget: { maxFiles: 40, maxDepth: 1 } });
+    assert.match(over.exposureBudget?.over ?? "", new RegExp(`past the bound of ${(shown - 1).toLocaleString("en-US")}`));
+    const { record } = await cut({});
+    assert.equal(record.ready, false);
+    assert.match(record.blockers.find((blocker) => blocker.code === "exposure_exceeded")?.detail ?? "", /more of the repository than the owner allows/);
+    // A flag overrides the configuration.
+    const flagged = await cut({ maxExposure: { lines: shown } });
+    assert.equal(flagged.record.blockers.some((blocker) => blocker.code === "exposure_exceeded"), false);
+  } finally {
+    rmSync(join(repo, CONFIG_PATH), { force: true });
+  }
+  const tiny = planSlice({ repo, entryPoints: [ENTRY], budget: { maxFiles: 40, maxDepth: 1 }, maxExposure: { percent: 0.0001 } });
+  assert.match(tiny.exposureBudget?.over ?? "", /% of the repository's/);
+  writeFileSync(join(repo, CONFIG_PATH), JSON.stringify({ maxExposurePercent: -1 }));
+  try {
+    assert.throws(() => readRepoConfig(repo), /maxExposurePercent must be a number above 0/);
+  } finally {
+    rmSync(join(repo, CONFIG_PATH), { force: true });
+  }
+});

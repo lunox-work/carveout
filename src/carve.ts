@@ -403,6 +403,10 @@ export interface RepoConfig {
   readonly pseudonyms?: readonly AliasRule[];
   /** Names carveout finds that the owner lets a public folder carry (a word the code is about). */
   readonly keepNames?: readonly string[];
+  /** The most lines a folder may show; see `SliceRequest.maxExposure`. */
+  readonly maxExposureLines?: number;
+  /** The most a folder may show, as a percent of the repository's TypeScript lines; see `SliceRequest.maxExposure`. */
+  readonly maxExposurePercent?: number;
 }
 
 /** The owner's settings at the repository's root; empty when there are none. */
@@ -443,6 +447,15 @@ export function readRepoConfig(repo: string): RepoConfig {
   set("widenLiterals", flag("widenLiterals"));
   set("public", flag("public"));
   set("copyPure", flag("copyPure"));
+  const positive = (key: string): number | undefined => {
+    const value = record[key];
+    if (value === undefined) return undefined;
+    if (typeof value !== "number" || !Number.isFinite(value) || value <= 0)
+      throw new Error(`${CONFIG_PATH}: ${key} must be a number above 0.`);
+    return value;
+  };
+  set("maxExposureLines", positive("maxExposureLines"));
+  set("maxExposurePercent", positive("maxExposurePercent"));
   set("private", paths("private"));
   set("copy", paths("copy"));
   set("names", paths("names"));
@@ -504,6 +517,7 @@ function settle<
   readonly copy: readonly string[];
   readonly widenLiterals: boolean;
   readonly public: boolean;
+  readonly maxExposure: { readonly lines?: number; readonly percent?: number };
 } {
   const config = readRepoConfig(resolve(request.repo));
   const privatePaths = normalizePaths([...(config.private ?? []), ...(request.private ?? [])]);
@@ -524,6 +538,11 @@ function settle<
     widenLiterals:
       request.widenLiterals ?? config.widenLiterals ?? (privatePaths.length > 0 || outside),
     public: outside,
+    maxExposure: (() => {
+      const lines = request.maxExposure?.lines ?? config.maxExposureLines;
+      const percent = request.maxExposure?.percent ?? config.maxExposurePercent;
+      return { ...(lines === undefined ? {} : { lines }), ...(percent === undefined ? {} : { percent }) };
+    })(),
   };
 }
 
@@ -601,6 +620,73 @@ export interface SliceRequest {
    * the folder's record.
    */
   readonly unseen?: readonly string[];
+  /**
+   * How much of the repository a folder may show: every line it copies
+   * (entry points, tests and copied code alike, as `plan`'s "Shows" line
+   * counts them), at most `lines`, and at most `percent` of the
+   * repository's TypeScript lines (`.d.ts` and `node_modules` left out). A
+   * cut past either is written with an `exposure_exceeded` blocker, so a
+   * hand-off is not ready. Each unset: as the configuration says
+   * (`maxExposureLines`, `maxExposurePercent`), else no bound.
+   */
+  readonly maxExposure?: { readonly lines?: number; readonly percent?: number };
+}
+
+/** A folder's lines against the owner's bound, with the repository's TypeScript lines when a percent is asked. */
+export interface ExposureBudget {
+  readonly lines?: number;
+  readonly percent?: number;
+  /** The repository's TypeScript lines, when `percent` is set. */
+  readonly repositoryLines?: number;
+  /** The folder's lines as a percent of them, when `percent` is set. */
+  readonly shownPercent?: number;
+  /** What is over, in words; null within the bound. */
+  readonly over: string | null;
+}
+
+/** The repository's TypeScript source lines, as `experiments/hero-exposure.mjs` counts them: tracked `.ts`, `.tsx`, `.mts`, `.cts` files, `.d.ts` and `node_modules` left out. */
+export function repositoryTypeScriptLines(repo: string): number {
+  const listed = git(repo, ["ls-files", "-z", "--", "*.ts", "*.tsx", "*.mts", "*.cts"]);
+  if (listed === null) return 0;
+  let total = 0;
+  for (const file of listed.split("\0")) {
+    if (file === "" || file.endsWith(".d.ts") || file.includes("node_modules/")) continue;
+    try {
+      total += readFileSync(join(repo, file), "utf8").split("\n").length;
+    } catch {
+      // Listed but gone from the checkout.
+    }
+  }
+  return total;
+}
+
+/** The folder's exposure against the bound the request settled on; null when there is none. */
+export function exposureBudget(
+  repo: string,
+  exposure: SliceExposure,
+  bound: { readonly lines?: number; readonly percent?: number },
+): ExposureBudget | null {
+  if (bound.lines === undefined && bound.percent === undefined) return null;
+  const over: string[] = [];
+  if (bound.lines !== undefined && exposure.lines > bound.lines)
+    over.push(`it shows ${exposure.lines.toLocaleString("en-US")} lines, past the bound of ${bound.lines.toLocaleString("en-US")}`);
+  let measured: { repositoryLines: number; shownPercent: number } | null = null;
+  if (bound.percent !== undefined) {
+    const repositoryLines = repositoryTypeScriptLines(repo);
+    const shownPercent = repositoryLines === 0 ? 100 : Math.round((10_000 * exposure.lines) / repositoryLines) / 100;
+    measured = { repositoryLines, shownPercent };
+    if (shownPercent > bound.percent)
+      over.push(`it shows ${shownPercent}% of the repository's ${repositoryLines.toLocaleString("en-US")} TypeScript lines, past the bound of ${bound.percent}%`);
+  }
+  return {
+    ...(bound.lines === undefined ? {} : { lines: bound.lines }),
+    ...(bound.percent === undefined ? {} : { percent: bound.percent }),
+    ...(measured ?? {}),
+    over:
+      over.length === 0
+        ? null
+        : `${over.join(", and ")}: narrow the cut (a lower --depth, no --whole-package or --copy-pure, --private <path> for the folders plan lists), or raise maxExposureLines or maxExposurePercent in ${CONFIG_PATH}`,
+  };
 }
 
 function git(repo: string, args: readonly string[]): string | null {
@@ -689,6 +775,8 @@ export interface Plan {
   readonly private: readonly string[];
   /** The files and lines the cut would copy, by why each is there. */
   readonly exposure: SliceExposure;
+  /** The exposure against the owner's bound; absent when none is set. */
+  readonly exposureBudget?: ExposureBudget;
 }
 
 /** The walk's options for a settled request. */
@@ -750,6 +838,8 @@ export function planSlice(request: SliceRequest): Plan {
       !isNodeBuiltin(dependency.specifier)
     )
       packages.add(packageNameOf(dependency.specifier));
+  const exposure = exposureOf(walk, (path) => textOf.get(path) ?? null);
+  const budgetOf = exposureBudget(repo, exposure, settled.maxExposure);
   return {
     repo,
     entryPoints,
@@ -776,7 +866,8 @@ export function planSlice(request: SliceRequest): Plan {
     followWorkspaces: settled.followWorkspaces,
     copyPure: settled.copyPure,
     private: settled.private,
-    exposure: exposureOf(walk, (path) => textOf.get(path) ?? null),
+    exposure,
+    ...(budgetOf === null ? {} : { exposureBudget: budgetOf }),
   };
 }
 
@@ -1915,7 +2006,17 @@ export async function computeCut(
       ),
     ).map(({ code, file, detail }) => ({ code, file: file ?? null, detail })),
   );
+  const exposure = exposureOf(analysis.walk, (path) => {
+    try {
+      return readFileSync(join(repo, path), "utf8");
+    } catch {
+      return null;
+    }
+  });
+  // Past the owner's bound on what a folder may show: written, never ready.
+  const overExposed = exposureBudget(repo, exposure, settled.maxExposure)?.over ?? null;
   const blockers: CarveoutRecord["blockers"] = [
+    ...(overExposed === null ? [] : [{ code: "exposure_exceeded", file: null, detail: `The folder shows more of the repository than the owner allows: ${overExposed}.` }]),
     ...manifest.blockers.map(({ code, file, detail }) => ({
       code,
       file,
@@ -1982,13 +2083,7 @@ export async function computeCut(
         carried: analysis.walk.tests,
         left: testsLeft,
       },
-      exposure: exposureOf(analysis.walk, (path) => {
-        try {
-          return readFileSync(join(repo, path), "utf8");
-        } catch {
-          return null;
-        }
-      }),
+      exposure,
     },
   };
 }
