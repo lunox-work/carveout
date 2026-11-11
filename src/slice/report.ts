@@ -158,8 +158,11 @@ export function renderTestsMarkdown(
   if (walk.testsLeft.length > 0) {
     lines.push("Left in the repository, which runs them on the change after the merge:", "");
     const grouped = new Map<string, number>();
-    for (const { file, reason } of walk.testsLeft) {
-      const key = `\`${name(file)}\`: ${TEST_LEFT_REASON[reason]}`;
+    for (const { file, reason, imports } of walk.testsLeft) {
+      // What it tests, by the slice's files it imports: a change to one of
+      // those is what only it would catch.
+      const tests = imports === undefined || imports.length === 0 ? "" : `; it imports ${imports.map((path) => `\`${path}\``).join(", ")}`;
+      const key = `\`${name(file)}\`: ${TEST_LEFT_REASON[reason]}${tests}`;
       grouped.set(key, (grouped.get(key) ?? 0) + 1);
     }
     for (const [key, count] of grouped) lines.push(`- ${key}${count > 1 ? ` (${count} tests)` : ""}`);

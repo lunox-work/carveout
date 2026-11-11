@@ -1279,9 +1279,11 @@ export async function computeCut(
     };
   })();
   // The tests left in the repository, named as the folder may name them.
-  const testsLeft = analysis.walk.testsLeft.map(({ file, reason }) => ({
+  const testsLeft = analysis.walk.testsLeft.map(({ file, reason, imports }) => ({
     file: settled.public ? outsideName(file) : file,
     reason,
+    // The slice's own files it imports, which the folder shows anyway.
+    ...(imports === undefined ? {} : { imports }),
   }));
   const manifest: SliceManifest = settled.public
     ? {

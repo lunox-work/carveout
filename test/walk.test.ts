@@ -500,7 +500,8 @@ test("a test on Vitest's globals runs on Vitest; one on Jest is named as left be
     runnerOf: testRunnerResolver(jest, packageOf),
   });
   assert.deepEqual(onJest.walk.tests, []);
-  assert.deepEqual(onJest.walk.testsLeft, [{ file: "lib/test/a.test.ts", reason: "runner" }]);
+  // Named with the slice's file it tests, which the folder shows anyway.
+  assert.deepEqual(onJest.walk.testsLeft, [{ file: "lib/test/a.test.ts", reason: "runner", imports: ["lib/src/a.ts"] }]);
 });
 
 test("another package's test that imports the slice by its package's name, through a barrel, is named as left behind", () => {

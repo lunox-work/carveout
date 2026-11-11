@@ -151,6 +151,12 @@ export type SliceOrigin =
 export interface SliceTestLeft {
   readonly file: string;
   readonly reason: "not-asked" | "other-package" | "runner" | "unreadable" | "budget";
+  /**
+   * The slice's files it imports itself, which it tests: named so a
+   * contributor knows what a change only it would catch is in. Empty when
+   * it reaches the slice only through a barrel outside it.
+   */
+  readonly imports?: readonly string[];
 }
 
 export interface ReachOptions {
@@ -703,7 +709,7 @@ export function reach(
    * for a name the barrel forwards from it. `own` is whether it tests the
    * slice's package rather than another's.
    */
-  const exercising = new Map<string, { through: Set<string>; own: boolean }>();
+  const exercising = new Map<string, { through: Set<string>; own: boolean; imports: Set<string> }>();
   /** Tests that also reach a file the slice holds neither way. */
   const strays = new Set<string>();
   /**
@@ -727,9 +733,10 @@ export function reach(
         strays.add(file);
       if (link.relation !== "imports" || link.typeOnly) continue;
       const through = barrels.get(edge.to);
-      const entry = exercising.get(file) ?? { through: new Set<string>(), own: false };
+      const entry = exercising.get(file) ?? { through: new Set<string>(), own: false, imports: new Set<string>() };
       if (code.has(edge.to)) {
         if (packageOf(edge.to) === mine) entry.own = true;
+        entry.imports.add(edge.to);
         exercising.set(file, entry);
       } else if (
         through !== undefined &&
@@ -742,6 +749,8 @@ export function reach(
           entry.own = true;
           entry.through.add(edge.to);
         }
+        // Named only if the slice holds the barrel itself.
+        entry.imports.add(edge.to);
         exercising.set(file, entry);
       }
     }
@@ -878,10 +887,12 @@ export function reach(
   }
   /** The tests of the slice's code the folder does not carry, and why. */
   const testsLeft: SliceTestLeft[] = [];
-  for (const [file, { own }] of [...exercising].sort(([a], [b]) => compare(a, b))) {
+  for (const [file, { own, imports }] of [...exercising].sort(([a], [b]) => compare(a, b))) {
     if (depthOf.has(file)) continue;
+    const named = [...imports].filter((path) => depthOf.has(path)).sort(compare);
     testsLeft.push({
       file,
+      ...(named.length === 0 ? {} : { imports: named }),
       reason: !own
         ? "other-package"
         : options.tests !== true
