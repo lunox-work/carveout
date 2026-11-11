@@ -3196,6 +3196,16 @@ export async function patchProject(
   // imports (`rounding.ts`, `rounding.test.ts`) is the code that test is
   // of, whatever folder was asked for.
   const stem = (path: string) => (path.split("/").pop() ?? path).replace(/\.(test|spec)(?=\.)/, "").replace(/\.[cm]?[jt]sx?$/, "");
+  // The module's own test alone imports it: one importer, a test of the
+  // same name beside it (or in the `__tests__` folder beside it). A helper
+  // a test of its name shares with other tests stays a helper.
+  const ownTestOnly = (path: string, importers: readonly string[]) => {
+    const [only] = importers;
+    if (importers.length !== 1 || only === undefined || !isTestPath(only) || stem(only) !== stem(path)) return false;
+    const dir = posix.dirname(path);
+    const testDir = posix.dirname(only);
+    return testDir === dir || testDir === posix.join(dir, "__tests__");
+  };
   const testOnly = new Set(
     [...included.keys()].filter((path) => {
       const importers = importersOf.get(path) ?? [];
@@ -3205,7 +3215,7 @@ export async function patchProject(
         !setupFiles.has(path) &&
         importers.length > 0 &&
         importers.every((from) => isTestPath(from) || setupFiles.has(from)) &&
-        !importers.some((from) => isTestPath(from) && stem(from) === stem(path))
+        !ownTestOnly(path, importers)
       );
     }),
   );

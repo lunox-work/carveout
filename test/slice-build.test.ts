@@ -447,3 +447,22 @@ test("a config's inline projects are read, each with its paths, and carried exte
     ],
   );
 });
+
+test("a helper shared by tests stays a helper though one test shares its name", async () => {
+  const repo = join(scratch, "shared-helper");
+  cpSync(FIXTURE, repo, { recursive: true });
+  const helper = 'import assert from "node:assert/strict";\nexport const same = (a: number, b: number): void => assert.equal(a, b);\n';
+  write(repo, {
+    "apps/shop/src/fakes/index.ts": helper,
+    "apps/shop/src/checkout.test.ts": 'import { test } from "node:test";\nimport { same } from "./fakes/index";\ntest("checkout", () => same(1, 1));\n',
+    "apps/shop/src/fakes/index.test.ts": 'import { test } from "node:test";\nimport { same } from "./index";\ntest("index", () => same(2, 2));\n',
+  });
+  const git = (args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, stdio: "ignore" });
+  git(["init", "-q"]);
+  git(["add", "-A"]);
+  git(["commit", "-q", "-m", "fixture"]);
+  const cut = await cutSlice({ repo, out: join(scratch, "shared-helper-slice"), entryPoints: ["apps/shop/src"], budget: { maxFiles: 40, maxDepth: 1 }, tests: true, offline: true });
+  writeFileSync(join(cut.out, "apps/shop/src/fakes/index.ts"), "export const same = (a: number, b: number): void => {};\n");
+  const patch = await patchProject(cut.out);
+  assert.match(patch.refused.find((refusal) => refusal.path === "apps/shop/src/fakes/index.ts")?.reason ?? "", /helper/, JSON.stringify(patch.refused));
+});
