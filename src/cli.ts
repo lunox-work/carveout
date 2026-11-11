@@ -207,6 +207,18 @@ function verdictOf(
   };
 }
 
+/** The owner's acceptance tests, by their paths in the repository (`--accept`). */
+function acceptOption(files: readonly string[] | undefined, repo: string | undefined): { path: string; text: string }[] {
+  const root = resolve(repo ?? ".");
+  return (files ?? []).map((file) => {
+    const at = resolve(file);
+    const path = relative(root, at).split("\\").join("/");
+    if (path.startsWith("..") || !existsSync(at))
+      fail(`--accept ${file}: give a test file inside the repository (run from its root, or pass --repo), at the path it would have there.`);
+    return { path, text: readFileSync(at, "utf8") };
+  });
+}
+
 /** What a command wrote into a folder in pseudonyms that still names the repository: for the maintainer, in full. */
 function leaksText(leaks: readonly { readonly term: string; readonly files: readonly string[] }[]): string {
   return `The folder now holds names the repository goes by; do not send it as it is (rename them, or cut again):\n${list(
@@ -558,6 +570,18 @@ async function main(argv: readonly string[]) {
       const steps = await checkProject(result.out, {
         ...(result.receipt === null ? { noReceipt: true } : { receipt: result.receipt }),
       });
+      // The owner's acceptance tests on the folder as it goes out: they
+      // should not pass before the work, or they test nothing of it.
+      const accepted = acceptOption(values.accept, values.repo);
+      const vacuous =
+        accepted.length === 0 || steps.some((step) => !step.ok)
+          ? null
+          : (
+              await checkProject(result.out, {
+                ...(result.receipt === null ? { noReceipt: true } : { receipt: result.receipt }),
+                accept: accepted,
+              })
+            ).every((step) => step.ok);
       const verdict = verdictOf(steps, result.record);
       const record = result.record;
       // The step that failed, and what it printed last: what to fix first.
@@ -612,6 +636,14 @@ async function main(argv: readonly string[]) {
           ...(failedStep === undefined
             ? []
             : ["", `${failedStep.command} failed; its last lines:`, ...failedStep.output.trim().split("\n").slice(-25).map((line) => `  ${line}`)]),
+          ...(vacuous === null
+            ? []
+            : [
+                "",
+                vacuous
+                  ? `The owner's ${accepted.length} acceptance test file(s) already pass on the folder as it goes out: they test nothing of the work (or it is done). Make them fail before it.`
+                  : `The owner's ${accepted.length} acceptance test file(s) fail on the folder as it goes out, as they should before the work; keep them, and run them on the folder that comes back with carveout check --accept.`,
+              ]),
           "",
           result.receipt === null
             ? "No receipt: the folder that comes back will be judged by its own record (--no-receipt on patch)."
@@ -760,15 +792,7 @@ async function main(argv: readonly string[]) {
       const [dir] = positionals;
       if (dir === undefined) fail("check needs the folder a cut wrote.");
       readRecord(dir);
-      // The owner's acceptance tests, by their paths in the repository.
-      const root = resolve(values.repo ?? ".");
-      const accept = (values.accept ?? []).map((file) => {
-        const at = resolve(file);
-        const path = relative(root, at).split("\\").join("/");
-        if (path.startsWith("..") || !existsSync(at))
-          fail(`--accept ${file}: give a test file inside the repository (run from its root, or pass --repo), at the path it would have there.`);
-        return { path, text: readFileSync(at, "utf8") };
-      });
+      const accept = acceptOption(values.accept, values.repo);
       const steps = await checkProject(dir, {
         ...(values["in-place"] === true ? { inPlace: true } : {}),
         ...(values.isolated === true ? { isolated: true } : {}),
