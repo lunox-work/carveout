@@ -72,6 +72,10 @@ What to tell them, accurately:
   tests and new files are code beside the closed repository, and a branch
   pushed there gets CI's secrets and network), then let the repository's
   CI judge the change: a pass in the slice is a pass against mocks.
+- For a job long enough that the repository moves, `carveout refresh`
+  brings its commits into the folder, merged into the work (an overlap is
+  named, never overwritten), and a patch after it carries the work alone;
+  `carveout widen` cuts the folder again, wider, with the work in it.
 - `carveout check` passing means the folder installs, builds, loads every
   export outside code uses and keeps their types. It tests the slice's
   behaviour only when the cut was made with `--with-tests`, and then only
