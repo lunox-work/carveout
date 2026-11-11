@@ -163,7 +163,7 @@ function pack(offline) {
 }
 
 const PLUGIN_BRANCH = "claude-plugin";
-const PLUGIN_FILES = [".claude-plugin/plugin.json", "LICENSE", "skills"];
+const PLUGIN_FILES = [".claude-plugin/plugin.json", ".claude-plugin/icon.png", "LICENSE", "skills"];
 
 function git(args, env = {}) {
   const result = spawnSync("git", args, { cwd: ROOT, encoding: "utf8", env: { ...process.env, ...env } });
