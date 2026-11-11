@@ -341,3 +341,24 @@ test("a task written into a public folder says when the work is accepted, in the
   assert.match(agents, /## What comes back, and what is held for the owner/);
   assert.match(agents, /is in `TASK\.md`: read it first\./);
 });
+
+test("a folder widened mid-job keeps the contributor's work and the names they know", async () => {
+  const { widenProject } = await import("../src/mergeback.js");
+  // A slice of the cart alone: the money module is a stub.
+  const narrow = await cutSlice({ ...request("narrow"), budget: { maxFiles: 40, maxDepth: 0 }, copyPure: false, task: "Give LunoxCart a discount." });
+  assert.ok(!tree(narrow.out).some((file) => file.path === "packages/zorvex-money/src/index.ts"));
+  // The contributor's work so far.
+  const cart = join(narrow.out, "apps/web/src/ZorvexCart.ts");
+  writeFileSync(cart, readFileSync(cart, "utf8").replace("  total(): string {", "  /** A Zorvex discount. */\n  discounted(off: number): string {\n    return zorvexFormat(off);\n  }\n  total(): string {"));
+  // The change needs the money module: the folder is cut again, wider.
+  const widened = await widenProject(narrow.out, { entries: ["packages/lunox-money/src/index.ts"] });
+  const files = tree(widened.out);
+  assert.ok(files.some((file) => file.path === "packages/zorvex-money/src/index.ts"), files.map((file) => file.path).join(" "));
+  const carried = files.find((file) => file.path === "apps/web/src/ZorvexCart.ts");
+  assert.match(carried?.text ?? "", /\/\*\* A Zorvex discount\. \*\/\n {2}discounted\(off: number\): string/);
+  assert.equal(files.filter((file) => NAMES.test(file.path) || NAMES.test(file.text)).length, 0);
+  assert.match(readFileSync(join(widened.out, "TASK.md"), "utf8"), /Give ZorvexCart a discount\./);
+  // And its patch is the same work, in the repository's names.
+  const patch = await patchProject(widened.out);
+  assert.match(patch.diff, /\+ {2}\/\*\* A Lunox discount\. \*\//);
+});

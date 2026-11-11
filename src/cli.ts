@@ -32,7 +32,7 @@ import {
 } from "./core.js";
 import { gateRepository } from "./gate.js";
 import { impactOf, runImpactTests } from "./impact.js";
-import { applyPatch, mergeProject } from "./mergeback.js";
+import { applyPatch, mergeProject, widenProject } from "./mergeback.js";
 import { statusProject } from "./status.js";
 import { hasAdvice, renderReadiness } from "./readiness.js";
 import { trustedCut } from "./receipt.js";
@@ -95,6 +95,12 @@ const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript r
       Brings a patch for the repository at the cut's commit into <dir>, with its
       imports rewritten as a cut writes them. --stubs also writes the stubs the
       change needs from the modules the slice cuts.
+
+  carveout widen <dir> --entry <path>... [--out <dir>] [--depth N] [--max-files N]
+                 [--allow <path>]... [--receipt <file>] [--json]
+      The folder cut again with more entry points, every other bound as it
+      was, and the contributor's work so far carried into it: for a change
+      that needs a module the slice cut. A public folder keeps its names.
 
   carveout merge <dir> --into <checkout> [--verify <command>] [--verify-env <name>]...
                  [--allow <path>]... [--receipt <file>] [--json]
@@ -234,6 +240,7 @@ async function main(argv: readonly string[]) {
       name: { type: "string", multiple: true },
       "keep-names": { type: "boolean" },
       task: { type: "string" },
+      entry: { type: "string", multiple: true },
     },
   });
   const budget = {
@@ -937,6 +944,48 @@ async function main(argv: readonly string[]) {
           );
       }
       if (applied.stubs.some((stub) => !stub.written)) process.exitCode = 5;
+      return;
+    }
+
+    case "widen": {
+      const [dir] = positionals;
+      if (dir === undefined || values.entry === undefined || values.entry.length === 0)
+        fail("widen needs the folder and at least one --entry <path> to add.");
+      const widened = await widenProject(dir, {
+        entries: values.entry,
+        ...(values.out === undefined ? {} : { out: values.out }),
+        ...(values.depth === undefined ? {} : { maxDepth: integer(values.depth, "depth", 0) }),
+        ...(values["max-files"] === undefined ? {} : { maxFiles: integer(values["max-files"], "max-files", 0) }),
+        ...(values.repo === undefined ? {} : { repo }),
+        ...(values.allow === undefined ? {} : { allow: values.allow }),
+        ...receiptOption,
+        log: (line) => {
+          if (values.json !== true) process.stderr.write(`${line}\n`);
+        },
+      });
+      if (values.json === true)
+        print({
+          out: widened.out,
+          ready: widened.cut.record.ready,
+          receipt: widened.cut.receipt,
+          carried: widened.applied === null ? [] : [...widened.applied.changed, ...widened.applied.added],
+          outside: widened.applied?.outside ?? [],
+          blockers: widened.cut.record.blockers,
+        });
+      else
+        process.stdout.write(
+          [
+            `Widened: ${widened.out}`,
+            `  Entries: ${widened.cut.record.request.entryPoints.join(", ")}.`,
+            widened.applied === null
+              ? "  The folder held no work to carry."
+              : `  The work carried into it: ${[...widened.applied.changed, ...widened.applied.added].length} file(s)${widened.applied.outside.length === 0 ? "" : `; outside it still: ${widened.applied.outside.join(", ")}`}.`,
+            ...(widened.cut.receipt === null ? [] : [`Receipt: ${widened.cut.receipt}`]),
+            `Next: carveout check ${widened.out}, then hand it over in place of the old one.`,
+            "",
+          ].join("\n"),
+        );
+      if (!widened.cut.record.ready) process.exitCode = 2;
       return;
     }
 

@@ -664,6 +664,11 @@ export interface CutRequest extends SliceRequest {
    * TASK.md with when it is accepted (renamed with the folder in pseudonyms).
    */
   readonly task?: string;
+  /**
+   * An earlier cut's pseudonyms (`widen`): a term keeps the placeholder it
+   * had where it still fits, so the contributor reads the same names.
+   */
+  readonly earlierPseudonyms?: FolderPseudonyms;
   readonly log?: (line: string) => void;
 }
 
@@ -729,6 +734,8 @@ export interface CarveoutRecord {
     readonly copy?: readonly string[];
     /** A folder for someone outside; see `CutRequest.public`. */
     readonly public?: boolean;
+    /** The work asked for (`--task`), in the repository's names; the receipt's only. */
+    readonly task?: string;
   };
   /**
    * Files copied in whole from the `copy` folders, with their hashes: not
@@ -1652,6 +1659,7 @@ export async function computeCut(
         ...(settled.private.length === 0 ? {} : { private: settled.private }),
         ...(settled.copy.length === 0 ? {} : { copy: settled.copy }),
         ...(settled.public ? { public: true } : {}),
+        ...(request.task === undefined || request.task.trim() === "" ? {} : { task: request.task }),
       },
       inputs: resolutionInputs(repo, manifest.requiredBuildInputs.configs),
       tests: {
@@ -1852,7 +1860,14 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
       ...textExtras.map((path) => ({ path, text: extraText.get(path) ?? "" })),
     ];
     if (receipt !== null && request.pseudonyms !== false && vocabulary.length > 0) {
-      const result = pseudonymize({ files: texts, binaries: binaryPaths, vocabulary, owner: config.pseudonyms ?? [], kept: keptPackages });
+      const result = pseudonymize({
+        files: texts,
+        binaries: binaryPaths,
+        vocabulary,
+        owner: config.pseudonyms ?? [],
+        kept: keptPackages,
+        ...(request.earlierPseudonyms === undefined ? {} : { earlier: request.earlierPseudonyms }),
+      });
       if (!result.ok)
         throw new Error(
           `Nothing written: the public folder's pseudonyms would not map back byte for byte.\n${result.problems

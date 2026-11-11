@@ -178,7 +178,9 @@ export function trustedCut(
       .filter((file) => file !== "package-lock.json")
       .sort()
       .join("\n");
-  if (folderOwn !== null && shape(folderOwn) !== shape(view))
+  // A folder holds the cut's own files (the folder's view), or, renamed
+  // back for a patch, the cut's record itself.
+  if (folderOwn !== null && shape(folderOwn) !== shape(view) && shape(folderOwn) !== shape(receipt.record))
     throw new Error(
       `${dir} does not hold the files of cut ${receipt.cutId.slice(0, 8)}'s folder: name the receipt of the cut that wrote it.`,
     );
@@ -199,7 +201,7 @@ export function publicRecord(record: CarveoutRecord): CarveoutRecord {
   const { private: _private, ...params } = record.manifest.params as typeof record.manifest.params & {
     private?: unknown;
   };
-  const { private: _requestPrivate, choices: _choices, ...request } = record.request;
+  const { private: _requestPrivate, choices: _choices, task: _task, ...request } = record.request;
   const { repo: _repo, ...rest } = record;
   const unnamed = <T extends { readonly specifier: string | null }>(edge: T): T => ({ ...edge, specifier: null });
   // A slice file's original hash, blob id and size confirm a guess at what

@@ -308,6 +308,8 @@ export function pseudonymize(input: {
   readonly vocabulary: readonly string[];
   readonly owner: readonly AliasRule[];
   readonly kept: readonly string[];
+  /** An earlier cut's pseudonyms, whose placeholders are kept where they fit. */
+  readonly earlier?: FolderPseudonyms;
 }): Pseudonymized {
   const masked: AliasedFile[] = [
     ...input.files.map((file) => ({ path: file.path, text: maskKept(file.text, input.kept) })),
@@ -318,7 +320,8 @@ export function pseudonymize(input: {
   const owner = input.owner.map((rule) => ({ ...rule, paths: [] }));
   const settled = masked.map((file) => renameFile(file, owner));
   const chosen = new Map<string, string>();
-  const drafted = draftPseudonyms({ files: settled, vocabulary: input.vocabulary, imports: [], placeholders: chosen });
+  const preferred = new Map((input.earlier?.words ?? []).map(({ term, placeholder }) => [term, placeholder.split("-")[0] ?? placeholder]));
+  const drafted = draftPseudonyms({ files: settled, vocabulary: input.vocabulary, imports: [], placeholders: chosen, preferred });
   const rules = [...owner, ...drafted];
   const applied = applyAliases(masked, rules);
   if (!applied.ok)

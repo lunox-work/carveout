@@ -155,6 +155,12 @@ export function draftPseudonyms(input: {
    * folder's holder writes in the placeholder's spelling maps back.
    */
   readonly placeholders?: Map<string, string>;
+  /**
+   * The placeholder each term had in an earlier cut of the repository, by
+   * its base word (`zorvex` of `zorvex-labs`): kept where it still fits, so
+   * a folder cut again (wider, or later) reads as the one before did.
+   */
+  readonly preferred?: ReadonlyMap<string, string>;
 }): AliasRule[] {
   // Longer terms first, so `lunox-work` is renamed whole before `lunox`.
   const terms = [...input.vocabulary].sort(
@@ -183,9 +189,17 @@ export function draftPseudonyms(input: {
     const chosen = placeholders.get(term);
     if (chosen !== undefined) return chosen;
     const taken = new Set(placeholders.values());
+    const earlier = input.preferred?.get(term);
+    if (earlier !== undefined && !taken.has(earlier) && !corpus.includes(earlier) && matchesIn(earlier).length === 0) {
+      placeholders.set(term, earlier);
+      return earlier;
+    }
+    // A word an earlier cut gave another term is not given to this one.
+    const reserved = new Set(input.preferred?.values() ?? []);
     const word = placeholderList.find(
       (candidate) =>
         !taken.has(candidate) &&
+        !reserved.has(candidate) &&
         !corpus.includes(candidate) &&
         matchesIn(candidate).length === 0,
     );

@@ -24,8 +24,10 @@ import { dirname, join, resolve } from "node:path";
 import {
   checkRecordFiles,
   computeCut,
+  cutSlice,
   patchProject,
   type CarveoutRecord,
+  type CutResult,
   type ComputedCut,
   type Patch,
 } from "./carve.js";
@@ -116,9 +118,16 @@ export async function applyPatch(
     writeFileSync(file, patchText);
     try {
       git(repo, ["apply", "--whitespace=nowarn", file]);
-    } catch (error) {
-      const stderr = (error as { stderr?: Buffer }).stderr?.toString("utf8") ?? "";
-      throw new Error(`The patch does not apply at the cut's commit ${commit.slice(0, 12)}: ${stderr.trim()}`);
+    } catch (plain) {
+      // A patch made against an earlier commit (a folder widened after the
+      // repository moved) merges by the blobs its index lines name.
+      try {
+        git(repo, ["apply", "--3way", "--whitespace=nowarn", file]);
+        git(repo, ["reset", "-q"]);
+      } catch {
+        const stderr = (plain as { stderr?: Buffer }).stderr?.toString("utf8") ?? "";
+        throw new Error(`The patch does not apply at the cut's commit ${commit.slice(0, 12)}: ${stderr.trim()}`);
+      }
     }
     git(repo, ["add", "-A"]);
     const touched = new Map<string, "A" | "M" | "D">();
@@ -423,4 +432,89 @@ export async function mergeProject(
     await rm(scratch, { recursive: true, force: true });
   }
   return { patch, steps, ok: steps.every((step) => step.ok) };
+}
+
+export interface Widened {
+  /** The new, wider folder. */
+  readonly out: string;
+  readonly cut: CutResult;
+  /** The contributor's work in the folder widened, as a patch for the repository. */
+  readonly patch: Patch;
+  /** That work, brought into the new folder; null when there was none. */
+  readonly applied: Applied | null;
+}
+
+/**
+ * A folder cut again, wider, with the contributor's work in it: a change
+ * that turns out to need a module the slice cut. The work so far is taken
+ * as a patch (`patchProject`: none of its code runs, and a file the policy
+ * holds stops the widening), the cut is made again with the entries added
+ * and every other bound as it was, its pseudonyms keep the placeholders the
+ * folder had where they fit, and the work is applied to the new folder in
+ * its names. The old folder is left as it was.
+ */
+export async function widenProject(
+  dir: string,
+  options: {
+    readonly entries: readonly string[];
+    readonly out?: string;
+    readonly maxDepth?: number;
+    readonly maxFiles?: number;
+    readonly receipt?: string;
+    readonly noReceipt?: boolean;
+    readonly repo?: string;
+    readonly allow?: readonly string[];
+    readonly log?: (line: string) => void;
+  },
+): Promise<Widened> {
+  const root = resolve(dir);
+  const trusted = trustedCut(root, options.receipt, options.noReceipt === true ? { noReceipt: true } : {});
+  const repo = trustedRepo(trusted.record, options.repo);
+  const patch = await patchProject(root, {
+    repo,
+    ...(options.receipt === undefined ? {} : { receipt: options.receipt }),
+    ...(options.noReceipt === true ? { noReceipt: true } : {}),
+    ...(options.allow === undefined ? {} : { allow: options.allow }),
+  });
+  if (patch.refused.length > 0)
+    throw new Error(
+      `The folder's work holds what the hand-off policy keeps out, which a wider folder would carry on:\n${patch.refused
+        .map((refusal) => `  ${refusal.path}: ${refusal.reason}`)
+        .join("\n")}\nRead those files, and pass --allow for the ones you accept.`,
+    );
+  const request = trusted.record.request;
+  const out = resolve(options.out ?? `${root}-wide`);
+  const cut = await cutSlice({
+    repo,
+    out,
+    entryPoints: [...new Set([...request.entryPoints, ...options.entries])],
+    budget: {
+      maxFiles: options.maxFiles ?? request.budget.maxFiles,
+      maxDepth: options.maxDepth ?? request.budget.maxDepth,
+    },
+    choices: request.choices,
+    offline: request.offline,
+    widenLiterals: request.widenLiterals,
+    tests: request.tests === true,
+    ...(request.live === undefined ? {} : { live: request.live }),
+    wholePackage: request.wholePackage === true,
+    followWorkspaces: request.followWorkspaces === true,
+    copyPure: request.copyPure === true,
+    private: request.private ?? [],
+    copy: request.copy ?? [],
+    public: request.public === true,
+    ...(request.task === undefined ? {} : { task: request.task }),
+    ...(trusted.receipt?.pseudonyms === undefined ? {} : { earlierPseudonyms: trusted.receipt.pseudonyms }),
+    ...(trusted.receipt === null ? { receipt: false as const } : {}),
+    ...(options.log === undefined ? {} : { log: options.log }),
+  });
+  const applied =
+    patch.diff === ""
+      ? null
+      : await applyPatch(out, patch.diff, {
+          repo,
+          ...(cut.receipt === null ? { noReceipt: true } : { receipt: cut.receipt }),
+          ...(options.log === undefined ? {} : { log: options.log }),
+        });
+  return { out, cut, patch, applied };
 }
