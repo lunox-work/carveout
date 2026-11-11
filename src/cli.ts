@@ -508,7 +508,9 @@ async function main(argv: readonly string[]) {
               ? []
               : [
                   "",
-                  `Pseudonyms: the folder holds the slice under ${result.pseudonyms.rules.length} rename(s) that hide the names the repository goes by (the receipt keeps the table; patch renames the folder back).${result.pseudonyms.kept.length === 0 ? "" : ` Kept, as npm installs them: ${result.pseudonyms.kept.join(", ")}.`}`,
+                  result.pseudonyms.rules.length === 0
+                    ? `Pseudonyms: none of the ${result.pseudonyms.vocabulary.length} name(s) the repository goes by is in the folder; nothing was renamed.`
+                    : `Pseudonyms: the folder holds the slice under ${result.pseudonyms.rules.length} rename(s) that hide the names the repository goes by (the receipt keeps the table; patch renames the folder back).${result.pseudonyms.kept.length === 0 ? "" : ` Kept, as npm installs them: ${result.pseudonyms.kept.join(", ")}.`}`,
                 ]),
             ...(result.readiness.tests === 0
               ? [

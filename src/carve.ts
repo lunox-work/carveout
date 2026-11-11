@@ -1144,6 +1144,30 @@ export async function computeCut(
       choices[name] = "approved-package";
       log(`Installs ${name}: the code tests a value with instanceof ${cls}, which a mock cannot narrow.`);
     }
+  // And a service package the code's own types are built from: the check
+  // with the packages untyped failed in a file that imports it (a
+  // `Pick<Params, …>` of an SDK's type demands what the real type leaves
+  // optional). The cut counted that error as the untyped packages' cost,
+  // which installing them pays; mocked, the package would stay untyped and
+  // the folder's build would fail where the cut said ready.
+  const untypedFiles = new Set(
+    (contract.compilation.untypedPackageErrors ?? []).flatMap((diagnostic) =>
+      diagnostic.file === undefined || diagnostic.file === null ? [] : [String(diagnostic.file)],
+    ),
+  );
+  const typedBy = new Map<string, string>();
+  for (const file of manifest.included)
+    if (untypedFiles.has(file.path) && isScript(file.path))
+      for (const { specifier } of moduleSpecifiers(file.path, readFileSync(join(repo, file.path), "utf8"))) {
+        if (specifier.startsWith(".") || isNodeBuiltin(specifier)) continue;
+        const name = packageNameOf(specifier);
+        if (serviceOf(name) !== null && !workspaces.has(name) && !typedBy.has(name)) typedBy.set(name, file.path);
+      }
+  for (const [name, file] of [...typedBy].sort(([a], [b]) => compare(a, b)))
+    if (choices[name] === undefined && repositoryVersion(repo, name, [file]) !== null) {
+      choices[name] = "approved-package";
+      log(`Installs ${name}: ${file} does not compile with it mocked; its types are the code's.`);
+    }
   const scope = resolveScope({
     manifest,
     contract,
@@ -1733,9 +1757,8 @@ export async function cutSlice(request: CutRequest): Promise<CutResult> {
       const renamedFiles = result.files;
       folderText = (path, text) => renamedFiles.get(path)?.text ?? text;
       leaks = [...result.leaks];
-      log(
-        `Pseudonyms: ${table.rules.length} rename(s) hide ${vocabulary.length} name(s) the repository goes by; the receipt keeps the table.`,
-      );
+      if (table.rules.length > 0)
+        log(`Pseudonyms: ${table.rules.length} rename(s) hide ${vocabulary.length} name(s) the repository goes by; the receipt keeps the table.`);
       if (kept.length > 0)
         log(`Kept as the registry names them (npm installs them so), though they carry a hidden name: ${kept.join(", ")}. --mock one to rename it.`);
     } else

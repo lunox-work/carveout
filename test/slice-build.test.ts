@@ -114,3 +114,35 @@ test("the folder's build does not count the implicit anys the stubs leave, and c
   assert.equal(other.status, 1);
   assert.match(other.stdout, /TS2322[\s\S]*The expected type comes from here/);
 });
+
+test("a service package the code's own types are built from is installed, not mocked", async () => {
+  const repo = join(scratch, "typed");
+  cpSync(FIXTURE, repo, { recursive: true });
+  write(repo, {
+    // Untyped, `Pick<Stripe.Customer, …>` demands what Stripe's own type leaves optional.
+    "apps/shop/src/customer.ts": [
+      'import type Stripe from "stripe";',
+      "",
+      'export function blank(): Pick<Stripe.Customer, "email" | "phone"> {',
+      "  return {} as never;",
+      "}",
+      'export function partial(): Pick<Stripe.CustomerCreateParams, "email" | "phone"> {',
+      "  return {};",
+      "}",
+      "",
+    ].join("\n"),
+  });
+  const git = (args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: repo, stdio: "ignore" });
+  git(["init", "-q"]);
+  git(["add", "-A"]);
+  git(["commit", "-q", "-m", "fixture"]);
+  const cut = await cutSlice({
+    repo,
+    out: join(scratch, "typed-slice"),
+    entryPoints: ["apps/shop/src/customer.ts"],
+    budget: { maxFiles: 40, maxDepth: 1 },
+    offline: true,
+  });
+  const stripe = cut.record.dependencies.find((dependency) => dependency.name === "stripe");
+  assert.equal(stripe?.resolution, "approved-package", JSON.stringify(cut.record.dependencies));
+});

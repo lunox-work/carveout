@@ -805,7 +805,7 @@ export async function analyseSlice(input: {
       implicitAnyFiles = [...new Set(implicit.flatMap((d) => (d.file === undefined || d.file === null ? [] : [String(d.file)])))].sort();
       if (!keepsImplicitAny)
         input.log(
-          `noImplicitAny is relaxed in the folder: ${implicit.length} implicit any with the stubs (${implicit
+          `The folder keeps noImplicitAny; its build does not count the ${implicit.length} implicit any(s) the stubs leave (${implicit
             .slice(0, 3)
             .map((d) => `${d.file ?? ""}:${d.line ?? ""} ${d.code}`)
             .join(", ")}).`,
