@@ -446,3 +446,36 @@ test("a refresh with an overlap moves the files it wrote, and a patch carries no
   assert.ok(patch.changed.includes(ENTRY));
   assert.doesNotMatch(patch.diff, /apps\/shop\/src\/tax\.ts|0\.2/, patch.diff);
 });
+
+test("refresh keeps a file the folder deleted, and never moves the base past a file it did not write", async () => {
+  const { refreshProject } = await import("../src/mergeback.js");
+  const { patchProject } = await import("../src/carve.js");
+  // The contributor deletes a file the repository then edits.
+  const moving = join(scratch, "moving-deleted");
+  git(scratch, ["clone", "-q", repo, moving]);
+  const cut = await cutSlice({ repo: moving, out: join(scratch, "refresh-deleted"), entryPoints: [ENTRY], budget: { maxFiles: 40, maxDepth: 1 }, offline: true });
+  rmSync(join(cut.out, "apps/shop/src/tax.ts"));
+  const tax = join(moving, "apps/shop/src/tax.ts");
+  writeFileSync(tax, readFileSync(tax, "utf8").replace("0.1", "0.2"));
+  git(moving, ["commit", "-qam", "upstream: tax"]);
+  const refreshed = await refreshProject(cut.out);
+  assert.ok(refreshed !== null);
+  assert.deepEqual(refreshed.applied.conflicts, ["apps/shop/src/tax.ts"]);
+  assert.equal(existsSync(join(cut.out, "apps/shop/src/tax.ts")), false);
+  assert.ok((await patchProject(cut.out, { repo: moving })).deleted.includes("apps/shop/src/tax.ts"));
+  // The repository stops importing a slice file and edits it: the file is
+  // no longer reached, so not written; the folder still patches.
+  const moving2 = join(scratch, "moving-unreached");
+  git(scratch, ["clone", "-q", repo, moving2]);
+  const second = await cutSlice({ repo: moving2, out: join(scratch, "refresh-unreached"), entryPoints: ["apps/shop/src/checkout.ts"], budget: { maxFiles: 40, maxDepth: 2 }, offline: true });
+  const checkout = join(second.out, "apps/shop/src/checkout.ts");
+  writeFileSync(checkout, `${readFileSync(checkout, "utf8")}// the contributor's note\n`);
+  const cart2 = join(moving2, ENTRY);
+  writeFileSync(cart2, readFileSync(cart2, "utf8").replace('import { tax } from "@/tax";\n', "const tax = (cents: number): number => Math.round(cents * 0.1);\n"));
+  const tax2 = join(moving2, "apps/shop/src/tax.ts");
+  writeFileSync(tax2, readFileSync(tax2, "utf8").replace("0.1", "0.3"));
+  git(moving2, ["commit", "-qam", "upstream: inline tax"]);
+  assert.ok((await refreshProject(second.out)) !== null);
+  const patch = await patchProject(second.out, { repo: moving2 });
+  assert.match(patch.diff, /the contributor's note/);
+});

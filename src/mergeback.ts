@@ -166,11 +166,14 @@ export async function applyPatch(
     // The slice files the folder holds edits in, by their folder paths: the
     // change is merged into those, never written over them.
     const view = trusted.receipt === null ? record : folderView(trusted.receipt);
+    // A file the folder deleted is an edit too: the change neither brings
+    // it back nor writes over its absence.
+    const deletedInFolder = new Set((view.copied ?? []).filter((file) => !existsSync(join(root, file.path))).map((file) => file.path));
     const editedInFolder = new Set(
       (view.copied ?? [])
         .filter((file) => {
           const at = join(root, file.path);
-          return existsSync(at) && createHash("sha256").update(readFileSync(at)).digest("hex") !== file.sha256;
+          return !existsSync(at) || createHash("sha256").update(readFileSync(at)).digest("hex") !== file.sha256;
         })
         .map((file) => file.path),
     );
@@ -287,6 +290,11 @@ export async function applyPatch(
     for (const [path, status] of [...touched.entries()].sort(([a], [b]) => compare(a, b))) {
       if (status === "D") {
         if (included.has(path)) {
+          // Deleted on both sides: nothing to do.
+          if (deletedInFolder.has(names.path(path))) {
+            deleted.push(path);
+            continue;
+          }
           // A file the folder edited is never deleted under it.
           if (editedInFolder.has(names.path(path))) {
             conflicts.push(path);
@@ -312,6 +320,11 @@ export async function applyPatch(
       await mkdir(dirname(join(root, names.path(path))), { recursive: true });
       const folderPath = names.path(path);
       const base = baseCut?.files.find((item) => item.path === path)?.text;
+      if (deletedInFolder.has(folderPath)) {
+        // The folder deleted what the change edits: left deleted, named.
+        conflicts.push(path);
+        continue;
+      }
       if (editedInFolder.has(folderPath) && (text === null || base === undefined)) {
         // The folder edited a file the change writes and there is no text
         // at the cut's commit to merge from (one an earlier apply added, a
@@ -764,7 +777,16 @@ export async function refreshProject(
   // bytes it has); the commit moves only when nothing was left at the old
   // base, an overlap or a file that would not map back to the folder's
   // names.
-  const whole = applied.conflicts.length === 0 && applied.unmapped.length === 0;
+  // And only when every slice file the commits changed was written or
+  // deleted: one the cut no longer reaches, or a copied folder's, keeps the
+  // bytes of the old base, which the new commit does not hold.
+  const changedNames = git(repo, ["diff", "--name-only", from, to, "--", ...paths]).split("\n").filter((name) => name !== "");
+  const held = new Set([
+    ...trusted.record.manifest.included.map((file) => file.path),
+    ...(trusted.record.extras ?? []).map((file) => file.path),
+  ]);
+  const left = changedNames.filter((name) => held.has(name) && !written.has(name) && !applied.deleted.includes(name));
+  const whole = applied.conflicts.length === 0 && applied.unmapped.length === 0 && left.length === 0;
   if (written.size > 0 || whole) {
     const now = trustedCut(root, options.receipt, options.noReceipt === true ? { noReceipt: true } : {});
     const gone = new Set(applied.deleted);
