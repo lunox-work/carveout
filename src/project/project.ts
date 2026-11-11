@@ -1462,18 +1462,20 @@ export function testRunnerScript(
           "// leaves it out): it runs here and never there.",
           `const INCLUDE = ${JSON.stringify(vitestInclude)};`,
           // Globs as Vitest reads them: `**`, `*`, `?`, `[jt]`, `{a,b}`, `?(c|m)`.
-          String.raw`const globRegExp = (glob) => new RegExp("^" + glob.split(/(\*\*\/|\*\*$|[?@+*]\([^)]*\)|\*|\?|\[[^\]]*\]|\{[^}]*\})/).map((part) => {
-  const escape = (text) => text.replace(/[.+^\x24{}()|[\]\\]/g, "\\$&");
+          // An alternative inside braces or an extglob is a glob itself.
+          String.raw`const globSource = (glob) => glob.split(/(\*\*\/|\*\*$|[?@+*]\([^)]*\)|\*|\?|\[[^\]]*\]|\{[^}]*\})/).map((part) => {
+  const escape = (text) => text.replace(/[.+*?^\x24{}()|[\]\\]/g, "\\$&");
   if (part === "**/") return "(?:.*/)?";
   if (part === "**") return ".*";
   const ext = /^([?@+*])\((.*)\)$/.exec(part);
-  if (ext) return "(?:" + ext[2].split("|").map(escape).join("|") + ")" + (ext[1] === "@" ? "" : ext[1]);
+  if (ext) return "(?:" + ext[2].split("|").map(globSource).join("|") + ")" + (ext[1] === "@" ? "" : ext[1]);
   if (part === "*") return "[^/]*";
   if (part === "?") return "[^/]";
-  if (/^\[.*\]$/.test(part)) return part;
-  if (/^\{.*\}$/.test(part)) return "(?:" + part.slice(1, -1).split(",").map(escape).join("|") + ")";
+  if (/^\[.*\]$/.test(part)) return part.replace(/^\[!/, "[^");
+  if (/^\{.*\}$/.test(part)) return "(?:" + part.slice(1, -1).split(",").map(globSource).join("|") + ")";
   return escape(part);
-}).join("") + "$");`,
+}).join("");
+const globRegExp = (glob) => new RegExp("^" + globSource(glob) + "$");`,
           "const included = INCLUDE.map(globRegExp);",
           "const cutCopied = new Set(JSON.parse(readFileSync(\"carveout.json\", \"utf8\")).manifest.included.map((file) => file.path));",
           "const outside = vitest.filter((path) => !cutCopied.has(path) && !included.some((pattern) => pattern.test(path)));",
@@ -1488,7 +1490,7 @@ export function testRunnerScript(
           "// here and nowhere in the repository.",
           "try {",
           "  const brought = new Set(JSON.parse(readFileSync(\"carveout.json\", \"utf8\")).manifest.included.map((file) => file.path));",
-          "  const sourceOf = (path) => [path.replace(/\\.js$/, \".ts\"), path.replace(/\\.js$/, \".tsx\"), path].find((each) => existsSync(each)) ?? path;",
+          "  const sourceOf = (path) => [path.replace(/\\.js$/, \".ts\"), path.replace(/\\.js$/, \".tsx\"), path.replace(/\\.mjs$/, \".mts\"), path.replace(/\\.cjs$/, \".cts\")].find((each) => each !== path && existsSync(each)) ?? path;",
           "  const strays = node.map(sourceOf).filter((path) => !brought.has(path) && !path.startsWith(\"carveout/\"));",
           "  if (strays.length > 0) {",
           "    failed = true;",
@@ -1520,7 +1522,7 @@ export function testRunnerScript(
     "// missing one shows.",
     "try {",
     "  const brought = new Set(JSON.parse(readFileSync(\"carveout.json\", \"utf8\")).manifest.included.map((file) => file.path));",
-    "  const sourceOf = (path) => [path.replace(/\\.js$/, \".ts\"), path.replace(/\\.js$/, \".tsx\"), path].find((each) => existsSync(each)) ?? path;",
+    "  const sourceOf = (path) => [path.replace(/\\.js$/, \".ts\"), path.replace(/\\.js$/, \".tsx\"), path.replace(/\\.mjs$/, \".mts\"), path.replace(/\\.cjs$/, \".cts\")].find((each) => each !== path && existsSync(each)) ?? path;",
     "  const added = [...node.map(sourceOf), ...vitest].filter((path) => !brought.has(path) && !path.startsWith(\"carveout/\")).sort();",
     "  if (added.length > 0) process.stdout.write(`Ran the tests of ${added.length} file(s) the cut did not bring: ${added.join(\", \")}.\\n`);",
     "} catch {}",

@@ -360,3 +360,22 @@ test("a node:test file added where the package's tests run on Vitest fails the r
   assert.equal(result.status, 1, result.stdout + result.stderr);
   assert.match(result.stdout, /tests run on Vitest, so it would not run these node:test files[\s\S]*src\/mine\.test\.ts/);
 });
+
+test("the include check reads globs inside braces and extglobs as globs, and [!x] as a negation", () => {
+  const script = testRunnerScript(undefined, false, [], ["src/**/*.test.ts"]);
+  const start = script.indexOf("const globSource =");
+  const end = script.indexOf("const included =");
+  assert.ok(start >= 0 && end > start, "the runner carries the glob reader");
+  const globRegExp = new Function(`${script.slice(start, end)}\nreturn globRegExp;`)() as (glob: string) => RegExp;
+  const braces = globRegExp("{**/*.test.ts,src/**/*.spec.ts}");
+  assert.ok(braces.test("apps/web/a.test.ts"));
+  assert.ok(braces.test("src/deep/b.spec.ts"));
+  assert.ok(!braces.test("src/deep/b.ts"));
+  const negated = globRegExp("src/[!_]*.test.ts");
+  assert.ok(negated.test("src/a.test.ts"));
+  assert.ok(!negated.test("src/_a.test.ts"));
+  const ext = globRegExp("**/*.test.?(c|m)[jt]s?(x)");
+  assert.ok(ext.test("a/b.test.mts"));
+  assert.ok(ext.test("a/b.test.tsx"));
+  assert.ok(!ext.test("a/b.test.md"));
+});
