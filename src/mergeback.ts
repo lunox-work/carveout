@@ -359,7 +359,10 @@ export async function applyPatch(
         // the bytes of the cut's commit, so `patch` diffs it from there.
         grown.push(includedAt(repo, path));
         rewrites.push(...cut.record.importRewrites.filter((rewrite) => rewrite.file === path));
-      }
+      } else if (!included.has(path) && status === "A")
+        // A file the change adds keeps the imports the cut rewrote in it on
+        // record, so a patch reads them back as the repository writes them.
+        rewrites.push(...cut.record.importRewrites.filter((rewrite) => rewrite.file === path));
       (included.has(path) || status === "M" ? changed : added).push(path);
     }
     const stubs = await neededStubs(root, record, cuts, options.stubs === true, names, (updated, written) => {
@@ -371,7 +374,7 @@ export async function applyPatch(
     // edits to it, and merges into them or leaves them, never over them.
     const copiedNow = new Set((trusted.record.copied ?? []).map((file) => file.path));
     const fresh = trusted.record.copied === undefined ? [] : [...newly.entries()].filter(([path]) => !copiedNow.has(path));
-    if (grown.length > 0 || fresh.length > 0) {
+    if (grown.length > 0 || fresh.length > 0 || rewrites.length > 0) {
       const current = trusted.record;
       const updated: CarveoutRecord = {
         ...current,

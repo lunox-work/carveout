@@ -281,15 +281,20 @@ test("refresh brings the repository's commits since the cut into a folder that h
   git(moving, ["apply", "--check", join(scratch, "refresh.patch")]);
   // A file the repository adds, which the contributor then edits, is never
   // written over by the next refresh.
-  writeFileSync(join(moving, "apps/shop/src/discount.ts"), "export const DISCOUNT = 0.05;\n");
+  // Through the package's alias, which the cut rewrites in the folder.
+  writeFileSync(join(moving, "apps/shop/src/discount.ts"), 'import { tax } from "@/tax";\nexport const DISCOUNT = 0.05;\nexport const taxed = (cents: number): number => tax(cents);\n');
   writeFileSync(cart, `import { DISCOUNT } from "./discount";\n${readFileSync(cart, "utf8")}export const discount = DISCOUNT;\n`);
   git(moving, ["add", "-A"]);
   git(moving, ["commit", "-qm", "upstream: a discount"]);
   const added = await refreshProject(cut.out);
   assert.ok(added !== null && added.applied.added.includes("apps/shop/src/discount.ts"), JSON.stringify(added?.applied));
+  // Before the contributor edits it, a patch carries nothing of the added
+  // file: its rewritten alias import reads back as the repository writes it.
+  const unedited = await patchProject(cut.out, { repo: moving });
+  assert.doesNotMatch(unedited.diff, /discount\.ts/, unedited.diff);
   const discount = join(cut.out, "apps/shop/src/discount.ts");
   writeFileSync(discount, readFileSync(discount, "utf8").replace("0.05", "0.05; // the contributor's"));
-  writeFileSync(join(moving, "apps/shop/src/discount.ts"), "export const DISCOUNT = 0.07;\n");
+  writeFileSync(join(moving, "apps/shop/src/discount.ts"), 'import { tax } from "@/tax";\nexport const DISCOUNT = 0.07;\nexport const taxed = (cents: number): number => tax(cents);\n');
   git(moving, ["commit", "-qam", "upstream: a bigger discount"]);
   const again = await refreshProject(cut.out);
   assert.ok(again !== null);
