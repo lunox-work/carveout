@@ -322,3 +322,33 @@ test("apply into a folder in pseudonyms names what the cut never saw by the same
     assert.ok(applied.leaks.some((leak) => leak.files.includes(logo)), JSON.stringify(applied.leaks));
   else assert.deepEqual(applied.leaks, []);
 });
+
+test("refresh into a folder in pseudonyms brings the commits in its names, and its work stays", async () => {
+  const { refreshProject } = await import("../src/mergeback.js");
+  const moving = join(scratch, "moving-named");
+  git(scratch, ["clone", "-q", repo, moving]);
+  const cut = await cutSlice({
+    repo: moving,
+    out: join(scratch, "refresh-named"),
+    entryPoints: [ENTRY],
+    budget: { maxFiles: 40, maxDepth: 1 },
+    offline: true,
+    public: true,
+    names: ["subtotal"],
+  });
+  const held = join(cut.out, ENTRY);
+  assert.doesNotMatch(readFileSync(held, "utf8"), /subtotal/i);
+  writeFileSync(held, readFileSync(held, "utf8").replace("export interface Line", "// the contributor's note\nexport interface Line"));
+  // The repository moves on, and its new line spells the name where no
+  // rule of the cut's reaches.
+  const cart = join(moving, ENTRY);
+  writeFileSync(cart, readFileSync(cart, "utf8").replace("  return new Stripe", "  // keep subtotal in cents\n  return new Stripe"));
+  git(moving, ["commit", "-qam", "upstream"]);
+  const refreshed = await refreshProject(cut.out);
+  assert.ok(refreshed !== null);
+  assert.deepEqual(refreshed.applied.merged, [ENTRY]);
+  assert.deepEqual(refreshed.applied.leaks, []);
+  const text = readFileSync(held, "utf8");
+  assert.match(text, /the contributor's note[\s\S]*keep \w+ in cents/);
+  assert.doesNotMatch(text, /subtotal/i);
+});
