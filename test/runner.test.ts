@@ -284,6 +284,17 @@ test("a new Vitest test the repository's Vitest would not find fails the run, an
   rmSync(join(root, "scripts"), { recursive: true });
   vitest(root, report(["src/lib/a.test.ts"], here), 0);
   assert.equal(run(root).status, 0);
+  // Vitest's own default include, extglob and class: a test it finds passes.
+  const defaults = folder("vitest-include-default", {
+    "carveout/test.js": testRunnerScript(undefined, false, [], ["**/*.{test,spec}.?(c|m)[jt]s?(x)"]),
+    "carveout.json": JSON.stringify({ manifest: { included: [] } }),
+    "src/a.test.mts": 'import { it } from "vitest";\n',
+    "src/b.spec.tsx": 'import { it } from "vitest";\n',
+  });
+  const there = realpathSync(defaults);
+  vitest(defaults, report(["src/a.test.mts", "src/b.spec.tsx"], there), 0);
+  const both = run(defaults);
+  assert.equal(both.status, 0, both.stdout + both.stderr);
 });
 
 test("a test that rewrites the TAP file while the run goes on changes nothing the runner decides", () => {
@@ -336,4 +347,16 @@ test("CARVEOUT_COVERAGE=1 prints node's coverage of the folder's code, its tests
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.match(result.stderr, /sum\.js/);
   assert.doesNotMatch(result.stderr, /sum\.test\.js\s*\|/);
+});
+
+test("a node:test file added where the package's tests run on Vitest fails the run, and is named", () => {
+  const root = folder("vitest-package-node-test", {
+    "carveout/test.js": testRunnerScript(undefined, false, [], [], "vitest"),
+    "carveout.json": JSON.stringify({ manifest: { included: [] } }),
+    "src/mine.test.ts": 'import { test } from "node:test";\n',
+    "src/mine.test.js": 'import { test } from "node:test";\ntest("mine", () => {});\n',
+  });
+  const result = run(root);
+  assert.equal(result.status, 1, result.stdout + result.stderr);
+  assert.match(result.stdout, /tests run on Vitest, so it would not run these node:test files[\s\S]*src\/mine\.test\.ts/);
 });

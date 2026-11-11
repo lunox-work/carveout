@@ -1147,6 +1147,8 @@ export function testRunnerScript(
   waived: readonly string[] = [],
   /** The test files the package's Vitest runs (its config's include), as globs from the folder's root. */
   vitestInclude: readonly string[] = [],
+  /** The runner the package's own tests run on, when it is Vitest: a node:test file added runs nowhere there. */
+  packageRunner?: "vitest",
 ): string {
   // The gate covers the package's compiled sources the folder holds: a
   // \`.js\` beside its \`.ts\`, never a stub's mock or a test.
@@ -1459,10 +1461,19 @@ export function testRunnerScript(
           "// A Vitest test the repository's Vitest would not find (its include",
           "// leaves it out): it runs here and never there.",
           `const INCLUDE = ${JSON.stringify(vitestInclude)};`,
-          "const globRegExp = (glob) => new RegExp(\"^\" + glob.split(/(\\*\\*\\/|\\*|\\?|\\{[^}]*\\})/).map((part) =>",
-          "  part === \"**/\" ? \"(?:.*/)?\" : part === \"*\" ? \"[^/]*\" : part === \"?\" ? \"[^/]\" :",
-          "  /^\\{.*\\}$/.test(part) ? \"(?:\" + part.slice(1, -1).split(\",\").map((each) => each.replace(/[.+^${}()|[\\]\\\\]/g, \"\\\\$&\")).join(\"|\") + \")\" :",
-          "  part.replace(/[.+^${}()|[\\]\\\\]/g, \"\\\\$&\")).join(\"\") + \"$\");",
+          // Globs as Vitest reads them: `**`, `*`, `?`, `[jt]`, `{a,b}`, `?(c|m)`.
+          String.raw`const globRegExp = (glob) => new RegExp("^" + glob.split(/(\*\*\/|\*\*$|[?@+*]\([^)]*\)|\*|\?|\[[^\]]*\]|\{[^}]*\})/).map((part) => {
+  const escape = (text) => text.replace(/[.+^\x24{}()|[\]\\]/g, "\\$&");
+  if (part === "**/") return "(?:.*/)?";
+  if (part === "**") return ".*";
+  const ext = /^([?@+*])\((.*)\)$/.exec(part);
+  if (ext) return "(?:" + ext[2].split("|").map(escape).join("|") + ")" + (ext[1] === "@" ? "" : ext[1]);
+  if (part === "*") return "[^/]*";
+  if (part === "?") return "[^/]";
+  if (/^\[.*\]$/.test(part)) return part;
+  if (/^\{.*\}$/.test(part)) return "(?:" + part.slice(1, -1).split(",").map(escape).join("|") + ")";
+  return escape(part);
+}).join("") + "$");`,
           "const included = INCLUDE.map(globRegExp);",
           "const cutCopied = new Set(JSON.parse(readFileSync(\"carveout.json\", \"utf8\")).manifest.included.map((file) => file.path));",
           "const outside = vitest.filter((path) => !cutCopied.has(path) && !included.some((pattern) => pattern.test(path)));",
@@ -1471,6 +1482,21 @@ export function testRunnerScript(
           "  process.stdout.write(`\\nThe repository's Vitest runs only ${INCLUDE.join(\", \")}, so it would not run these, and they would test nothing there. Move them:\\n${outside.map((path) => `  ${path}`).join(\"\\n\")}\\n`);",
           "}",
         ]),
+    ...(packageRunner === "vitest"
+      ? [
+          "// The package's tests run on Vitest: a node:test file added would run",
+          "// here and nowhere in the repository.",
+          "try {",
+          "  const brought = new Set(JSON.parse(readFileSync(\"carveout.json\", \"utf8\")).manifest.included.map((file) => file.path));",
+          "  const sourceOf = (path) => [path.replace(/\\.js$/, \".ts\"), path.replace(/\\.js$/, \".tsx\"), path].find((each) => existsSync(each)) ?? path;",
+          "  const strays = node.map(sourceOf).filter((path) => !brought.has(path) && !path.startsWith(\"carveout/\"));",
+          "  if (strays.length > 0) {",
+          "    failed = true;",
+          "    process.stdout.write(`\\nThe repository's tests run on Vitest, so it would not run these node:test files. Write them with Vitest:\\n${strays.map((path) => `  ${path}`).join(\"\\n\")}\\n`);",
+          "  }",
+          "} catch {}",
+        ]
+      : []),
     "if (typeof unrun !== \"undefined\" && unrun.length > 0) {",
     "  failed = true;",
     `  process.stdout.write(\`\\nThe repository's npm test runs only \${folder}/${coverage?.tests ?? ""}, so it would not run these, and they would cover nothing there. Move them:\\n\${unrun.map((path) => \`  \${path}\`).join("\\n")}\\n\`);`,
@@ -1982,6 +2008,7 @@ export function generateProject(input: ProjectInput): GeneratedProject {
       input.keepsImplicitAny !== true ? (input.implicitAnyFiles ?? []) : [],
       // Vitest's include, when the config states it (and no project splits it).
       input.vitest?.projects === undefined ? (input.vitest?.include ?? []) : [],
+      input.testRunner,
     ),
     class: "harness",
     public: true,
