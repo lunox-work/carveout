@@ -4,7 +4,8 @@
  * Exit codes: 0 done, 1 refused or failed, 2 written with blockers (cut)
  * or a step failed (check, merge), 3 nothing to patch, 4 stale (status),
  * 5 the edits reach past the slice (patch, merge), 6 the hand-off policy
- * kept files out of the patch (patch, merge) or held a change (gate).
+ * kept files out of the patch (patch, merge) or held a change (gate), 7 the
+ * folder's edits and an applied change overlap (apply).
  */
 
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -936,6 +937,12 @@ async function main(argv: readonly string[]) {
         );
         if (applied.outside.length > 0)
           process.stdout.write(`Outside the slice, not applied:\n${list(applied.outside)}\n`);
+        if (applied.merged.length > 0)
+          process.stdout.write(`Merged into the folder's own edits:\n${list(applied.merged)}\n`);
+        if (applied.conflicts.length > 0)
+          process.stdout.write(
+            `The folder's edits and the change overlap here; left as the folder had them, to merge by hand:\n${list(applied.conflicts)}\n`,
+          );
         if (applied.stubs.length > 0)
           process.stdout.write(
             `${applied.stubs.some((stub) => stub.written) ? "Stubs written" : "Stubs the change needs (apply with --stubs to write them)"}:\n${list(
@@ -944,6 +951,7 @@ async function main(argv: readonly string[]) {
           );
       }
       if (applied.stubs.some((stub) => !stub.written)) process.exitCode = 5;
+      if (applied.conflicts.length > 0) process.exitCode = 7;
       return;
     }
 

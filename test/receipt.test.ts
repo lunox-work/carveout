@@ -177,3 +177,33 @@ test("a folder that is not the receipt's cut is refused, whatever id it carries"
   writeFileSync(path, JSON.stringify({ ...record, cutId: second.record.cutId }));
   assert.throws(() => trustedCut(first.out), /does not hold the files of cut/);
 });
+
+test("apply merges a change into the folder's own edits, and leaves an overlap to a person", async () => {
+  const cut = async (name: string) =>
+    cutSlice({ repo, out: join(scratch, name), entryPoints: [ENTRY], budget: { maxFiles: 40, maxDepth: 1 }, offline: true });
+  const upstream = (from: string, to: string) => {
+    const work = join(scratch, `up-${Math.random().toString(36).slice(2)}`);
+    git(scratch, ["clone", "-q", repo, work]);
+    const file = join(work, ENTRY);
+    writeFileSync(file, readFileSync(file, "utf8").replace(from, to));
+    return git(work, ["diff"]);
+  };
+  // Apart: the contributor's line and the repository's both stay.
+  const apart = await cut("merge-apart");
+  const held = join(apart.out, ENTRY);
+  writeFileSync(held, readFileSync(held, "utf8").replace("export function subtotal", "// the contributor's note\nexport function subtotal"));
+  const merged = await applyPatch(apart.out, upstream("  return new Stripe", "  // the repository's note\n  return new Stripe"));
+  assert.deepEqual(merged.merged, [ENTRY]);
+  assert.deepEqual(merged.conflicts, []);
+  const text = readFileSync(held, "utf8");
+  assert.match(text, /the contributor's note/);
+  assert.match(text, /the repository's note/);
+  // Over the same lines: left as the folder had them, and named.
+  const over = await cut("merge-over");
+  const mine = join(over.out, ENTRY);
+  writeFileSync(mine, readFileSync(mine, "utf8").replace("export function subtotal", "export function subtotalMine"));
+  const clash = await applyPatch(over.out, upstream("export function subtotal", "export function subtotalTheirs"));
+  assert.deepEqual(clash.conflicts, [ENTRY]);
+  assert.match(readFileSync(mine, "utf8"), /subtotalMine/);
+  assert.doesNotMatch(readFileSync(mine, "utf8"), /subtotalTheirs|<<<<<<</);
+});

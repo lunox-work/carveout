@@ -39,7 +39,7 @@ import {
 } from "./core.js";
 import { symbolDiff } from "./status.js";
 import { trustedRepo } from "./policy.js";
-import { saveRecord, trustedCut } from "./receipt.js";
+import { folderView, saveRecord, trustedCut } from "./receipt.js";
 import { fromFolder, toFolder, type FolderPseudonyms } from "./pseudonyms/index.js";
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -67,6 +67,27 @@ export interface Applied {
    * change needs from the modules the slice cuts. Written only when asked.
    */
   readonly stubs: readonly { path: string; detail: string; written: boolean }[];
+  /** Slice files the folder had edited, the change merged into them (three-way). */
+  readonly merged: readonly string[];
+  /**
+   * Slice files where the folder's edit and the change overlap: left as the
+   * folder had them, for a person to merge.
+   */
+  readonly conflicts: readonly string[];
+}
+
+/** `theirs` merged into `ours` from `base`, as `git merge-file` does; conflicts when they overlap. */
+function mergeText(scratch: string, ours: string, base: string, theirs: string): { text: string; conflicts: boolean } {
+  const at = mkdtempSync(join(scratch, "merge-"));
+  writeFileSync(join(at, "ours"), ours);
+  writeFileSync(join(at, "base"), base);
+  writeFileSync(join(at, "theirs"), theirs);
+  const result = spawnSync("git", ["merge-file", "-p", join(at, "ours"), join(at, "base"), join(at, "theirs")], {
+    encoding: "utf8",
+    maxBuffer: 256 * 1024 * 1024,
+  });
+  if (result.status === null || result.status < 0) throw new Error(`git merge-file failed: ${result.stderr}`);
+  return { text: result.stdout, conflicts: result.status > 0 };
 }
 
 /**
@@ -114,6 +135,17 @@ export async function applyPatch(
   try {
     git(scratch, ["clone", "-q", "--shared", "--no-checkout", source, repo]);
     git(repo, ["checkout", "-q", "--detach", commit]);
+    // The slice files the folder holds edits in, by their folder paths: the
+    // change is merged into those, never written over them.
+    const view = trusted.receipt === null ? record : folderView(trusted.receipt);
+    const editedInFolder = new Set(
+      (view.copied ?? [])
+        .filter((file) => {
+          const at = join(root, file.path);
+          return existsSync(at) && createHash("sha256").update(readFileSync(at)).digest("hex") !== file.sha256;
+        })
+        .map((file) => file.path),
+    );
     const file = join(scratch, "change.patch");
     writeFileSync(file, patchText);
     try {
@@ -158,6 +190,15 @@ export async function applyPatch(
       ...(options.log === undefined ? {} : { log: options.log }),
     };
     const cuts: ComputedCut[] = [await computeCut(request)];
+    // The text the cut wrote for each slice file, for the three-way merge:
+    // a cut of the repository at the cut's commit, before the change.
+    let baseCut: ComputedCut | null = null;
+    if (editedInFolder.size > 0) {
+      const baseRepo = join(scratch, "base");
+      git(scratch, ["clone", "-q", "--shared", "--no-checkout", source, baseRepo]);
+      git(baseRepo, ["checkout", "-q", "--detach", commit]);
+      baseCut = await computeCut({ ...request, repo: baseRepo });
+    }
     const reached = (cut: ComputedCut) =>
       new Set(cut.record.manifest.included.map((file) => file.path));
     // What the patch adds that the entries do not reach is still the
@@ -195,11 +236,18 @@ export async function applyPatch(
     const added: string[] = [];
     const deleted: string[] = [];
     const outside: string[] = [];
+    const merged: string[] = [];
+    const conflicts: string[] = [];
     const grown: IncludedFile[] = [];
     const rewrites: ImportRewrite[] = [];
     for (const [path, status] of [...touched.entries()].sort(([a], [b]) => compare(a, b))) {
       if (status === "D") {
         if (included.has(path)) {
+          // A file the folder edited is never deleted under it.
+          if (editedInFolder.has(names.path(path))) {
+            conflicts.push(path);
+            continue;
+          }
           await rm(join(root, names.path(path)), { force: true });
           deleted.push(path);
         } else outside.push(path);
@@ -218,8 +266,21 @@ export async function applyPatch(
         continue;
       }
       await mkdir(dirname(join(root, names.path(path))), { recursive: true });
-      if (text === null) await copyFile(join(repo, path), join(root, names.path(path)));
-      else await writeFile(join(root, names.path(path)), names.text(path, text));
+      const folderPath = names.path(path);
+      const base = baseCut?.files.find((item) => item.path === path)?.text;
+      if (text !== null && editedInFolder.has(folderPath) && base !== undefined) {
+        // The folder's edit, read back in the repository's names, with the
+        // change merged in; left alone where the two overlap.
+        const ours = names.back(folderPath, readFileSync(join(root, folderPath), "utf8"));
+        const result = mergeText(scratch, ours, base, text);
+        if (result.conflicts) {
+          conflicts.push(path);
+          continue;
+        }
+        await writeFile(join(root, folderPath), names.text(path, result.text));
+        merged.push(path);
+      } else if (text === null) await copyFile(join(repo, path), join(root, folderPath));
+      else await writeFile(join(root, folderPath), names.text(path, text));
       if (!included.has(path) && status === "M") {
         // A repository file the slice did not hold: it joins the slice at
         // the bytes of the cut's commit, so `patch` diffs it from there.
@@ -245,7 +306,7 @@ export async function applyPatch(
       };
       trusted = saveRecord(root, trusted, updated);
     }
-    return { changed, added, deleted, outside, stubs };
+    return { changed, added, deleted, outside, stubs, merged, conflicts };
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }
