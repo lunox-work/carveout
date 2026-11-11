@@ -256,7 +256,8 @@ test("when the budget cannot hold every test, the tests of the entry points' own
   // Room for the slice, the barrel and one test.
   const tight = walk(files, ["lib/a.ts"], { maxFiles: 4, maxDepth: 1 }, { tests: true });
   assert.deepEqual(tight.tests, ["lib/z.test.ts"]);
-  assert.deepEqual(tight.testsLeft, [{ file: "lib/0b.test.ts", reason: "budget" }]);
+  // Named with the barrel it imports, which the slice holds.
+  assert.deepEqual(tight.testsLeft, [{ file: "lib/0b.test.ts", reason: "budget", imports: ["lib/index.ts"] }]);
   // With room for both, both come, in path order.
   const roomy = walk(files, ["lib/a.ts"], { maxFiles: 40, maxDepth: 1 }, { tests: true });
   assert.deepEqual(roomy.tests, ["lib/0b.test.ts", "lib/z.test.ts"]);
