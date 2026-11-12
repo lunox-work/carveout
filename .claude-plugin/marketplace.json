@@ -12,7 +12,7 @@
       "name": "carveout",
       "source": "./",
       "description": "Hand one part of a closed TypeScript repository to a contractor and take a checked patch back; check what a change reaches and whether it weakened a test.",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "category": "development",
       "license": "MIT"
     }

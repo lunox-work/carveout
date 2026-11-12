@@ -17,14 +17,14 @@ description: >-
 license: MIT
 compatibility: >-
   Node 22.12 or later, git and npm; Docker to run a returned folder's code. Runs
-  the carveout@0.2.0 CLI from npm; online cuts read the npm registry.
+  the carveout@0.3.0 CLI from npm; online cuts read the npm registry.
 ---
 
 # carveout
 
-`carveout <command>` is the CLI, `carveout@0.2.0`. When `carveout --version`
+`carveout <command>` is the CLI, `carveout@0.3.0`. When `carveout --version`
 prints another version or nothing, ask the person before installing it:
-`npm i -g carveout@0.2.0`, or put `npx carveout@0.2.0` in place of `carveout` in
+`npm i -g carveout@0.3.0`, or put `npx carveout@0.3.0` in place of `carveout` in
 each command (in a clone of the repository, `node dist/src/cli.js` after
 `npm install && npm run build`). Node 22.12 or later, and `git` and `npm` on
 PATH.
