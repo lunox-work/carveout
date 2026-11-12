@@ -69,16 +69,16 @@ kept. The sections below are each step in full.
 
 ## Hosted mode
 
-With the `lunox` MCP tools signed in (the plugin bundles the server; `/mcp`
-signs in), read the workspace with `list_workspaces`, `list_repositories`,
-`get_snapshot`, `list_sandboxes`, `get_sandbox` and `get_run`. For a connected
-repository, and only when asked: `plan_slice` (read it with `get_run`),
-`start_sandbox`, `cut_slice` (a draft version from a slice run and the approved
-proposal) and `get_handout` (public files and the hidden suite's hash, never
-the hidden tests). The platform keeps the receipt; patching stays local.
-Approvals and publishing happen in the web app: point the person there. Never
-ask for a token; the CLI signs in with `carveout login`. Local mode, below, is
-the default.
+With the `lunox` MCP tools signed in (bundled; `/mcp` signs in), read with the
+`list_*`/`get_*` tools. Write only when asked: a bounty (`post_bounty` or
+`import_github_issue`, `size_bounty` is a paid run, `get_decisions` and
+`confirm_link`), a slice (`plan_slice`, `start_sandbox`, `cut_slice`), its
+build (`prepare`, then `get_handout`: public files and the hidden suite's
+hash only), a contractor's patch (`submit_patch`, `get_verdict`, one
+`retry`). Approvals, decisions, publishing and merging back happen in the
+web app. `insufficient_scope` means signing in again through `/mcp`. Never
+ask for a token; the CLI signs in with `carveout login`. Local mode, below,
+is the default.
 
 ## 1. Plan
 
