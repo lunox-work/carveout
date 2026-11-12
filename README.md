@@ -264,8 +264,13 @@ agent once per stop:
 | `carveout widen <dir>`        | Cut again with more entry points, keeping the work                             |
 | `carveout impact`             | What a change reaches: importers, changed exports, tests to run                |
 | `carveout gate`               | Hold weakened tests, CI and config edits, and new suppressions                 |
+| `carveout login`              | Optional: sign in to the Lunox platform; a token in `~/.lunox/credentials`     |
+| `carveout whoami`             | Print the account, workspace and token expiry signed in with                   |
+| `carveout logout`             | Delete the saved platform token                                                |
 
-Every option: [reference](docs/REFERENCE.md#commands).
+Every option: [reference](docs/REFERENCE.md#commands). Only `login`, `whoami`
+and `logout` talk to the Lunox platform; every other command is local and needs
+no account.
 
 ## Limits
 

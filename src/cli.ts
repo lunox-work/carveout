@@ -41,6 +41,7 @@ import { applyPatch, mergeProject, refreshProject, widenProject } from "./mergeb
 import { statusProject } from "./status.js";
 import { hasAdvice, renderReadiness } from "./readiness.js";
 import { trustedCut, writeReceipt } from "./receipt.js";
+import { runAccount } from "./account.js";
 
 const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript repository.
 
@@ -157,6 +158,16 @@ const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript r
 
   carveout where
       The folder fetched package types are cached in (CARVEOUT_HOME).
+
+  carveout login [--platform <url>] [--org <handle|id>] [--open]
+  carveout whoami [--platform <url>]
+  carveout logout [--platform <url>]
+      Optional: sign in to the Lunox platform (https://platform.lunox.work, or
+      LUNOX_PLATFORM_URL) with a code approved in the browser, and keep a
+      workspace token in ~/.lunox/credentials (LUNOX_CREDENTIALS), shared with
+      duediligence; whoami prints the account, workspace and token expiry;
+      logout deletes the token here (the platform cannot revoke it from the
+      CLI). No other command talks to the platform.
 
 An entry point is a file or a directory, relative to --repo (default: the
 current directory, which should be the repository's root). Defaults:
@@ -282,6 +293,10 @@ async function main(argv: readonly string[]) {
   }
   if (commandName === "--version" || commandName === "version") {
     process.stdout.write(`${CARVEOUT_VERSION}\n`);
+    return;
+  }
+  if (commandName === "login" || commandName === "whoami" || commandName === "logout") {
+    process.exitCode = await runAccount(commandName, rest, { client: "carveout", version: CARVEOUT_VERSION });
     return;
   }
   const { values, positionals } = parseArgs({
