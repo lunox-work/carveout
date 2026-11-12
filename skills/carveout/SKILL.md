@@ -70,13 +70,14 @@ kept. The sections below are each step in full.
 ## Hosted mode
 
 When the `lunox` MCP tools are available and signed in (the plugin bundles the
-server; `/mcp` signs in), they read the person's Lunox workspace: workspaces,
-bounties, repositories, sandboxes and runs (tools such as `list_workspaces`,
-`list_bounties`, `list_repositories`, `list_sandboxes`, `get_run`). Writes,
-slice approvals and other confirmations happen in the platform's web app for
-now: point the person there and never act for them. Never ask for a token in
-the chat; the CLI signs in with `carveout login` in their own terminal. Local
-mode, the steps below, is unchanged and the default.
+server; `/mcp` signs in), they read the person's Lunox workspace:
+`list_workspaces`, `list_repositories`, `get_snapshot` (the commit a snapshot
+was taken at and what was read from its file tree), `list_sandboxes`,
+`get_sandbox` and `get_run`. They are read-only: slices are not planned, cut or
+patched through them yet, so do that in local mode. Starting a sandbox, approving a slice and other confirmations happen in
+the platform's web app: point the person there and never act for them. Never
+ask for a token in the chat; the CLI signs in with `carveout login` in their
+own terminal. Local mode, the steps below, is unchanged and the default.
 
 ## 1. Plan
 
