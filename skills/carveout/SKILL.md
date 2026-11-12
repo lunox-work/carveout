@@ -73,12 +73,14 @@ With the `lunox` MCP tools signed in (bundled; `/mcp` signs in), read with the
 `list_*`/`get_*` tools. Write only when asked: a bounty (`post_bounty` or
 `import_github_issue`, `size_bounty` is a paid run, `get_decisions` and
 `confirm_link`), a slice (`plan_slice`, `start_sandbox`, `cut_slice`), its
-build (`prepare`, then `get_handout`: public files and the hidden suite's
-hash only), a contractor's patch (`submit_patch`, `get_verdict`, one
-`retry`). Approvals, decisions, publishing and merging back happen in the
-web app. `insufficient_scope` means signing in again through `/mcp`. Never
-ask for a token; the CLI signs in with `carveout login`. Local mode, below,
-is the default.
+build (`prepare`, then `get_handout`: public files and the hidden suite's hash
+only), a contractor's patch (`submit_patch`, `get_verdict`, one `retry`).
+Approvals, decisions, publishing and merging back happen in the web app. Model
+runs (`size_bounty`, `prepare`, `retry`) count against a monthly token limit
+(`get_usage`); on `quota_exceeded`, tell the person when it resets and do not
+retry. `insufficient_scope` means signing in again through `/mcp`. Never ask
+for a token; the CLI signs in with `carveout login`. Local mode, below, is the
+default.
 
 ## 1. Plan
 
