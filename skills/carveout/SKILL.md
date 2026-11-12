@@ -67,6 +67,17 @@ folder edited; after merging one by hand, `refresh --resolved <path>`), and a
 patch after it carries the work alone; `widen --entry` cuts it wider, the work
 kept. The sections below are each step in full.
 
+## Hosted mode
+
+When the `lunox` MCP tools are available and signed in (the plugin bundles the
+server; `/mcp` signs in), they read the person's Lunox workspace: workspaces,
+bounties, repositories, sandboxes and runs (tools such as `list_workspaces`,
+`list_bounties`, `list_repositories`, `list_sandboxes`, `get_run`). Writes,
+slice approvals and other confirmations happen in the platform's web app for
+now: point the person there and never act for them. Never ask for a token in
+the chat; the CLI signs in with `carveout login` in their own terminal. Local
+mode, the steps below, is unchanged and the default.
+
 ## 1. Plan
 
 ```sh
