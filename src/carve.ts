@@ -122,7 +122,7 @@ import {
   type Receipt,
 } from "./receipt.js";
 
-export const CARVEOUT_VERSION = "0.3.1";
+export const CARVEOUT_VERSION = "0.4.0";
 export const RECORD_PATH = "carveout.json";
 export const RECORD_SCHEMA_VERSION = 1;
 /** Blockers that stop a cut before it writes anything. */
