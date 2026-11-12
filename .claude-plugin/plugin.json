@@ -1,7 +1,7 @@
 {
   "name": "carveout",
   "displayName": "carveout",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Hand one part of a closed TypeScript repository to an outside contractor as a slice that installs, builds and tests on its own, and take a checked patch back. Also checks a change made in the repository: what it reaches, the tests to run, and weakened tests or config edits.",
   "author": {
     "name": "Charlie Angriawan",

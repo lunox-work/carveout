@@ -14,7 +14,7 @@ description: >-
   test to make it pass.
 license: MIT
 compatibility: >-
-  Node 22.12 or later, git and npm. Runs the carveout@0.1.2 CLI from npm.
+  Node 22.12 or later, git and npm. Runs the carveout@0.2.0 CLI from npm.
 ---
 
 # carveout-gate
@@ -23,9 +23,9 @@ What a change made in the repository reaches, and whether it weakened the checks
 that would catch it. To hand a part of the repository to someone outside it
 instead, use the `carveout` skill.
 
-`carveout <command>` is the CLI, `carveout@0.1.2`. When `carveout --version`
+`carveout <command>` is the CLI, `carveout@0.2.0`. When `carveout --version`
 prints another version or nothing, ask the person before installing it:
-`npm i -g carveout@0.1.2`, or put `npx carveout@0.1.2` in place of `carveout` in
+`npm i -g carveout@0.2.0`, or put `npx carveout@0.2.0` in place of `carveout` in
 each command (in a clone of the repository, `node dist/src/cli.js` after
 `npm install && npm run build`). Node 22.12 or later, and `git` and `npm` on
 PATH.
