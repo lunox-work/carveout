@@ -474,7 +474,25 @@ await cut({ ...walk, out, offline?, public? = false, typesCache?, log? })
 // → { out, record (its carveout.json), ready, blockers, receipt, readiness }
 await patch({ receipt, folder, repo?, allow? })
 // → the `Patch` that `patch --json` prints: diff, refused (exit 6), boundary (exit 5), …
+walk({ ...walk })
+// → the whole walk (`ReachResult`): included files, edges both ways, links inside, tests.
+await analyse({ ...walk, commitSha, packageTypes?, widenLiterals? = true,
+  pathReads? = "block", externalsOf?, files?, graph?, isDirty?, signal?, log? })
+// → { manifest, contract, contractJson, stubs, surface, ready,
+//     keepsImplicitAny, implicitAnyFiles, walk }; throws CutError (code
+//     no_files | too_large | unreadable). Runs no process, Git included.
+importGraph(root, { copyPure?, files? })   // → SliceGraph, for many analyse({ graph })
+folderLayout(record)                        // → FolderLayout: harness, mocks, config, commands, tests
+layoutTestArgv(layout, path, runner?)       // → one test alone, TAP on stdout
 ```
+
+`analyse` is what `cut` writes the folder from, on the same code path and
+the same request after `carveout.config.json`: on the same checkout its
+manifest and contract are the cut's but for the commit and dirty fields,
+which the caller gives. Without `packageTypes` every package is untyped.
+`pathReads: "omit"` makes no blocker of a file read by path.
+`FolderLayout` is a type a platform can write its own layout in, so a
+grader takes the layout as a parameter.
 
 `cut` writes the folder as `carveout cut` does and returns the receipt as
 data, written nowhere; `patch` takes it back as data and judges the folder
@@ -486,6 +504,29 @@ runs Git, read-only, on the repository, and in a scratch repository for a
 patch with edits. A cut that is not `offline` also runs npm, scripts off,
 for package types and the folder's lockfile. `test/api.test.ts` holds it
 to that with `child_process` made to throw.
+
+Two more entries, same version:
+
+- `carveout/extract`: the stub extractor and fixture compile (`src/extract.ts`):
+  `npmPackageTypes`, `PackageTypesFetcher`, `sha256`, `gitBlobId`,
+  `gitFileMode`, `extractTypeScriptBoundary`, `boundedHost`,
+  `extractionOptions`, `filterDeclaration`, `loadConfig`,
+  `nearestCompilerOptions`, `workspacePackages`, `workspaceModuleResolver`,
+  `packageRegistries`, `isNodeBuiltin`, `NODE_BUILTINS`, `declarationPathFor`,
+  `isScriptPath`, `compileFixture`, `packageUses`, `packageModules`,
+  `packageShim`, `SHIM_PATH`, `UNTYPED_PACKAGE_OPTIONS`, `UNTYPED_PACKAGE_CODES`.
+  NOTICE.md lists where they differ from sandbox-factory's.
+- `carveout/pseudonyms`, pure (no `typescript`, no `node:` module;
+  `test/pseudonyms-entry.test.ts`): the alias table (`applyAliases`,
+  `invertAliasRules`, `renameFile`, `validateAliasRules`), the vocabulary
+  (`scanVocabulary`, `workspaceVocabulary`, `vocabularyLeaks`, …), the draft
+  (`draftPseudonyms`), carry-back (`carryChange`, `reverseSubmission`,
+  `forwardChange`, `projectPathOf`), `MOCK_RUNTIME`, `MOCK_RUNTIME_TYPES`, and
+  the platform's renaming before 0.3.0, frozen: `applyAliasesV1`,
+  `renameFileV1`, `invertAliasRulesV1`, `validateAliasRulesV1`, `ALIASES_V1`
+  (for carry-back), `workspaceVocabularyV1`, `termMatchesV1`,
+  `vocabularyLeaksV1`, `vocabularyBlockersV1`, and `unionVocabularyLeaks` to
+  block on both scans.
 
 ## Also: checking a change in the repository
 
