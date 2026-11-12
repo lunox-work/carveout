@@ -109,6 +109,38 @@ test("carveout/api resolves to dist/src/api.js by the package's exports", () => 
     assert.equal(typeof (api as unknown as Record<string, unknown>)[name], "function", name);
 });
 
+test("carveout/extract resolves by the package's exports, with the extractor and the fixture compile", async () => {
+  assert.equal(import.meta.resolve("carveout/extract"), new URL("../src/extract.js", import.meta.url).href);
+  const extract = (await import("../src/extract.js")) as unknown as Record<string, unknown>;
+  for (const name of [
+    "npmPackageTypes",
+    "sha256",
+    "gitBlobId",
+    "gitFileMode",
+    "boundedHost",
+    "extractionOptions",
+    "filterDeclaration",
+    "loadConfig",
+    "isNodeBuiltin",
+    "declarationPathFor",
+    "isScriptPath",
+    "compileFixture",
+    "packageUses",
+    "packageModules",
+    "packageShim",
+    "nearestCompilerOptions",
+    "workspacePackages",
+    "workspaceModuleResolver",
+    "packageRegistries",
+    "extractTypeScriptBoundary",
+  ])
+    assert.equal(typeof extract[name], "function", name);
+  assert.ok(Array.isArray(extract["NODE_BUILTINS"]));
+  assert.ok(Array.isArray(extract["UNTYPED_PACKAGE_CODES"]));
+  assert.equal(typeof extract["UNTYPED_PACKAGE_OPTIONS"], "object");
+  assert.equal(extract["SHIM_PATH"], "__slice__/packages.d.ts");
+});
+
 test("plan lists the files, cuts, surface and tests, and writes nothing", () => {
   const before = tree(scratch);
   const planned = api.plan({ root: repo, entries: [ENTRY], depth: 1, withTests: true });

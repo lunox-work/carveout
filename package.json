@@ -48,6 +48,10 @@
       "types": "./dist/src/api.d.ts",
       "default": "./dist/src/api.js"
     },
+    "./extract": {
+      "types": "./dist/src/extract.d.ts",
+      "default": "./dist/src/extract.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
