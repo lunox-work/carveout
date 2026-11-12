@@ -42,19 +42,25 @@ import { statusProject } from "./status.js";
 import { hasAdvice, renderReadiness } from "./readiness.js";
 import { trustedCut, writeReceipt } from "./receipt.js";
 import { runAccount } from "./account.js";
+import { handoffPlatform, patchFrom, type HostedDeps } from "./hosted.js";
+import { PlatformError } from "./platform.js";
 
 const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript repository.
 
   carveout handoff <entry>... --out <dir> [--task <file|text>] [--depth N] [--max-files N]
                  [--private <path>]... [--name <word>]... [--copy <dir>]... [--live <pkg>]...
                  [--accept <test>...] [--no-whole-package] [--no-copy-pure] [--receipt <file>]
-                 [--max-exposure-lines N] [--max-exposure-percent P] [--json]
+                 [--max-exposure-lines N] [--max-exposure-percent P]
+                 [--platform [<url>] --bounty <id> [--title <text>]] [--json]
       The hand-off in one step: a cut with the tests that run the code, its
       whole package and the pure code it runs, for someone outside (public,
       in pseudonyms), and its check. Prints whether the folder is ready (its
       tests pass before any edit), what it shows, the receipt to keep, and
       what to send. --task writes TASK.md: the work, and when it is accepted.
-      Exits 0 only when the folder is ready to hand over.
+      Exits 0 only when the folder is ready to hand over. --platform (after
+      carveout login) uploads the ready folder and the --accept tests, in the
+      folder's names, as a draft version of the bounty --bounty names; the
+      receipt stays here. Publishing it is a person's act in the web app.
 
   carveout plan  <entry>... [--repo <dir>] [--max-files N] [--depth N]
                  [--with-tests] [--whole-package] [--follow-workspaces]
@@ -167,7 +173,7 @@ const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript r
       workspace token in ~/.lunox/credentials (LUNOX_CREDENTIALS), shared with
       duediligence; whoami prints the account, workspace and token expiry;
       logout deletes the token here (the platform cannot revoke it from the
-      CLI). No other command talks to the platform.
+      CLI). Only handoff --platform and patch --from talk to it besides.
 
 An entry point is a file or a directory, relative to --repo (default: the
 current directory, which should be the repository's root). Defaults:
@@ -299,8 +305,12 @@ async function main(argv: readonly string[]) {
     process.exitCode = await runAccount(commandName, rest, { client: "carveout", version: CARVEOUT_VERSION });
     return;
   }
+  // `--platform` with no URL: the default platform (LUNOX_PLATFORM_URL, else production).
+  const args = rest.map((arg, i) =>
+    arg === "--platform" && (rest[i + 1] === undefined || rest[i + 1]?.startsWith("-")) ? "--platform=" : arg,
+  );
   const { values, positionals } = parseArgs({
-    args: [...rest],
+    args,
     allowPositionals: true,
     // `--no-whole-package`, `--no-copy-pure`, `--no-public`: handoff's
     // defaults turned off by name.
@@ -348,6 +358,10 @@ async function main(argv: readonly string[]) {
       "keep-names": { type: "boolean" },
       task: { type: "string" },
       entry: { type: "string", multiple: true },
+      platform: { type: "string" },
+      bounty: { type: "string" },
+      title: { type: "string" },
+      from: { type: "string" },
     },
   });
   // With negated flags read, `--no-receipt` comes back as `receipt: false`
@@ -429,6 +443,10 @@ async function main(argv: readonly string[]) {
     ...(values.private === undefined ? {} : { private: values.private }),
     ...maxExposure,
   };
+
+  /** `--platform`'s URL; undefined for the default. */
+  const platformGiven = values.platform === undefined || values.platform === "" ? undefined : values.platform;
+  const hostedDeps = (): HostedDeps => ({ env: process.env, fetchImpl: fetch, now: Date.now });
 
   switch (commandName) {
     case "where":
@@ -587,6 +605,14 @@ async function main(argv: readonly string[]) {
     case "handoff": {
       if (positionals.length === 0) fail("handoff needs at least one entry point.");
       if (values.out === undefined) fail("handoff needs --out <dir>.");
+      const toPlatform = values.platform !== undefined;
+      if (toPlatform) {
+        if (values.bounty === undefined) fail("handoff --platform needs --bounty <id>: the bounty the folder is a version of.");
+        if (values["keep-names"] === true || values.public === false || values["no-receipt"] === true)
+          fail("handoff --platform uploads a public folder in pseudonyms, with its receipt kept here: drop --keep-names, --no-public and --no-receipt.");
+        if ((values.accept ?? []).length === 0)
+          fail("handoff --platform needs --accept <test>...: the platform grades a submission by the tests that fail before the work.");
+      }
       // The hand-off's own defaults, unless a flag or the owner's
       // configuration says otherwise: the tests that run the code, its
       // whole package, the pure code it runs, and a folder for someone
@@ -649,6 +675,36 @@ async function main(argv: readonly string[]) {
       const record = result.record;
       // The step that failed, and what it printed last: what to fix first.
       const failedStep = steps.find((step) => !step.ok);
+      // To the platform: only a folder ready to hand over, public and in
+      // pseudonyms, whose acceptance tests fail before the work.
+      let uploaded: Awaited<ReturnType<typeof handoffPlatform>> | null = null;
+      let notUploaded: string | null = null;
+      if (toPlatform) {
+        if (!record.ready || (verdict.handoff !== "ready" && verdict.handoff !== "no-tests"))
+          notUploaded = "the folder is not ready to hand over (above); fix it and hand off again.";
+        else if (vacuous !== false)
+          notUploaded =
+            vacuous === true
+              ? "the acceptance tests already pass before the work, so they would accept anything."
+              : "the acceptance tests did not run on the folder (above).";
+        else if (result.receipt === null || result.pseudonyms === null)
+          notUploaded = "the folder is not in pseudonyms with a receipt kept here.";
+        else
+          try {
+            uploaded = await handoffPlatform({
+              platform: platformGiven,
+              bountyId: values.bounty ?? "",
+              folder: result.out,
+              receiptPath: result.receipt,
+              accepted,
+              title: values.title,
+              deps: hostedDeps(),
+            });
+          } catch (error) {
+            if (!(error instanceof PlatformError)) throw error;
+            notUploaded = error.message;
+          }
+      }
       if (values.json === true)
         print({
           out: result.out,
@@ -664,6 +720,22 @@ async function main(argv: readonly string[]) {
           // The owner's acceptance tests on the folder as it goes out.
           acceptance: vacuous === null ? null : vacuous ? "pass-before-the-work" : "fail-before-the-work",
           steps,
+          ...(toPlatform
+            ? {
+                platform:
+                  uploaded === null
+                    ? { uploaded: false, reason: notUploaded }
+                    : {
+                        uploaded: true,
+                        base: uploaded.base,
+                        bountyId: uploaded.bountyId,
+                        sandboxId: uploaded.sandboxId,
+                        versionId: uploaded.versionId,
+                        runId: uploaded.runId,
+                        record: uploaded.recordPath,
+                      },
+              }
+            : {}),
         });
       else {
         const lines = [
@@ -715,14 +787,26 @@ async function main(argv: readonly string[]) {
           result.receipt === null
             ? "No receipt: the folder that comes back will be judged by its own record (--no-receipt on patch)."
             : `Receipt: ${result.receipt}\n  Keep it, and never send it: the folder that comes back is judged by it.`,
-          `Send the folder without node_modules: (cd ${dirname(result.out)} && zip -qr ${basename(result.out)}.zip ${basename(result.out)} -x '*/node_modules/*')`,
-          "When it comes back, from the repository's root: carveout patch <returned folder> --output change.patch; read all of it; then git apply --3way change.patch on a branch, and let CI decide.",
-          "",
+          ...(uploaded !== null
+            ? [
+                `Uploaded to ${uploaded.base}: version ${uploaded.versionId} of bounty ${uploaded.bountyId} (sandbox ${uploaded.sandboxId}, import run ${uploaded.runId}), ${uploaded.files} file(s) and ${accepted.length} acceptance test(s) in the folder's names. The receipt stayed here; the upload is recorded in ${uploaded.recordPath}.`,
+                "  The platform runs the folder's baseline (each acceptance test must fail on it). Publishing the version is a person's act in the platform's web app.",
+                "When a contributor's submission passes, from the repository's root: carveout patch --from <submission id> --output change.patch; read all of it; then git apply --3way change.patch on a branch, and let CI decide.",
+                "",
+              ]
+            : [
+                ...(notUploaded === null ? [] : [`Not uploaded to the platform: ${notUploaded}`, ""]),
+                `Send the folder without node_modules: (cd ${dirname(result.out)} && zip -qr ${basename(result.out)}.zip ${basename(result.out)} -x '*/node_modules/*')`,
+                "When it comes back, from the repository's root: carveout patch <returned folder> --output change.patch; read all of it; then git apply --3way change.patch on a branch, and let CI decide.",
+                "",
+              ]),
         ];
         process.stdout.write(lines.join("\n"));
       }
       // Acceptance tests that pass before the work would accept anything.
       if (!record.ready || verdict.handoff !== "ready" || vacuous === true) process.exitCode = 2;
+      if (toPlatform && uploaded === null) process.exitCode = 1;
+      else if (uploaded !== null) process.exitCode = 0;
       return;
     }
 
