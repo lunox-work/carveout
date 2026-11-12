@@ -17,14 +17,14 @@ description: >-
 license: MIT
 compatibility: >-
   Node 22.12 or later, git and npm; Docker to run a returned folder's code. Runs
-  the carveout@0.1.1 CLI from npm; online cuts read the npm registry.
+  the carveout@0.2.0 CLI from npm; online cuts read the npm registry.
 ---
 
 # carveout
 
-`carveout <command>` is the CLI, `carveout@0.1.1`. When `carveout --version`
+`carveout <command>` is the CLI, `carveout@0.2.0`. When `carveout --version`
 prints another version or nothing, ask the person before installing it:
-`npm i -g carveout@0.1.1`, or put `npx carveout@0.1.1` in place of `carveout` in
+`npm i -g carveout@0.2.0`, or put `npx carveout@0.2.0` in place of `carveout` in
 each command (in a clone of the repository, `node dist/src/cli.js` after
 `npm install && npm run build`). Node 22.12 or later, and `git` and `npm` on
 PATH.
@@ -66,6 +66,19 @@ overlap is named, never overwritten, exit 7, and so is a `--copy` file the
 folder edited; after merging one by hand, `refresh --resolved <path>`), and a
 patch after it carries the work alone; `widen --entry` cuts it wider, the work
 kept. The sections below are each step in full.
+
+## Hosted mode
+
+With the `lunox` MCP tools signed in (the plugin bundles the server; `/mcp`
+signs in), read the workspace with `list_workspaces`, `list_repositories`,
+`get_snapshot`, `list_sandboxes`, `get_sandbox` and `get_run`. For a connected
+repository, and only when asked: `plan_slice` (read it with `get_run`),
+`start_sandbox`, `cut_slice` (a draft version from a slice run and the approved
+proposal) and `get_handout` (public files and the hidden suite's hash, never
+the hidden tests). The platform keeps the receipt; patching stays local.
+Approvals and publishing happen in the web app: point the person there. Never
+ask for a token; the CLI signs in with `carveout login`. Local mode, below, is
+the default.
 
 ## 1. Plan
 

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "lunox": {
+      "type": "http",
+      "url": "https://platform.lunox.work/mcp/carveout"
+    }
+  }
+}
