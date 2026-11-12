@@ -91,7 +91,7 @@ after(removeScratch);
 
 test("carveout/api resolves to dist/src/api.js by the package's exports", () => {
   assert.equal(import.meta.resolve("carveout/api"), new URL("../src/api.js", import.meta.url).href);
-  for (const name of ["plan", "cut", "patch", "integrityOf", "gainedIntegrity", "weakenedTest", "testsVerdict", "exposureOf"])
+  for (const name of ["plan", "walk", "cut", "patch", "integrityOf", "gainedIntegrity", "weakenedTest", "testsVerdict", "exposureOf"])
     assert.equal(typeof (api as unknown as Record<string, unknown>)[name], "function", name);
 });
 
@@ -118,6 +118,26 @@ test("plan lists the files, cuts, surface and tests, and writes nothing", () => 
     without.tests.left.map(({ file, reason }) => ({ file, reason })),
     [{ file: "apps/shop/src/cart.test.ts", reason: "not-asked" }],
   );
+});
+
+test("walk is the walk plan reports: included files, edges both ways, links inside, carried tests", () => {
+  const before = tree(scratch);
+  const walked = api.walk({ root: repo, entries: [ENTRY], depth: 1, withTests: true });
+  const planned = api.plan({ root: repo, entries: [ENTRY], depth: 1, withTests: true });
+  assert.deepEqual(tree(scratch), before);
+  assert.deepEqual(walked.included, planned.included);
+  assert.deepEqual(walked.entries, [ENTRY]);
+  assert.deepEqual(walked.unknownEntryPoints, []);
+  assert.deepEqual(walked.cuts.outbound, planned.cuts.outbound);
+  assert.deepEqual(
+    walked.cuts.inbound.map((edge) => edge.from),
+    ["apps/shop/src/checkout.ts"],
+  );
+  assert.deepEqual(walked.tests, ["apps/shop/src/cart.test.ts"]);
+  assert.ok(walked.internal.every((edge) => walked.included.includes(edge.from) && walked.included.includes(edge.to)));
+  assert.ok(walked.dependencies.some((dependency) => dependency.specifier === "stripe" && dependency.status === "external"));
+  assert.equal(walked.depthOf[ENTRY], 0);
+  assert.deepEqual(api.walk({ root: repo, entries: ["nope.ts"] }).unknownEntryPoints, ["nope.ts"]);
 });
 
 let made: Awaited<ReturnType<Api["cut"]>>;

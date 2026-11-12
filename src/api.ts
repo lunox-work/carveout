@@ -14,12 +14,16 @@
  * lockfile. `test/api.test.ts` holds it to that with `child_process` made
  * to throw.
  *
+ * `walk` returns the walk `plan` and `cut` make, whole, for a platform
+ * that generates its own stubs and project from it.
+ *
  * Also exported: the policy's text checks (`integrityOf`,
  * `gainedIntegrity`, `weakenedTest`) and the slice and project modules
  * `core.ts` gathers, forked from sandbox-factory's core.
  */
 
 import { mkdtempSync, rmSync } from "node:fs";
+import type { ReachResult } from "./slice/reach.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -48,6 +52,7 @@ import type { Receipt } from "./receipt.js";
 export * from "./core.js";
 export { gainedIntegrity, integrityOf, weakenedTest, type Refusal } from "./policy.js";
 export type { CarveoutRecord, Patch, PlanSurface, Readiness, Receipt };
+export type { ReachResult };
 
 /** The walk's bounds, as `carveout plan` and `cut` take them. */
 export interface WalkOptions {
@@ -151,6 +156,18 @@ export function plan(options: WalkOptions): PlanResult {
     exposure: planned.exposure,
     blockers: planBlockers(planned),
   };
+}
+
+/**
+ * The walk itself, as `plan` and `cut` make it: the included files with
+ * their depths, every edge that crosses the slice's edge in either
+ * direction, the links inside it with the specifiers the source wrote,
+ * the imports that resolve to no file, and the tests, helpers, private and
+ * pure files it carried. For a platform that generates its own stubs and
+ * project from the walk (sandbox-factory's slice tool). Writes nothing.
+ */
+export function walk(options: WalkOptions): ReachResult {
+  return planSlice(requestOf(options)).walk;
 }
 
 export interface CutOptions extends WalkOptions {
