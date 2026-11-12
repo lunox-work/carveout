@@ -3,7 +3,8 @@
  * talks to it: the base URL, the shared credentials file, and one request
  * function on `fetch`, so carveout keeps `typescript` as its only
  * dependency. Nothing here runs unless a platform command (`login`,
- * `whoami`, `logout`, in `account.ts`) is called; every other command stays
+ * `whoami`, `logout`, in `account.ts`; `handoff --platform` and
+ * `patch --from`, in `hosted.ts`) is called; every other command stays
  * local, and `carveout/api` never imports it.
  *
  * Credentials: `~/.lunox/credentials` (LUNOX_CREDENTIALS moves it), JSON,
@@ -143,6 +144,10 @@ export interface RequestOptions {
   readonly session?: boolean;
   readonly body?: unknown;
   readonly fetchImpl?: typeof fetch;
+  /** Sent as `Idempotency-Key`: a retried create gets its first answer back. */
+  readonly idempotencyKey?: string;
+  /** How long the call may take; 30 seconds unless given (an upload takes longer). */
+  readonly timeoutMs?: number;
 }
 
 /**
@@ -153,7 +158,19 @@ export interface RequestOptions {
  * upgrade, otherwise the API's own `{ error, code }`.
  */
 export async function request<T = Record<string, unknown>>(options: RequestOptions): Promise<T> {
-  const { base, path, client, version, method = "GET", token, session = false, body, fetchImpl = fetch } = options;
+  const {
+    base,
+    path,
+    client,
+    version,
+    method = "GET",
+    token,
+    session = false,
+    body,
+    fetchImpl = fetch,
+    idempotencyKey,
+    timeoutMs = 30_000,
+  } = options;
   const headers: Record<string, string> = {
     Accept: "application/json",
     "User-Agent": `${client}/${version}`,
@@ -161,6 +178,7 @@ export async function request<T = Record<string, unknown>>(options: RequestOptio
   };
   if (token !== undefined) headers["Authorization"] = `Bearer ${token}`;
   if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (idempotencyKey !== undefined) headers["Idempotency-Key"] = idempotencyKey;
   let response: Response;
   try {
     response = await fetchImpl(`${base}${path}`, {
@@ -168,7 +186,7 @@ export async function request<T = Record<string, unknown>>(options: RequestOptio
       headers,
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       redirect: "error",
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
     const cause = (error as { cause?: { message?: string } }).cause?.message;
