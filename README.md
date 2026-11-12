@@ -270,9 +270,17 @@ agent once per stop:
 | `carveout whoami`             | Print the account, workspace and token expiry signed in with                   |
 | `carveout logout`             | Delete the saved platform token                                                |
 
-Every option: [reference](docs/REFERENCE.md#commands). Only `login`, `whoami`
-and `logout` talk to the Lunox platform; every other command is local and needs
-no account.
+Every option: [reference](docs/REFERENCE.md#commands). Only `login`, `whoami`,
+`logout`, `handoff --platform` and `patch --from` talk to the Lunox platform;
+every other command is local and needs no account.
+
+For a repository you will not connect to the platform, `carveout handoff
+<entry>... --accept <test>... --platform --bounty <id>` uploads the ready
+folder, public and in pseudonyms, with your acceptance tests renamed into its
+names, as a version of that bounty; the receipt stays on your machine. The
+platform grades contractors' submissions against it, and `carveout patch
+--from <submission id>` brings a passing one back through the same local
+`patch`. Publishing the version is a person's act in the platform's web app.
 
 ## Limits
 

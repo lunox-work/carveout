@@ -80,13 +80,14 @@ Local mode stays the default, and nothing below runs without `login`.
   with duediligence (device flow).
 - `carveout handoff --platform --bounty <id>` cuts locally, as `handoff`
   does now, and uploads only the public folder, through
-  `POST /orgs/:orgId/slices`. The receipt stays in `~/.carveout/receipts/`.
+  `POST /orgs/:orgId/sandboxes/uploads` (built 2026-11-13, `src/hosted.ts`). The receipt stays in `~/.carveout/receipts/`.
   This is for a workspace that will not connect its repository to GitHub.
   Cut with `--public` on, because the platform never sees the private
   names. The platform then aliases nothing further, builds, and lets
   duediligence write the hidden suite on the uploaded slice.
-- `carveout patch --from <submission-id>` downloads a judged submission's
-  returned folder and runs the same local `patch` with the local receipt
+- `carveout patch --from <submission-id>` downloads a passing submission's
+  changed files (`GET /orgs/:orgId/sandboxes/submissions/:sid/files`, built
+  2026-11-13) and runs the same local `patch` with the local receipt
   (policy, reverse rewrites, pseudonyms back). Its output is the same as
   for a folder that came back by hand.
 - `carveout plan --platform <repository>` prints the platform's
