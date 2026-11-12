@@ -29,9 +29,9 @@ import { applyAliases, invertAliasRules, renameFile, type AliasRule, type Aliase
 import { draftPseudonyms, restyle } from "./draft.js";
 import {
   emailNames,
+  scannedNames,
   termMatches,
   termWords,
-  tooCommonAlone,
   vocabularyLeaks,
   type VocabularyLeak,
   type VocabularyName,
@@ -171,35 +171,6 @@ function hostedNames(url: string): VocabularyName[] {
   return names;
 }
 
-/** Affixes a handle wraps a name in: `lunoxhq`, `getlunox`, `lunoxapp`. */
-const HANDLE_PREFIXES = ["get", "try", "use", "join", "go", "hello", "meet"];
-const HANDLE_SUFFIXES = ["hq", "app", "apps", "inc", "io", "dev", "devs", "labs", "lab", "team", "co", "ai", "hub", "official", "corp", "tech", "studio", "group"];
-
-/**
- * More spellings an organization's or a person's name goes by: the stem of
- * a handle (`lunox` of `lunoxhq`), its words split at a digit (`web3 labs`
- * of `web3labs`), and its letters without accents (`lunox` of `Lunöx`).
- */
-function spellings(entry: VocabularyName): VocabularyName[] {
-  const out: VocabularyName[] = [entry];
-  const plain = entry.name.normalize("NFD").replace(/\p{M}/gu, "");
-  if (plain !== entry.name) out.push({ ...entry, name: plain });
-  // Matched whole: its words alone (`web3`) are everyone's.
-  const split = plain.replace(/(\d)(\p{L})/gu, "$1 $2");
-  if (split !== plain) out.push({ name: split, kind: "name" });
-  if (entry.kind === "organization") {
-    const word = plain.toLowerCase();
-    // A stem of letters alone, and not one everyone's code uses (`web3`).
-    const stem = (candidate: string) => {
-      if (candidate.length >= 4 && /^\p{L}+$/u.test(candidate) && !tooCommonAlone(candidate))
-        out.push({ name: candidate, kind: "organization" });
-    };
-    for (const prefix of HANDLE_PREFIXES) if (word.startsWith(prefix)) stem(word.slice(prefix.length));
-    for (const suffix of HANDLE_SUFFIXES) if (word.endsWith(suffix)) stem(word.slice(0, -suffix.length));
-  }
-  return out;
-}
-
 /** A Git setting of the checkout, or null. */
 function gitValue(repo: string, args: readonly string[]): string | null {
   try {
@@ -237,12 +208,7 @@ export function workspaceNames(
   if (person !== null) names.push({ name: person, kind: "organization" });
   const mail = gitValue(repo, ["config", "user.email"]);
   if (mail !== null) names.push(...emailNames(mail));
-  // A name found, of one word the code calls its own things by, is not
-  // scanned for alone; the owner's own names always are.
-  return [
-    ...owner.map((name) => ({ name, kind: "organization" as const })),
-    ...found.filter((entry) => !tooCommonAlone(entry.name)),
-  ].flatMap(spellings);
+  return scannedNames(found, owner);
 }
 
 /**

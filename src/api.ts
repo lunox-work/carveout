@@ -20,6 +20,11 @@
  * surface), and runs no process at all, Git included; `importGraph` builds
  * the graph once for many analyses.
  *
+ * The extractor and the fixture compile are `carveout/extract`
+ * (`extract.ts`); the alias table, the vocabulary scan, the draft, carry-back
+ * and the mock runtime's text, pure, are `carveout/pseudonyms`
+ * (`pseudonyms.ts`).
+ *
  * Also exported: the policy's text checks (`integrityOf`,
  * `gainedIntegrity`, `weakenedTest`) and the slice and project modules
  * `core.ts` gathers, forked from sandbox-factory's core.

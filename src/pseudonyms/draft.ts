@@ -25,7 +25,7 @@
 
 import type { AliasRule, AliasedFile } from "./aliases.js";
 import { renameFile } from "./aliases.js";
-import { relativeSpecifier } from "../project/project.js";
+import { relativeSpecifier } from "../project/paths.js";
 import { termMatches } from "./vocabulary.js";
 import type { TermMatch } from "./vocabulary.js";
 

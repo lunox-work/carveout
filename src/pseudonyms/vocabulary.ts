@@ -486,6 +486,67 @@ export function tooCommonAlone(name: string): boolean {
   return GENERIC_WORDS.has(word) || ORGANIZATION_WORDS.has(word) || COMMON_WORDS.has(word) || CODE_WORDS.has(word);
 }
 
+/** Affixes a handle wraps a name in: `lunoxhq`, `getlunox`, `lunoxapp`. */
+const HANDLE_PREFIXES = ["get", "try", "use", "join", "go", "hello", "meet"];
+const HANDLE_SUFFIXES = ["hq", "app", "apps", "inc", "io", "dev", "devs", "labs", "lab", "team", "co", "ai", "hub", "official", "corp", "tech", "studio", "group"];
+
+/**
+ * More spellings an organization's or a person's name goes by: the stem of
+ * a handle (`lunox` of `lunoxhq`), its words split at a digit (`web3 labs`
+ * of `web3labs`), and its letters without accents (`lunox` of `Lunöx`).
+ */
+export function nameSpellings(entry: VocabularyName): VocabularyName[] {
+  const out: VocabularyName[] = [entry];
+  const plain = entry.name.normalize("NFD").replace(/\p{M}/gu, "");
+  if (plain !== entry.name) out.push({ ...entry, name: plain });
+  // Matched whole: its words alone (`web3`) are everyone's.
+  const split = plain.replace(/(\d)(\p{L})/gu, "$1 $2");
+  if (split !== plain) out.push({ name: split, kind: "name" });
+  if (entry.kind === "organization") {
+    const word = plain.toLowerCase();
+    // A stem of letters alone, and not one everyone's code uses (`web3`).
+    const stem = (candidate: string) => {
+      if (candidate.length >= 4 && /^\p{L}+$/u.test(candidate) && !tooCommonAlone(candidate))
+        out.push({ name: candidate, kind: "organization" });
+    };
+    for (const prefix of HANDLE_PREFIXES) if (word.startsWith(prefix)) stem(word.slice(prefix.length));
+    for (const suffix of HANDLE_SUFFIXES) if (word.endsWith(suffix)) stem(word.slice(0, -suffix.length));
+  }
+  return out;
+}
+
+/**
+ * The names a public folder is scanned for, from the names a repository
+ * goes by (`found`) and the owner's own (`owner`, always scanned, as an
+ * organization's): a found name of one word too common to scan for alone
+ * (`tooCommonAlone`) is dropped, and each name is joined by its other
+ * spellings (`nameSpellings`). `workspaceVocabulary` turns them into terms.
+ */
+export function scannedNames(
+  found: readonly (string | VocabularyName)[],
+  owner: readonly string[] = [],
+): VocabularyName[] {
+  const named = found.map((entry): VocabularyName => (typeof entry === "string" ? { name: entry, kind: "name" } : entry));
+  // A name found, of one word the code calls its own things by, is not
+  // scanned for alone; the owner's own names always are.
+  return [
+    ...owner.map((name) => ({ name, kind: "organization" as const })),
+    ...named.filter((entry) => !tooCommonAlone(entry.name)),
+  ].flatMap(nameSpellings);
+}
+
+/**
+ * carveout's vocabulary: the terms a public folder must not hold, as
+ * `carveout cut --public` scans for them (`scannedNames`, then
+ * `workspaceVocabulary`). `vocabularyLeaks` finds them in files.
+ */
+export function scanVocabulary(
+  found: readonly (string | VocabularyName)[],
+  owner: readonly string[] = [],
+): string[] {
+  return workspaceVocabulary(scannedNames(found, owner));
+}
+
 export interface VocabularyLeak {
   readonly term: string;
   readonly occurrences: number;

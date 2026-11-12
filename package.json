@@ -52,6 +52,10 @@
       "types": "./dist/src/extract.d.ts",
       "default": "./dist/src/extract.js"
     },
+    "./pseudonyms": {
+      "types": "./dist/src/pseudonyms.d.ts",
+      "default": "./dist/src/pseudonyms.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [

@@ -141,6 +141,14 @@ test("carveout/extract resolves by the package's exports, with the extractor and
   assert.equal(extract["SHIM_PATH"], "__slice__/packages.d.ts");
 });
 
+test("carveout/pseudonyms resolves by the package's exports", async () => {
+  assert.equal(import.meta.resolve("carveout/pseudonyms"), new URL("../src/pseudonyms.js", import.meta.url).href);
+  const pseudonyms = (await import("../src/pseudonyms.js")) as unknown as Record<string, unknown>;
+  for (const name of ["applyAliases", "carryChange", "reverseSubmission", "applyAliasesV1", "scanVocabulary", "draftPseudonyms"])
+    assert.equal(typeof pseudonyms[name], "function", name);
+  assert.equal(typeof pseudonyms["MOCK_RUNTIME"], "string");
+});
+
 test("plan lists the files, cuts, surface and tests, and writes nothing", () => {
   const before = tree(scratch);
   const planned = api.plan({ root: repo, entries: [ENTRY], depth: 1, withTests: true });
