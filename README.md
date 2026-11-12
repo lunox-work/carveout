@@ -131,7 +131,9 @@ In Claude Code, the repository is also a plugin marketplace:
 `/plugin install carveout@carveout`. It holds two skills:
 [`carveout`](skills/carveout/SKILL.md), the hand-off, and
 [`carveout-gate`](skills/carveout-gate/SKILL.md), `impact` and `gate` for a
-change made in the repository.
+change made in the repository. The plugin also bundles the `lunox` MCP server
+(`.mcp.json`), Lunox's hosted platform: Claude Code asks you to sign in on
+first use (`/mcp`), and signed out the skills run locally as before.
 
 Then ask your coding agent (Claude Code, Codex, Cursor, or any agent that
 loads skills): _"hand `src/billing` to a contractor"_. It plans the slice,

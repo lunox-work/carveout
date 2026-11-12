@@ -15,7 +15,8 @@
 // `compatibility` at most 500, the body at most 500 lines, no symlinks,
 // every relative link resolves inside the skill's folder, and every
 // `<package>@x.y.z` pin and both .claude-plugin/ manifests carry
-// package.json's version.
+// package.json's version. `.mcp.json` declares exactly one MCP server,
+// `lunox`, of type http at MCP_URL: the hosted platform the plugin bundles.
 //
 // pack: a zip holding one top-level folder named after the skill, with
 // SKILL.md at its root. It refuses a pin that npm does not serve yet
@@ -42,6 +43,8 @@ const SKILLS = join(ROOT, "skills");
 const PKG = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
 const PIN = new RegExp(`\\b${PKG.name}@(\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?)`, "g");
 const MANIFESTS = [".claude-plugin/plugin.json", ".claude-plugin/marketplace.json"];
+/** The plugin's one MCP server (plugin-root .mcp.json, as Claude Code plugins declare them). */
+const MCP_URL = `https://platform.lunox.work/mcp/${PKG.name}`;
 
 /** Top-level YAML keys of the frontmatter, folded the way YAML folds plain and `>` scalars. */
 function frontmatter(text) {
@@ -116,7 +119,27 @@ function check() {
   const listed = market?.plugins?.find((p) => p.name === PKG.name);
   if (!listed) problems.push(`${MANIFESTS[1]}: no plugin named ${PKG.name}`);
   else if (listed.version !== undefined && listed.version !== PKG.version) problems.push(`${MANIFESTS[1]}: version is not package.json's`);
+  problems.push(...checkMcp());
   return problems;
+}
+
+/** `.mcp.json`: present, JSON, and `{ "mcpServers": { "lunox": { "type": "http", "url": MCP_URL } } }` and nothing else. */
+function checkMcp() {
+  const path = join(ROOT, ".mcp.json");
+  if (!existsSync(path)) return [".mcp.json: missing (the plugin's lunox MCP server)"];
+  let mcp;
+  try {
+    mcp = JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    return [`.mcp.json: not valid JSON (${error.message})`];
+  }
+  const want = `{ "mcpServers": { "lunox": { "type": "http", "url": "${MCP_URL}" } } }`;
+  const servers = mcp?.mcpServers;
+  const keys = (value) => (value !== null && typeof value === "object" && !Array.isArray(value) ? Object.keys(value).sort().join(",") : null);
+  if (keys(mcp) !== "mcpServers" || keys(servers) !== "lunox") return [`.mcp.json: must declare exactly the lunox server: ${want}`];
+  const { lunox } = servers;
+  if (keys(lunox) !== "type,url" || lunox.type !== "http" || lunox.url !== MCP_URL) return [`.mcp.json: lunox must be ${want}`];
+  return [];
 }
 
 function readJson(path) {
@@ -165,7 +188,7 @@ function pack(offline) {
 }
 
 const PLUGIN_BRANCH = "claude-plugin";
-const PLUGIN_FILES = [".claude-plugin/icon.png", "LICENSE", "skills"];
+const PLUGIN_FILES = [".claude-plugin/icon.png", ".mcp.json", "LICENSE", "skills"];
 // plugin.json fields only the directory's listing reads. Claude Code warns on
 // them as unknown keys, so the branch's plugin.json drops them and its README
 // carries them as links, which the directory also reads.
@@ -192,6 +215,14 @@ function pluginReadme() {
   lines.push("## Install", "", "```sh", `claude plugin marketplace add ${plugin.repository.replace(/^https:\/\/github\.com\//, "")}`);
   lines.push(`claude plugin install ${plugin.name}@${market.name}`, "```", "");
   if (needs.length > 0) lines.push("## Requirements", "", ...needs);
+  const mcp = spawnSync("git", ["show", "HEAD:.mcp.json"], { cwd: ROOT, encoding: "utf8" });
+  const hosted = mcp.status === 0 ? JSON.parse(mcp.stdout).mcpServers?.lunox?.url : undefined;
+  if (hosted) {
+    lines.push("## Hosted mode", "", `The plugin bundles the \`lunox\` MCP server, Lunox's hosted platform at ${hosted}.`);
+    lines.push("Claude Code signs in to it on first use (`/mcp`); signed out, the skills run locally as before.");
+    lines.push(`Without the plugin: \`claude mcp add --transport http lunox ${hosted}\`; other MCP clients take the`);
+    lines.push("same URL as a remote HTTP server.", "");
+  }
   const data = spawnSync("git", ["show", "HEAD:.claude-plugin/data.md"], { cwd: ROOT, encoding: "utf8" });
   if (data.status === 0) lines.push("## Data", "", data.stdout.trim(), "");
   const links = Object.entries(LISTING_LINKS).filter(([key]) => plugin[key]);
