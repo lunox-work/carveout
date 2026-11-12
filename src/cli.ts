@@ -111,10 +111,15 @@ const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript r
 
   carveout patch <dir> [--repo <checkout>] [--allow <path>]... [--receipt <file>]
                  [--output <file>] [--json]
+  carveout patch --from <submission-id> [--platform [<url>]] [--repo <checkout>]
+                 [--allow <path>]... [--output <file>] [--json]
       The edits made in <dir> as a patch for the repository (git apply). Runs
       none of the folder's code. Keeps out, and names, new files outside the
       slice's packages, protected paths (CI, hooks, manifests, lockfiles,
       environment) and deleted tests; --allow <path|glob> lets one through.
+      --from takes a passing submission's files from the platform, on a folder
+      handoff --platform uploaded from here, and judges them the same way,
+      by the local receipt.
 
   carveout apply <dir> <patch-file> [--repo <checkout>] [--stubs] [--receipt <file>] [--json]
       Brings a patch for the repository at the cut's commit into <dir>, with its
@@ -1158,13 +1163,36 @@ async function main(argv: readonly string[]) {
 
     case "patch": {
       const [dir] = positionals;
-      if (dir === undefined) fail("patch needs the folder a cut wrote.");
-      const given = repoFor(dir);
-      const patch = await patchProject(dir, {
-        ...(given === undefined ? {} : { repo: given }),
-        ...(values.allow === undefined ? {} : { allow: values.allow }),
-        ...receiptOption,
-      });
+      let patch: Awaited<ReturnType<typeof patchProject>>;
+      if (values.from !== undefined) {
+        if (dir !== undefined) fail("patch --from takes a submission id, not a folder.");
+        let from: Awaited<ReturnType<typeof patchFrom>>;
+        try {
+          from = await patchFrom({
+            platform: platformGiven,
+            submissionId: values.from,
+            repo: values.repo,
+            allow: values.allow,
+            deps: hostedDeps(),
+          });
+        } catch (error) {
+          if (!(error instanceof PlatformError)) throw error;
+          fail(`patch --from: ${error.message}`);
+        }
+        patch = from.patch;
+        if (values.json !== true)
+          process.stderr.write(
+            `carveout: submission ${values.from}: ${from.files} file(s) from ${from.record.base}, on the folder uploaded as version ${from.record.versionId}${from.cutAgain ? ", cut again from the receipt (the folder was gone or edited)" : ""}; judged by the receipt here.\n`,
+          );
+      } else {
+        if (dir === undefined) fail("patch needs the folder a cut wrote, or --from <submission id>.");
+        const given = repoFor(dir);
+        patch = await patchProject(dir, {
+          ...(given === undefined ? {} : { repo: given }),
+          ...(values.allow === undefined ? {} : { allow: values.allow }),
+          ...receiptOption,
+        });
+      }
       const boundary = new Set(patch.boundary.map((edit) => edit.path));
       const notes = [
         ...(patch.recordFrom === "folder"
