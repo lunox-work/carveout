@@ -15,7 +15,10 @@
  * to throw.
  *
  * `walk` returns the walk `plan` and `cut` make, whole, for a platform
- * that generates its own stubs and project from it.
+ * that generates its own stubs and project from it. `analyse` goes on from
+ * the walk to what `cut` writes the folder from (manifest, contract, stubs,
+ * surface), and runs no process at all, Git included; `importGraph` builds
+ * the graph once for many analyses.
  *
  * Also exported: the policy's text checks (`integrityOf`,
  * `gainedIntegrity`, `weakenedTest`) and the slice and project modules
@@ -31,10 +34,14 @@ import {
   patchProject,
   planBlockers,
   planSlice,
+  sliceInputOf,
   type CarveoutRecord,
   type Patch,
   type PlanSurface,
 } from "./carve.js";
+import { CutError, analyseSlice, type CutErrorCode, type SliceAnalysis } from "./cut.js";
+import type { PackageTypesFetcher } from "./extract/package-types.js";
+import { buildGraph, listFiles, walkGraph } from "./graph.js";
 import {
   SLICE_BUDGET_DEFAULTS,
   TEST_LEFT_REASON,
@@ -43,6 +50,7 @@ import {
   type SliceExposure,
   type SliceExternals,
   type SliceOrigin,
+  type SliceGraph,
   type SliceTestLeft,
   type TestRunner,
 } from "./core.js";
@@ -52,7 +60,8 @@ import type { Receipt } from "./receipt.js";
 export * from "./core.js";
 export { gainedIntegrity, integrityOf, weakenedTest, type Refusal } from "./policy.js";
 export type { CarveoutRecord, Patch, PlanSurface, Readiness, Receipt };
-export type { ReachResult };
+export type { ReachResult, PackageTypesFetcher };
+export { CutError, type CutErrorCode };
 
 /** The walk's bounds, as `carveout plan` and `cut` take them. */
 export interface WalkOptions {
@@ -260,5 +269,96 @@ export function patch(input: PatchInput): Promise<Patch> {
     receiptData: input.receipt,
     ...(input.repo === undefined ? {} : { repo: input.repo }),
     ...(input.allow === undefined ? {} : { allow: input.allow }),
+  });
+}
+
+/**
+ * The import graph of a whole checkout, read once, for many `analyse`
+ * calls on it (`AnalyseOptions.graph`). It does not depend on the entries;
+ * it does on whether imports of the repository's own packages are followed
+ * into their source, which `copyPure` and the repository's
+ * `carveout.config.json` decide, as they do for the analyses: build it with
+ * the same `copyPure` they take. Runs no process: the files are every file
+ * under the root outside the folders a graph ignores, or `files`.
+ */
+export function importGraph(
+  root: string,
+  options: { readonly copyPure?: boolean; readonly files?: readonly string[] } = {},
+): SliceGraph {
+  const { repo, settled } = sliceInputOf({
+    repo: root,
+    entryPoints: [],
+    ...(options.copyPure === undefined ? {} : { copyPure: options.copyPure }),
+  });
+  return buildGraph(repo, options.files ?? listFiles(repo, { git: false }), {
+    followWorkspaces: settled.followWorkspaces,
+  }).graph;
+}
+
+export interface AnalyseOptions extends WalkOptions {
+  /** The commit the root is a checkout of, stamped into the manifest and the contract; Git is not asked. */
+  readonly commitSha: string | null;
+  /** Whether an included file differs from that commit; by default none does. */
+  readonly isDirty?: (paths: readonly string[]) => boolean;
+  /**
+   * Fetches the types of the public packages the slice reads (`npmPackageTypes`
+   * from `carveout/extract`, or the caller's own). Absent: every package is
+   * untyped and nothing is fetched or run.
+   */
+  readonly packageTypes?: PackageTypesFetcher;
+  /** Widen literal values in the stubs to their types; default true (the CLI's default is off but for `--public`). */
+  readonly widenLiterals?: boolean;
+  /** `omit`: a file read by path blocks nothing (see `analyseSlice`); default `block`, as the CLI. */
+  readonly pathReads?: "block" | "omit";
+  /** The externals of the included files when the caller has them all; null to read them here. */
+  readonly externalsOf?: (included: readonly string[]) => SliceExternals | null;
+  /** The checkout's files; by default every file under the root outside the folders a graph ignores. */
+  readonly files?: readonly string[];
+  /**
+   * A graph from `importGraph`, reused across analyses. Without it the graph
+   * is read lazily, as `cut` reads it, from the entries outward; the walk is
+   * the same, but the manifest's `graphSha256` is of the graph used.
+   */
+  readonly graph?: SliceGraph;
+  readonly signal?: AbortSignal;
+  /** The analysis's progress lines. */
+  readonly log?: (line: string) => void;
+}
+
+/**
+ * What `cut` writes a folder from: the manifest, the boundary contract (and
+ * its canonical JSON), the stubs, the public surface's check, whether it is
+ * ready, how it stands with noImplicitAny, and the walk.
+ */
+export type Analysis = SliceAnalysis;
+
+/**
+ * The analysis `cut` makes before it writes anything, on the same code
+ * path and with the same request after `carveout.config.json`, for a
+ * platform that writes its own folder: on the same checkout, its manifest
+ * and contract are the cut's, but for the commit and dirty fields, which
+ * are the caller's here. It runs no process (no Git, no npm unless the
+ * `packageTypes` given does) and writes nothing. Throws a `CutError` when
+ * no slice can be made at all.
+ */
+export function analyse(options: AnalyseOptions): Promise<Analysis> {
+  const { repo, entryPoints, budget, walk: walkOptions, params } = sliceInputOf(requestOf(options));
+  const graph =
+    options.graph ??
+    walkGraph(repo, entryPoints, budget, {
+      ...walkOptions,
+      files: options.files ?? listFiles(repo, { git: false }),
+    }).built.graph;
+  return analyseSlice({
+    sourceDir: repo,
+    graph,
+    params,
+    source: { commitSha: options.commitSha, isDirty: options.isDirty ?? (() => false) },
+    signal: options.signal ?? new AbortController().signal,
+    log: options.log ?? (() => {}),
+    widenLiterals: options.widenLiterals ?? true,
+    ...(options.packageTypes === undefined ? {} : { packageTypes: options.packageTypes }),
+    ...(options.pathReads === undefined ? {} : { pathReads: options.pathReads }),
+    ...(options.externalsOf === undefined ? {} : { externalsOf: options.externalsOf }),
   });
 }

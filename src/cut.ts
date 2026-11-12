@@ -84,8 +84,24 @@ import {
   packageNameOf,
 } from "./extract/typescript.js";
 
+/** Why a cut could not be made at all. */
+export type CutErrorCode =
+  /** The entry points reach no file. */
+  | "no_files"
+  /** The included source is past `INCLUDED_BYTES_MAX`. */
+  | "too_large"
+  /** An included file is outside the checkout, a symbolic link or not a regular file. */
+  | "unreadable";
+
 /** Why a cut could not be made at all, as opposed to a blocker it reports. */
-export class CutError extends Error {}
+export class CutError extends Error {
+  constructor(
+    readonly code: CutErrorCode,
+    message: string,
+  ) {
+    super(message);
+  }
+}
 
 /** Bytes of included source one slice may copy. */
 export const INCLUDED_BYTES_MAX = 64 * 1024 * 1024;
@@ -221,7 +237,7 @@ async function readIncluded(
     const absolute = resolve(sourceDir, path);
     const rel = relative(sourceDir, absolute);
     if (rel.startsWith("..") || isAbsolute(rel) || rel === "")
-      throw new CutError(`${path} is outside the repository.`);
+      throw new CutError("unreadable", `${path} is outside the repository.`);
     // One handle for the check and the read, so the file cannot be swapped
     // between them; a symlink fails to open, and a FIFO opens without
     // blocking and then fails the regular-file check.
@@ -230,15 +246,16 @@ async function readIncluded(
       constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
     ).catch(() => null);
     if (handle === null)
-      throw new CutError(`${path} cannot be read (a symbolic link is not copied).`);
+      throw new CutError("unreadable", `${path} cannot be read (a symbolic link is not copied).`);
     let stats: Stats;
     let bytes: Buffer;
     try {
       stats = await handle.stat();
-      if (!stats.isFile()) throw new CutError(`${path} is not a regular file.`);
+      if (!stats.isFile()) throw new CutError("unreadable", `${path} is not a regular file.`);
       total += stats.size;
       if (total > INCLUDED_BYTES_MAX)
         throw new CutError(
+          "too_large",
           `The slice holds more than ${INCLUDED_BYTES_MAX / 1024 / 1024} MB of source; narrow the entry points or the budget.`,
         );
       bytes = await handle.readFile();
@@ -345,6 +362,13 @@ export async function analyseSlice(input: {
   readonly packageTypes?: PackageTypesFetcher;
   /** See `extractTypeScriptBoundary`; true unless told otherwise. */
   readonly widenLiterals?: boolean;
+  /**
+   * What a file read by path does to the slice: `block` (the default, the
+   * CLI's) makes a `path_read` blocker of a path the slice cannot copy and
+   * of a file read by path outside the slice; `omit` leaves both out, as
+   * sandbox-factory's slice tool did, which has no way to carry one.
+   */
+  readonly pathReads?: "block" | "omit";
 }): Promise<SliceAnalysis> {
   const { params, graph } = input;
   input.signal.throwIfAborted();
@@ -402,6 +426,7 @@ export async function analyseSlice(input: {
   if (walk.included.length === 0) {
     // Nothing to slice: say which entry points missed before failing.
     throw new CutError(
+      "no_files",
       blockers.length === 0
         ? "The entry points reach no file."
         : blockers.map((blocker) => blocker.detail).join(" "),
@@ -441,8 +466,9 @@ export async function analyseSlice(input: {
   // A test brought along may hold a computed import: what it names is the
   // baseline's business, not a blocker (see `reach`).
   const carriedTests = new Set(walk.tests);
+  const omitPathReads = input.pathReads === "omit";
   for (const dependency of walk.dependencies) {
-    if (dependency.status === "path" && copied(dependency.specifier ?? "")) continue;
+    if (dependency.status === "path" && (omitPathReads || copied(dependency.specifier ?? ""))) continue;
     if (dependency.status === "dynamic" && carriedTests.has(dependency.file)) continue;
     // A path read is a repository path, never a package, however it is
     // spelled (`apps/worker/python/extract.py` is no package named `apps`).
@@ -487,7 +513,7 @@ export async function analyseSlice(input: {
   }
   // A file read by path must be there itself; a stub at its path is not it.
   for (const edge of walk.cuts.outbound)
-    if (edge.relation === "reads" && !copied(edge.to))
+    if (edge.relation === "reads" && !omitPathReads && !copied(edge.to))
       blockers.push({
         code: "path_read",
         file: edge.from,

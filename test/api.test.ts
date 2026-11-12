@@ -6,7 +6,8 @@
  * and `patch` on a copy of the shop fixture (no Git checkout, so nothing
  * needs Git) must start no container and run nothing from the folder,
  * leave HOME untouched, and round-trip an unchanged cut to an empty patch
- * with the receipt passed as data.
+ * with the receipt passed as data. `analyse` must give the cut's manifest
+ * and contract and run no process at all, Git included.
  */
 
 import assert from "node:assert/strict";
@@ -91,7 +92,20 @@ after(removeScratch);
 
 test("carveout/api resolves to dist/src/api.js by the package's exports", () => {
   assert.equal(import.meta.resolve("carveout/api"), new URL("../src/api.js", import.meta.url).href);
-  for (const name of ["plan", "walk", "cut", "patch", "integrityOf", "gainedIntegrity", "weakenedTest", "testsVerdict", "exposureOf"])
+  for (const name of [
+    "plan",
+    "walk",
+    "cut",
+    "patch",
+    "analyse",
+    "importGraph",
+    "CutError",
+    "integrityOf",
+    "gainedIntegrity",
+    "weakenedTest",
+    "testsVerdict",
+    "exposureOf",
+  ])
     assert.equal(typeof (api as unknown as Record<string, unknown>)[name], "function", name);
 });
 
@@ -155,6 +169,132 @@ test("cut writes the folder and its carveout.json, and returns the receipt as da
   // Written nowhere: not in HOME, not beside the folder.
   assert.deepEqual(tree(home), []);
   assert.deepEqual(readdirSync(scratch).sort(), ["home", "repo", "slice"]);
+});
+
+/** A manifest or contract without what the caller stamps in: the commit, and whether the files differ from it. */
+const unstamped = (value: object): Record<string, unknown> => {
+  const copy: Record<string, unknown> = { ...value };
+  for (const key of ["sourceCommitSha", "sourceDirty", "boundaryContractSha256"]) delete copy[key];
+  return copy;
+};
+
+test("analyse gives the manifest and contract cut wrote, and runs no process", async () => {
+  const before = tree(scratch);
+  const tried = spawned.length;
+  const lines: string[] = [];
+  const analysis = await api.analyse({
+    root: repo,
+    entries: [ENTRY],
+    depth: 1,
+    withTests: true,
+    commitSha: "c0ffee",
+    widenLiterals: made.receipt.record.request.widenLiterals,
+    log: (line) => lines.push(line),
+  });
+  assert.equal(spawned.length, tried, JSON.stringify(spawned.slice(tried)));
+  assert.deepEqual(tree(scratch), before);
+  assert.ok(lines.length > 0);
+  assert.equal(analysis.manifest.sourceCommitSha, "c0ffee");
+  assert.equal(analysis.contract.sourceCommitSha, "c0ffee");
+  assert.equal(analysis.manifest.sourceDirty, false);
+  assert.deepEqual(unstamped(analysis.manifest), unstamped(made.receipt.record.manifest));
+  const written = JSON.parse(readFileSync(join(out, "carveout/contract.json"), "utf8")) as object;
+  assert.deepEqual(unstamped(JSON.parse(analysis.contractJson) as object), unstamped(written));
+  assert.deepEqual(analysis.contract, JSON.parse(analysis.contractJson));
+  assert.equal(analysis.ready, made.ready);
+  assert.deepEqual(analysis.walk.included, made.receipt.record.manifest.included.map((file) => file.path));
+  assert.deepEqual(
+    analysis.stubs.map((stub) => stub.path),
+    made.receipt.record.manifest.synthetic.filter((file) => file.kind === "stub").map((file) => file.path),
+  );
+});
+
+test("analyse on a graph from importGraph walks the same, and the graph serves many analyses", async () => {
+  const tried = spawned.length;
+  const graph = api.importGraph(repo);
+  const options = { root: repo, entries: [ENTRY], depth: 1, withTests: true, commitSha: null, widenLiterals: false, graph };
+  const lazy = await api.analyse({ ...options, graph: undefined });
+  const reused = await api.analyse(options);
+  const other = await api.analyse({ ...options, entries: ["apps/shop/src/tax.ts"] });
+  assert.equal(spawned.length, tried, JSON.stringify(spawned.slice(tried)));
+  const { graphSha256: _lazy, ...lazyRest } = lazy.manifest;
+  const { graphSha256: _reused, ...reusedRest } = reused.manifest;
+  assert.deepEqual(reusedRest, lazyRest);
+  assert.equal(reused.contractJson, lazy.contractJson);
+  assert.deepEqual(other.walk.entries, ["apps/shop/src/tax.ts"]);
+  assert.ok(graph.nodes.length >= lazy.walk.included.length);
+});
+
+test("analyse reads package types through the fetcher given, and nothing else", async () => {
+  const typed = join(scratch, "typed");
+  cpSync(repo, typed, { recursive: true });
+  const manifest = JSON.parse(readFileSync(join(typed, "apps/shop/package.json"), "utf8")) as { dependencies: Record<string, string> };
+  manifest.dependencies["date-fns"] = "3.6.0";
+  writeFileSync(join(typed, "apps/shop/package.json"), JSON.stringify(manifest, null, 2));
+  writeFileSync(
+    join(typed, "package-lock.json"),
+    JSON.stringify({
+      name: "shop-monorepo",
+      lockfileVersion: 3,
+      packages: {
+        "": { name: "shop-monorepo" },
+        "node_modules/date-fns": { version: "3.6.0", resolved: "https://registry.npmjs.org/date-fns/-/date-fns-3.6.0.tgz" },
+      },
+    }),
+  );
+  writeFileSync(
+    join(typed, "apps/shop/src/day.ts"),
+    'import { format } from "date-fns";\n\nexport const day = (date: Date) => format(date, "yyyy-MM-dd");\n',
+  );
+  const types = join(scratch, "types");
+  mkdirSync(join(types, "node_modules/date-fns"), { recursive: true });
+  writeFileSync(join(types, "node_modules/date-fns/package.json"), JSON.stringify({ name: "date-fns", version: "3.6.0", types: "index.d.ts" }));
+  writeFileSync(join(types, "node_modules/date-fns/index.d.ts"), "export declare function format(date: Date, pattern: string): string;\n");
+  const asked: unknown[] = [];
+  const tried = spawned.length;
+  try {
+    const analysis = await api.analyse({
+      root: typed,
+      entries: ["apps/shop/src/day.ts"],
+      depth: 1,
+      commitSha: null,
+      packageTypes: async (requests) => {
+        asked.push(...requests);
+        return { directory: types, packages: [{ name: "date-fns", version: "3.6.0" }] };
+      },
+    });
+    assert.equal(spawned.length, tried, JSON.stringify(spawned.slice(tried)));
+    assert.deepEqual(asked, [{ name: "date-fns", spec: "3.6.0" }]);
+    assert.deepEqual(analysis.contract.compilation.typedPackages, [{ name: "date-fns", version: "3.6.0" }]);
+    assert.equal(analysis.contract.compilation.ok, true, JSON.stringify(analysis.contract.compilation.diagnostics));
+  } finally {
+    rmSync(typed, { recursive: true, force: true });
+    rmSync(types, { recursive: true, force: true });
+  }
+});
+
+test("analyse: a path read blocks unless omitted, and no slice at all is a CutError with its code", async () => {
+  const reads = join(scratch, "reads");
+  cpSync(FIXTURE, reads, { recursive: true });
+  mkdirSync(join(reads, "apps/shop/python"));
+  writeFileSync(join(reads, "apps/shop/python/run.py"), 'print("hi")\n');
+  writeFileSync(
+    join(reads, "apps/shop/src/runner.ts"),
+    'import { fileURLToPath } from "node:url";\n\nexport const script = (): string => fileURLToPath(new URL("../python/run.py", import.meta.url));\n',
+  );
+  try {
+    const options = { root: reads, entries: ["apps/shop/src/runner.ts"], depth: 1, commitSha: null };
+    const blocked = await api.analyse(options);
+    assert.ok(blocked.manifest.blockers.some((blocker) => blocker.code === "path_read"), JSON.stringify(blocked.manifest.blockers));
+    const omitted = await api.analyse({ ...options, pathReads: "omit" });
+    assert.deepEqual(omitted.manifest.blockers.filter((blocker) => blocker.code === "path_read"), []);
+    await assert.rejects(
+      api.analyse({ ...options, entries: ["nope.ts"] }),
+      (error: unknown) => error instanceof api.CutError && error.code === "no_files" && /nope\.ts names no file/.test(error.message),
+    );
+  } finally {
+    rmSync(reads, { recursive: true, force: true });
+  }
 });
 
 test("patch round-trips an unchanged cut to an empty patch, by the receipt given", async () => {

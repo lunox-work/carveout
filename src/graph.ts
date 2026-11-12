@@ -90,11 +90,13 @@ function walk(root: string, directory = "", into: string[] = []): string[] {
 
 /**
  * The checkout's files, `/`-separated and sorted: what Git tracks plus
- * untracked files it does not ignore, or every file outside Git.
+ * untracked files it does not ignore, or every file outside Git. With
+ * `git: false`, every file outside the ignored folders, and Git is not run.
  */
-export function listFiles(root: string): string[] {
+export function listFiles(root: string, options: { readonly git?: boolean } = {}): string[] {
   let listed: string[];
   try {
+    if (options.git === false) throw new Error("Git is not to be run.");
     listed = execFileSync(
       "git",
       ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
@@ -177,6 +179,8 @@ export interface GraphOptions {
   readonly followWorkspaces?: boolean;
   /** Files read as if the checkout had none (the owner's acceptance tests). */
   readonly unseen?: readonly string[];
+  /** The checkout's files, as the caller lists them; by default `listFiles`. */
+  readonly files?: readonly string[];
 }
 
 /** What `walkGraph` takes: the walk's options and the graph's. */
@@ -217,9 +221,9 @@ export function walkGraph(
   options: WalkOptions = {},
 ): { built: BuiltGraph; walk: ReachResult } {
   const started = performance.now();
-  const { followWorkspaces, unseen, ...rest } = options;
+  const { followWorkspaces, unseen, files: listed, ...rest } = options;
   const hidden = new Set(unseen ?? []);
-  const files = listFiles(root).filter((file) => !hidden.has(file));
+  const files = (listed ?? listFiles(root)).filter((file) => !hidden.has(file));
   const graphOptions = followWorkspaces === undefined ? {} : { followWorkspaces };
   const builder = graphBuilder(root, files, performance.now() - started, graphOptions);
   const absoluteRoot = resolve(root);

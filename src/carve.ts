@@ -53,6 +53,7 @@ import {
   type ResolvedDependency,
   type SliceBudget,
   type SliceManifest,
+  type SliceParams,
   type SliceExternals,
   type SliceExposure,
   type SliceTestLeft,
@@ -1504,42 +1505,62 @@ function withoutOutsideImporters(
   };
 }
 
-export async function computeCut(
-  request: Omit<CutRequest, "out">,
-): Promise<ComputedCut> {
+/**
+ * What a request asks of `analyseSlice`, after the owner's configuration
+ * (`settle`): the walk's options, the test setup and the slice's params.
+ * `computeCut` and the library's `analyse` (`api.ts`) share it, so both
+ * cut the same slice of the same request.
+ */
+export function sliceInputOf(
+  request: SliceRequest & {
+    readonly copy?: readonly string[];
+    readonly widenLiterals?: boolean;
+    readonly public?: boolean;
+    readonly live?: readonly string[];
+  },
+) {
   const settled = settle(request);
   const repo = resolve(request.repo);
-  const log = request.log ?? (() => {});
   const budget = request.budget ?? SLICE_BUDGET_DEFAULTS;
   const entryPoints = entriesOf(request);
   const { setup, settings: vitest } = withTestSetup(repo, entryPoints, request.tests === true);
   const testRunner = request.tests === true ? packageTestRunner(repo, entryPoints) : null;
-  const { built } = walkGraph(repo, entryPoints, budget, {
+  const live = [...new Set(request.live ?? [])].sort(compare);
+  const walk = {
     ...walkOptions(settled, repo),
     ...(setup.length === 0 ? {} : { roots: setup }),
     ...(request.unseen === undefined || request.unseen.length === 0 ? {} : { unseen: request.unseen }),
-  });
+  };
+  const params: SliceParams = {
+    entryPoints,
+    budget,
+    tests: request.tests === true,
+    ...(setup.length === 0 ? {} : { setupFiles: setup }),
+    ...(testRunner === "vitest" ? { testRunner } : {}),
+    ...(live.length === 0 ? {} : { live }),
+    ...(settled.wholePackage ? { wholePackage: true } : {}),
+    ...(settled.followWorkspaces ? { followWorkspaces: true } : {}),
+    ...(settled.copyPure ? { copyPure: true } : {}),
+    ...(settled.private.length === 0 ? {} : { private: settled.private }),
+    ...(settled.copy.length === 0 ? {} : { copy: settled.copy }),
+  };
+  return { settled, repo, budget, entryPoints, setup, vitest, testRunner, live, walk, params };
+}
+
+export async function computeCut(
+  request: Omit<CutRequest, "out">,
+): Promise<ComputedCut> {
+  const { settled, repo, budget, entryPoints, vitest, testRunner, live, walk, params } = sliceInputOf(request);
+  const log = request.log ?? (() => {});
+  const { built } = walkGraph(repo, entryPoints, budget, walk);
   log(`Read the imports of ${built.files.length} files.`);
   const commitSha = git(repo, ["rev-parse", "HEAD"]);
   const signal = AbortSignal.timeout(15 * 60_000);
-  const live = [...new Set(request.live ?? [])].sort(compare);
   const workspaces = workspacePackages(repo);
   const analysis = await analyseSlice({
     sourceDir: repo,
     graph: built.graph,
-    params: {
-      entryPoints,
-      budget,
-      tests: request.tests === true,
-      ...(setup.length === 0 ? {} : { setupFiles: setup }),
-      ...(testRunner === "vitest" ? { testRunner } : {}),
-      ...(live.length === 0 ? {} : { live }),
-      ...(settled.wholePackage ? { wholePackage: true } : {}),
-      ...(settled.followWorkspaces ? { followWorkspaces: true } : {}),
-      ...(settled.copyPure ? { copyPure: true } : {}),
-      ...(settled.private.length === 0 ? {} : { private: settled.private }),
-      ...(settled.copy.length === 0 ? {} : { copy: settled.copy }),
-    },
+    params,
     source: {
       commitSha,
       isDirty: (paths) =>
