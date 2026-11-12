@@ -621,10 +621,19 @@ export function vocabularyLeaks(
   return leaks;
 }
 
+/**
+ * A blocker of a name a public file still holds: a `ProjectBlocker` that is
+ * only ever `vocabulary_leaked`, so a platform whose own blocker type has no
+ * `test_runner_mocked` (sandbox-factory's) takes it as one of its own.
+ */
+export interface VocabularyBlocker extends ProjectBlocker {
+  readonly code: "vocabulary_leaked";
+}
+
 /** A blocker for each leak, naming where it was found and what clears it. */
 export function vocabularyBlockers(
   leaks: readonly VocabularyLeak[],
-): ProjectBlocker[] {
+): VocabularyBlocker[] {
   return leaks.map((leak) => {
     const shown = leak.files.slice(0, LEAK_FILES_SHOWN).join(", ");
     const rest = leak.files.length - LEAK_FILES_SHOWN;
