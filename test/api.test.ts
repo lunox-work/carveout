@@ -99,6 +99,8 @@ test("carveout/api resolves to dist/src/api.js by the package's exports", () => 
     "patch",
     "analyse",
     "importGraph",
+    "folderLayout",
+    "layoutTestArgv",
     "CutError",
     "integrityOf",
     "gainedIntegrity",
@@ -335,6 +337,62 @@ test("analyse: a path read blocks unless omitted, and no slice at all is a CutEr
   } finally {
     rmSync(reads, { recursive: true, force: true });
   }
+});
+
+test("folderLayout: where a cut folder keeps its harness, mocks, configuration and tests, and what a grader runs", () => {
+  const layout = api.folderLayout(made.record);
+  assert.equal(layout.harnessDir, "carveout");
+  assert.equal(layout.mocksDir, "carveout/packages");
+  assert.equal(layout.mockRuntimePath, "carveout/mock.js");
+  assert.equal(layout.envFile, "carveout.env");
+  assert.deepEqual(layout.harnessRoots, ["carveout", "node_modules"]);
+  for (const path of ["package.json", "tsconfig.json", ".npmrc", "carveout.env", "carveout.json"])
+    assert.equal(typeof layout.configFiles[path], "string", path);
+  for (const path of Object.keys(layout.configFiles)) assert.ok(!path.includes("/") && !path.endsWith(".md"), path);
+  assert.deepEqual(
+    layout.commands.map((command) => command.name),
+    ["install", "build", "public-tests"],
+  );
+  assert.deepEqual(layout.commands[2]?.argv, ["node", "carveout/test.js"]);
+  assert.ok(layout.commands.every((command) => !command.argv.includes("run") || command.argv[0] !== "npm"));
+  assert.ok(layout.tests.files.includes("apps/shop/src/cart.test.ts"), JSON.stringify(layout.tests.files));
+  assert.deepEqual(api.layoutTestArgv(layout, "apps/shop/src/cart.test.ts"), [
+    "node",
+    "--env-file=carveout.env",
+    "--import=./carveout/assets.js",
+    "--test",
+    "--test-reporter=tap",
+    "--test-reporter-destination=stdout",
+    "apps/shop/src/cart.test.js",
+  ]);
+  assert.equal(api.layoutTestArgv(layout, "apps/shop/src/cart.test.ts", "vitest"), null);
+  // The platform's own layout fits the same type.
+  const platform: import("../src/api.js").FolderLayout = {
+    harnessDir: "sandbox",
+    mocksDir: "mocks",
+    mockRuntimePath: "sandbox/mock.js",
+    envFile: "sandbox.env",
+    harnessRoots: ["sandbox", "mocks", "tests", "node_modules"],
+    configFiles: { "package.json": "package.json is the version's.", "sandbox.env": "sandbox.env is the version's fixture environment." },
+    commands: [
+      { name: "install", argv: ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"] },
+      { name: "build", argv: ["node", "node_modules/typescript/bin/tsc", "-p", "tsconfig.json"] },
+      { name: "public-tests", argv: ["node", "--env-file=sandbox.env", "--test", "tests/public/**/*.test.js"] },
+    ],
+    tests: {
+      publicDir: "tests/public",
+      privateDir: "tests/private",
+      files: [],
+      run: { "node:test": { argv: ["node", "--env-file=sandbox.env", "--test", "--test-reporter=tap"], emitted: true }, vitest: null },
+    },
+  };
+  assert.deepEqual(api.layoutTestArgv(platform, "tests/private/spec.test.ts"), [
+    "node",
+    "--env-file=sandbox.env",
+    "--test",
+    "--test-reporter=tap",
+    "tests/private/spec.test.js",
+  ]);
 });
 
 test("patch round-trips an unchanged cut to an empty patch, by the receipt given", async () => {

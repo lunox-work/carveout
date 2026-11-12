@@ -18,7 +18,8 @@
  * that generates its own stubs and project from it. `analyse` goes on from
  * the walk to what `cut` writes the folder from (manifest, contract, stubs,
  * surface), and runs no process at all, Git included; `importGraph` builds
- * the graph once for many analyses.
+ * the graph once for many analyses. `folderLayout` says where a cut folder
+ * keeps its harness, mocks, configuration and tests, and what a grader runs.
  *
  * The extractor and the fixture compile are `carveout/extract`
  * (`extract.ts`); the alias table, the vocabulary scan, the draft, carry-back
@@ -35,6 +36,7 @@ import type { ReachResult } from "./slice/reach.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  RECORD_PATH,
   cutSlice,
   patchProject,
   planBlockers,
@@ -47,6 +49,17 @@ import {
 import { CutError, analyseSlice, type CutErrorCode, type SliceAnalysis } from "./cut.js";
 import type { PackageTypesFetcher } from "./extract/package-types.js";
 import { buildGraph, listFiles, walkGraph } from "./graph.js";
+import {
+  ASSETS_LOADER_PATH,
+  BUILD_SCRIPT_PATH,
+  ENV_FILE,
+  HARNESS_DIR,
+  MOCKS_DIR,
+  MOCK_RUNTIME_PATH,
+  TESTS_DIR,
+  TEST_RUNNER_PATH,
+  runtimePath,
+} from "./project/project.js";
 import {
   SLICE_BUDGET_DEFAULTS,
   TEST_LEFT_REASON,
@@ -366,4 +379,138 @@ export function analyse(options: AnalyseOptions): Promise<Analysis> {
     ...(options.pathReads === undefined ? {} : { pathReads: options.pathReads }),
     ...(options.externalsOf === undefined ? {} : { externalsOf: options.externalsOf }),
   });
+}
+
+/** One command a grader runs on the staged folder; none goes through `npm run`. */
+export interface LayoutCommand {
+  readonly name: "install" | "build" | "public-tests";
+  readonly argv: readonly string[];
+}
+
+/** How one test file runs on its own, with a TAP report on stdout. */
+export interface LayoutTestRun {
+  /** The command, before the file. */
+  readonly argv: readonly string[];
+  /** Whether the file is given as its emitted JavaScript (after the build) rather than its source. */
+  readonly emitted: boolean;
+}
+
+/**
+ * Where a folder handed to a contributor keeps what is not theirs to
+ * change, and how it is graded: a carveout folder's (`folderLayout`), or a
+ * platform's own written in the same terms.
+ */
+export interface FolderLayout {
+  /** The harness: generated code a submission never changes. */
+  readonly harnessDir: string;
+  /** The mock packages. */
+  readonly mocksDir: string;
+  /** The recording mock runtime, which task code never imports. */
+  readonly mockRuntimePath: string;
+  /** The placeholder environment every run reads (`--env-file`). */
+  readonly envFile: string;
+  /** Top-level folders a submission never writes into. */
+  readonly harnessRoots: readonly string[];
+  /** Root files that configure the run, each with why a change to it is refused. */
+  readonly configFiles: Readonly<Record<string, string>>;
+  /** What a grader runs, in order, on the staged folder. */
+  readonly commands: readonly LayoutCommand[];
+  readonly tests: {
+    /** The public suite's folder; null when tests sit beside the code they test. */
+    readonly publicDir: string | null;
+    /** Where hidden tests are staged; null when each goes at its own repository path. */
+    readonly privateDir: string | null;
+    /** The test files the folder holds. */
+    readonly files: readonly string[];
+    /** One hidden test on its own, by the runner it imports; null for a runner the folder does not install. */
+    readonly run: { readonly "node:test": LayoutTestRun; readonly vitest: LayoutTestRun | null };
+  };
+}
+
+/** Why a change to a carveout folder's root file is refused. */
+const CONFIG_REASONS: Readonly<Record<string, string>> = {
+  "package.json": "package.json is the folder's; scripts and dependencies are not the submission's to change.",
+  "package-lock.json": "The lockfile is the folder's.",
+  ".npmrc": ".npmrc is the folder's.",
+  ".nvmrc": ".nvmrc is the folder's.",
+  "tsconfig.json": "tsconfig.json is the folder's; the build's options are not the submission's to change.",
+  "vitest.config.mjs": "vitest.config.mjs is the folder's; how tests run is not the submission's to change.",
+  [ENV_FILE]: `${ENV_FILE} is the folder's placeholder environment.`,
+  [RECORD_PATH]: `${RECORD_PATH} is the folder's record of the cut.`,
+};
+
+/**
+ * Where a carveout folder keeps its harness (`carveout/`), its mock
+ * packages (`carveout/packages`), its mock runtime, its configuration and
+ * its tests, and the commands that install, build and test it as `carveout
+ * check` does (`npm test` is `node carveout/test.js` after the build), for
+ * a grader that takes the layout as a parameter. Hidden tests go at their
+ * repository paths, as `carveout check --accept` puts them, and run one at
+ * a time with `tests.run` (`layoutTestArgv`). Read from the folder's record.
+ */
+export function folderLayout(record: CarveoutRecord): FolderLayout {
+  const generated = new Set(record.generated.map((file) => file.path));
+  const configFiles: Record<string, string> = {};
+  for (const path of [...generated, RECORD_PATH, ...(record.lockfile ? ["package-lock.json"] : [])].sort())
+    if (!path.includes("/") && !/\.(?:[cm]?[jt]sx?|d\.ts)$/.test(path) && !/\.md$/i.test(path))
+      configFiles[path] = CONFIG_REASONS[path] ?? `${path} is the folder's own; carveout wrote it.`;
+  const install = ["--ignore-scripts", "--no-audit", "--no-fund"];
+  return {
+    harnessDir: HARNESS_DIR,
+    mocksDir: MOCKS_DIR,
+    mockRuntimePath: MOCK_RUNTIME_PATH,
+    envFile: ENV_FILE,
+    harnessRoots: [HARNESS_DIR, "node_modules"],
+    configFiles,
+    commands: [
+      { name: "install", argv: record.lockfile ? ["npm", "ci", ...install] : ["npm", "install", ...install] },
+      {
+        name: "build",
+        argv: generated.has(BUILD_SCRIPT_PATH)
+          ? ["node", BUILD_SCRIPT_PATH]
+          : ["node", "node_modules/typescript/bin/tsc", "-p", "tsconfig.json"],
+      },
+      { name: "public-tests", argv: ["node", TEST_RUNNER_PATH] },
+    ],
+    tests: {
+      publicDir: null,
+      privateDir: null,
+      files: [
+        ...new Set([
+          ...(record.tests?.carried ?? []),
+          ...[...generated].filter((path) => path.startsWith(`${TESTS_DIR}/`) && /\.test\.[cm]?tsx?$/.test(path)),
+        ]),
+      ].sort(),
+      run: {
+        "node:test": {
+          argv: [
+            "node",
+            `--env-file=${ENV_FILE}`,
+            `--import=./${ASSETS_LOADER_PATH}`,
+            "--test",
+            "--test-reporter=tap",
+            "--test-reporter-destination=stdout",
+          ],
+          emitted: true,
+        },
+        vitest: generated.has("vitest.config.mjs")
+          ? { argv: ["node_modules/.bin/vitest", "run", "--config", "vitest.config.mjs", "--reporter=tap"], emitted: false }
+          : null,
+      },
+    },
+  };
+}
+
+/**
+ * The command that runs one test file of a folder on its own, with a TAP
+ * report on stdout: `path` as the folder holds its source; null when the
+ * layout has no way to run that runner's tests.
+ */
+export function layoutTestArgv(
+  layout: FolderLayout,
+  path: string,
+  runner: "node:test" | "vitest" = "node:test",
+): readonly string[] | null {
+  const run = layout.tests.run[runner];
+  return run === null ? null : [...run.argv, run.emitted ? runtimePath(path) : path];
 }
