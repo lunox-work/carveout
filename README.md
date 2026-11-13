@@ -17,9 +17,9 @@ claude plugin install carveout@carveout
 
 ## Requirements
 
-- **carveout-gate**: Node 22.12 or later, git and npm. Runs the carveout@0.3.1 CLI from npm.
+- **carveout-gate**: Node 22.12 or later, git and npm. Runs the carveout@0.4.0 CLI from npm.
 
-- **carveout**: Node 22.12 or later, git and npm; Docker to run a returned folder's code. Runs the carveout@0.3.1 CLI from npm; online cuts read the npm registry.
+- **carveout**: Node 22.12 or later, git and npm; Docker to run a returned folder's code. Runs the carveout@0.4.0 CLI from npm; online cuts read the npm registry.
 
 ## Hosted mode
 

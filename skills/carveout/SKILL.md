@@ -17,14 +17,14 @@ description: >-
 license: MIT
 compatibility: >-
   Node 22.12 or later, git and npm; Docker to run a returned folder's code. Runs
-  the carveout@0.3.1 CLI from npm; online cuts read the npm registry.
+  the carveout@0.4.0 CLI from npm; online cuts read the npm registry.
 ---
 
 # carveout
 
-`carveout <command>` is the CLI, `carveout@0.3.1`. When `carveout --version`
+`carveout <command>` is the CLI, `carveout@0.4.0`. When `carveout --version`
 prints another version or nothing, ask the person before installing it:
-`npm i -g carveout@0.3.1`, or put `npx carveout@0.3.1` in place of `carveout` in
+`npm i -g carveout@0.4.0`, or put `npx carveout@0.4.0` in place of `carveout` in
 each command (in a clone of the repository, `node dist/src/cli.js` after
 `npm install && npm run build`). Node 22.12 or later, and `git` and `npm` on
 PATH.
@@ -71,16 +71,18 @@ kept. The sections below are each step in full.
 
 With the `lunox` MCP tools signed in (bundled; `/mcp` signs in), read with the
 `list_*`/`get_*` tools. Write only when asked: a bounty (`post_bounty` or
-`import_github_issue`, `size_bounty` is a paid run, `get_decisions` and
-`confirm_link`), a slice (`plan_slice`, `start_sandbox`, `cut_slice`), its
-build (`prepare`, then `get_handout`: public files and the hidden suite's hash
-only), a contractor's patch (`submit_patch`, `get_verdict`, one `retry`).
-Approvals, decisions, publishing and merging back happen in the web app. Model
-runs (`size_bounty`, `prepare`, `retry`) count against a monthly token limit
-(`get_usage`); on `quota_exceeded`, tell the person when it resets and do not
-retry. `insufficient_scope` means signing in again through `/mcp`. Never ask
-for a token; the CLI signs in with `carveout login`. Local mode, below, is the
-default.
+`import_github_issue`; `size_bounty` is a paid run; `get_decisions`,
+`confirm_link`), a slice (`plan_slice`, `start_sandbox`, `cut_slice`), its build
+(`prepare`, then `get_handout`: public files and the hidden suite's hash only),
+a contractor's patch (`submit_patch`, `get_verdict`, one `retry`). Approvals,
+decisions, publishing and merging back happen in the web app. Model runs
+(`size_bounty`, `prepare`, `retry`) count against a monthly token limit
+(`get_usage`); on `quota_exceeded`, say when it resets and do not retry. On
+`insufficient_scope`, sign in again through `/mcp`. Never ask for a token; the
+CLI signs in with `carveout login`. For an unconnected repository, `handoff ...
+--accept <test>... --platform --bounty <id>` uploads the ready folder and the
+tests in its names, never the receipt; `patch --from <submission id>` judges a
+passing submission by the local receipt. Local mode, below, is the default.
 
 ## 1. Plan
 
@@ -121,12 +123,10 @@ The defaults are depth 3 and 40 files. Choose the budget with the person:
 
 Depth counts imports of code. Going through a barrel's re-export does not add
 depth, and only the module that declares an imported name comes along, not the
-barrel's other modules. A module the slice imports only types from is always cut
-to a stub.
+barrel's other modules. A module the slice takes only types from is a stub.
 
-When the file limit is reached, the plan lists the files it left out. Raise
-`--max-files`, or narrow the entry points. `--json` gives the same report as
-data.
+At the file limit, the plan lists the files it left out: raise `--max-files`,
+or narrow the entry points. `--json` gives the same report as data.
 
 `--with-tests` also brings the test files outside the slice that import it
 (`*.test.*`, `*.spec.*`, `__tests__/`), when they run on `node:test` or Vitest
