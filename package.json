@@ -1,6 +1,6 @@
 {
   "name": "carveout",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Hand one part of a closed TypeScript repository to an outside contractor: a slice, stubbed and mocked, that installs, builds and tests on its own, and a checked patch back. Also checks a change made in the repository: what it reaches, the tests to run, and weakened tests or config edits.",
   "keywords": [
     "carveout",

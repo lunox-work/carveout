@@ -7,6 +7,9 @@ on:
     paths:
       [
         ".claude-plugin/plugin.json",
+        ".claude-plugin/data.md",
+        ".claude-plugin/icon.png",
+        ".mcp.json",
         "LICENSE",
         "skills/**",
         "scripts/skill.mjs",

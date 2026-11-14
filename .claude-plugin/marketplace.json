@@ -11,8 +11,8 @@
     {
       "name": "carveout",
       "source": "./",
-      "description": "Hand one part of a closed TypeScript repository to a contractor and take a checked patch back; check what a change reaches and whether it weakened a test.",
-      "version": "0.4.0",
+      "description": "Hand one part of a closed TypeScript repository to a contractor and take a checked patch back; check what a change reaches and whether it weakened a test. Optional hosted mode: after sign-in, a bundled MCP server works with the person's workspace on the Lunox platform (platform.lunox.work).",
+      "version": "0.4.1",
       "category": "development",
       "license": "MIT"
     }
