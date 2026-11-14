@@ -1,8 +1,8 @@
 {
   "name": "carveout",
   "displayName": "carveout",
-  "version": "0.4.0",
-  "description": "Hand one part of a closed TypeScript repository to an outside contractor as a slice that installs, builds and tests on its own, and take a checked patch back. Also checks a change made in the repository: what it reaches, the tests to run, and weakened tests or config edits.",
+  "version": "0.4.1",
+  "description": "Hand one part of a closed TypeScript repository to an outside contractor as a slice that installs, builds and tests on its own, and take a checked patch back. Also checks a change made in the repository: what it reaches, the tests to run, and weakened tests or config edits. Optional hosted mode: after sign-in, a bundled MCP server works with the person's workspace on the Lunox platform (platform.lunox.work).",
   "author": {
     "name": "Charlie Angriawan",
     "url": "https://github.com/lunox-work"
