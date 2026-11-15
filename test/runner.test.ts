@@ -106,14 +106,16 @@ test("a Vitest test that fails before any edit is in the TAP the baseline is rea
   // `#` is escaped, so the name is not read as a TAP directive.
   assert.match(tap, /^not ok \d+ - src\/a\.test\.ts > money > fails \\# on purpose$/m);
   assert.match(tap, /^not ok \d+ - src\/b\.test\.ts$/m);
-  // Five tests in the one file (one skipped) and the file that failed to load.
+  // Four tests that ran in the one file and the file that failed to load;
+  // the skipped one is counted apart (it was counted among the tests, as
+  // not passing, before carveout 0.4.2).
   assert.deepEqual(countsOf(tap), {
-    tests: 6,
+    tests: 5,
     pass: 2,
     fail: 3,
-    runners: { vitest: { tests: 6, pass: 2, fail: 3 } },
+    runners: { vitest: { tests: 5, pass: 2, fail: 3 } },
   });
-  assert.match(first.stdout, /npm test: 2 of 6 test\(s\) pass \(vitest\)\./);
+  assert.match(first.stdout, /npm test: 2 of 5 test\(s\) pass \(vitest\); 1 skipped, not counted\./);
 
   // The failures as `check` records them: the baseline.
   const failing = [...tap.matchAll(/^\s*not ok \d+ - (.+?)(?: # .*)?$/gm)].map((match) => match[1]);
@@ -174,6 +176,37 @@ test("node:test's counts leave out the interface test's checks, which are counte
     surface: { checks: 1, fail: 0 },
   });
   assert.match(result.stdout, /npm test: 1 of 2 test\(s\) pass \(node:test\); 1 of 1 check\(s\) of the public surface hold\./);
+});
+
+test("tests marked todo or skipped are counted apart, never as failing, and a failing todo is no baseline failure", () => {
+  const root = folder("todo", {
+    "src/t.test.ts": 'import { test } from "node:test";\n',
+    "src/t.test.js": [
+      'import { test } from "node:test";',
+      'test("one", () => {});',
+      'test.todo("two");',
+      'test.todo("three", () => { throw new Error("not yet"); });',
+      'test("four", { todo: true }, () => {});',
+      'test.skip("five");',
+      "",
+    ].join("\n"),
+  });
+  const result = run(root);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout, /npm test: 1 of 1 test\(s\) pass \(node:test\); 3 todo and 1 skipped, not counted\.\n/);
+  assert.deepEqual(countsFromJson(readFileSync(join(root, "carveout/.last-run.json"), "utf8")), {
+    tests: 1,
+    pass: 1,
+    fail: 0,
+    runners: { "node:test": { tests: 1, pass: 1, fail: 0 } },
+    todo: 3,
+    skipped: 1,
+  });
+  // With a baseline in effect, the failing todo is not printed as failing anew.
+  write(root, { "carveout/baseline.json": JSON.stringify({ failing: [] }) });
+  const again = run(root);
+  assert.equal(again.status, 0, again.stdout);
+  assert.doesNotMatch(again.stdout, /Failing now/);
 });
 
 test("a TAP from a folder cut before the runner's counts is read as node:test's summary", () => {

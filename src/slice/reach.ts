@@ -157,6 +157,14 @@ export interface SliceTestLeft {
    * it reaches the slice only through a barrel outside it.
    */
   readonly imports?: readonly string[];
+  /**
+   * The runner it imports (`ReachOptions.runnerOf`); absent when it runs
+   * on none a slice runs. With `tests` off every test of the slice is
+   * here, `not-asked`, with its runner and the slice's files it imports,
+   * and none counts against `maxFiles`: a caller that carries tests itself
+   * reads them from here.
+   */
+  readonly runner?: TestRunner;
 }
 
 export interface ReachOptions {
@@ -890,9 +898,11 @@ export function reach(
   for (const [file, { own, imports }] of [...exercising].sort(([a], [b]) => compare(a, b))) {
     if (depthOf.has(file)) continue;
     const named = [...imports].filter((path) => depthOf.has(path)).sort(compare);
+    const runner = runnerOf(file, packagesOf.get(file) ?? []);
     testsLeft.push({
       file,
       ...(named.length === 0 ? {} : { imports: named }),
+      ...(runner === null ? {} : { runner }),
       reason: !own
         ? "other-package"
         : options.tests !== true

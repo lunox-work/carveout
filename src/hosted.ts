@@ -10,7 +10,11 @@
  *     The platform hosts it as a draft version of the bounty, its baseline
  *     run with every acceptance test failing, and grades contributors'
  *     submissions against it. What was uploaded is recorded in
- *     `CARVEOUT_HOME/platform/<cut id>.json`. Publishing the version is a
+ *     `CARVEOUT_HOME/platform/<cut id>.json`, with the hidden suite's
+ *     commitment computed here (`stagedHiddenSha256`, the platform's
+ *     `hiddenSha256Version: 2`). A 409 the platform says may be sent again
+ *     (`retryable`, the active-run limit, a key still in use) is sent again
+ *     after its Retry-After, a few times. Publishing the version is a
  *     person's act in the platform's web app.
  *
  *   patch --from <submission id>
@@ -19,7 +23,12 @@
  *     folder (cut again from the receipt at the cut's commit when the
  *     folder is gone or edited), and `patchProject` judges that copy with
  *     the local receipt exactly as `patch <dir>` judges a folder that came
- *     back by hand.
+ *     back by hand. Before that, the version's handout
+ *     (GET /api/v1/orgs/:org/sandboxes/versions/:vid/handout) is read: when
+ *     its `hiddenSha256Version` is 2, its `hiddenSha256` must be the one
+ *     recorded at upload, or the submission passed tests other than the
+ *     ones uploaded from here and nothing is patched; any other version is
+ *     not compared, and the answer says so.
  *
  * What leaves this machine is the folder and the renamed acceptance tests:
  * never the receipt, its table, or a file outside the folder. The platform
@@ -49,18 +58,24 @@ import { TOOL_DIRS } from "./core.js";
 import { assertSafePath } from "./policy.js";
 import { exactToFolder } from "./pseudonyms/index.js";
 import { folderView, readReceipt, type Receipt } from "./receipt.js";
-import { credentialFor, credentialsPath, platformUrl, PlatformError, request, type Credential } from "./platform.js";
+import { credentialFor, credentialsPath, platformUrl, PlatformError, request, sendRetrying, type Credential } from "./platform.js";
 
 const CLIENT = "carveout";
 /** An upload is large and is checked before it is answered. */
 export const UPLOAD_TIMEOUT_MS = 180_000;
 export const PLATFORM_RECORD_SCHEMA_VERSION = 1;
+/** The commitment versions `patch --from` can recompute (the platform's `HIDDEN_COMMITMENT_VERSION`). */
+export const HIDDEN_SHA256_VERSIONS: readonly number[] = [2];
 
 /** The outside world the two commands use; tests pass their own. */
 export interface HostedDeps {
   readonly env: NodeJS.ProcessEnv;
   readonly fetchImpl: typeof fetch;
   readonly now: () => number;
+  /** How a resend waits; a real timer unless given. */
+  readonly sleep?: (ms: number) => Promise<unknown>;
+  /** Where a resend is announced; stderr unless given. */
+  readonly warn?: (text: string) => void;
 }
 
 /** What `handoff --platform` uploaded, kept beside the receipts: never sent. */
@@ -80,9 +95,81 @@ export interface PlatformRecord {
   readonly recordSha256: string;
   readonly cutId: string;
   readonly uploadedAt: string;
+  /**
+   * The hidden suite's commitment over the acceptance tests as uploaded,
+   * at their folder paths (`stagedHiddenSha256`), version 2. Absent from a
+   * record written before carveout computed it.
+   */
+  readonly hiddenSha256?: string | null;
+  readonly hiddenSha256Version?: 2;
 }
 
 const sha256 = (text: string | Buffer) => createHash("sha256").update(text).digest("hex");
+
+/**
+ * The hidden suite's commitment, version 2, over tests at the paths the
+ * judge stages them at, as the platform computes it (sandbox-factory's
+ * `hiddenCommitmentOf`; duediligence's `stagedHiddenSha256`): one
+ * `<sha256 of the bytes>  <path>` line per test, sorted by the paths' UTF-8
+ * bytes, then `<sha256 of the JSON of the paths sorted>  calibration.kept`,
+ * hashed. An uploaded folder grades its tests beside the code (no private
+ * directory), so each acceptance test is staged at its folder path. Null
+ * with none, as the platform shows it.
+ */
+export function stagedHiddenSha256(tests: readonly { readonly path: string; readonly text: string | Buffer }[]): string | null {
+  if (tests.length === 0) return null;
+  const lines = tests
+    .map((test) => ({ path: test.path, hex: sha256(test.text) }))
+    .sort((a, b) => Buffer.compare(Buffer.from(a.path, "utf8"), Buffer.from(b.path, "utf8")))
+    .map((line) => `${line.hex}  ${line.path}\n`);
+  const kept = tests.map((test) => test.path).sort();
+  lines.push(`${sha256(JSON.stringify(kept))}  calibration.kept\n`);
+  return sha256(lines.join(""));
+}
+
+/** Whether the platform's hidden suite is the one uploaded from here. */
+export interface CommitmentCheck {
+  /** Compared: the handout's hash is a version this carveout computes, and the record holds one. */
+  readonly comparable: boolean;
+  /** Null when not compared. */
+  readonly match: boolean | null;
+  /** The handout's hash. */
+  readonly expected: string | null;
+  /** The hash recorded at upload. */
+  readonly actual: string | null;
+  readonly version: number | null;
+  readonly reason: string;
+}
+
+/** The handout's commitment against the record's: compared only for a version this carveout computes. */
+export function commitmentCheck(
+  handout: { readonly hiddenSha256?: unknown; readonly hiddenSha256Version?: unknown },
+  record: Pick<PlatformRecord, "hiddenSha256">,
+): CommitmentCheck {
+  const expected = typeof handout.hiddenSha256 === "string" ? handout.hiddenSha256 : null;
+  const version = typeof handout.hiddenSha256Version === "number" ? handout.hiddenSha256Version : 1;
+  const actual = record.hiddenSha256 ?? null;
+  const not = (reason: string): CommitmentCheck => ({ comparable: false, match: null, expected, actual, version, reason });
+  if (!HIDDEN_SHA256_VERSIONS.includes(version))
+    return not(
+      version === 1
+        ? "hiddenSha256Version 1: hashed over every private file the build kept, not recomputable from the acceptance tests; not compared"
+        : `hiddenSha256Version ${version} is newer than this carveout computes (${HIDDEN_SHA256_VERSIONS.join(", ")}); not compared`,
+    );
+  if (record.hiddenSha256 === undefined)
+    return not("the upload was recorded by a carveout that did not keep the commitment; not compared");
+  const match = actual === expected;
+  return {
+    comparable: true,
+    match,
+    expected,
+    actual,
+    version,
+    reason: match
+      ? "the platform's hidden tests are the acceptance tests uploaded from here"
+      : "the platform's hidden tests are not the acceptance tests uploaded from here",
+  };
+}
 
 /** Where uploads are recorded: `CARVEOUT_HOME/platform`. */
 export const platformRecordDir = () => join(carveoutHome(), "platform");
@@ -193,24 +280,45 @@ export async function handoffPlatform(input: {
   if (own.cutId !== receipt.cutId)
     throw new PlatformError(`${input.folder} is not the folder of cut ${receipt.cutId.slice(0, 8)}, whose receipt was given.`);
   const recordSha256 = sha256(recordText);
-  const answer = await request<{ sandbox?: { id?: unknown }; version?: { id?: unknown }; run?: { id?: unknown } }>({
-    base,
-    method: "POST",
-    path: `/api/v1/orgs/${encodeURIComponent(saved.organizationId)}/sandboxes/uploads`,
-    token: saved.token,
-    client: CLIENT,
-    version: CARVEOUT_VERSION,
-    fetchImpl: input.deps.fetchImpl,
-    idempotencyKey: randomUUID(),
-    timeoutMs: UPLOAD_TIMEOUT_MS,
-    body: {
-      bountyId: input.bountyId,
-      carveout: { version: CARVEOUT_VERSION, recordSha256 },
-      files,
-      acceptanceTests,
-      ...(input.title === undefined ? {} : { title: input.title }),
+  const hiddenSha256 = stagedHiddenSha256(acceptanceTests);
+  const body = {
+    bountyId: input.bountyId,
+    carveout: { version: CARVEOUT_VERSION, recordSha256 },
+    files,
+    acceptanceTests,
+    ...(input.title === undefined ? {} : { title: input.title }),
+  };
+  // The platform keeps a 4xx answer under its key (a replay), so a refusal
+  // that stored nothing is sent again under a new key; a key still in use
+  // (the first send still running) is sent again under the same one.
+  let idempotencyKey = randomUUID();
+  const warn = input.deps.warn ?? ((text: string) => process.stderr.write(text));
+  const answer = await sendRetrying(
+    () =>
+      request<{ sandbox?: { id?: unknown }; version?: { id?: unknown }; run?: { id?: unknown } }>({
+        base,
+        method: "POST",
+        path: `/api/v1/orgs/${encodeURIComponent(saved.organizationId)}/sandboxes/uploads`,
+        token: saved.token,
+        client: CLIENT,
+        version: CARVEOUT_VERSION,
+        fetchImpl: input.deps.fetchImpl,
+        idempotencyKey,
+        timeoutMs: UPLOAD_TIMEOUT_MS,
+        body,
+      }),
+    {
+      sleep: input.deps.sleep ?? ((ms) => new Promise((done) => setTimeout(done, ms))),
+      // The upload route answers the active-run limit (`run_limit`) after removing what it stored.
+      resendable: (error) => error.retryable || error.code === "run_limit" || error.code === "idempotency_key_in_use",
+      onWait: (seconds, attempt, error) => {
+        if (error.code !== "idempotency_key_in_use") idempotencyKey = randomUUID();
+        warn(
+          `carveout: ${base} refused the upload for now (${error.code ?? `HTTP ${error.status}`}); sending it again in ${seconds} s (attempt ${attempt + 1}).\n`,
+        );
+      },
     },
-  });
+  );
   const id = (value: { id?: unknown } | undefined) => (typeof value?.id === "string" ? value.id : null);
   const [sandboxId, versionId, runId] = [id(answer.sandbox), id(answer.version), id(answer.run)];
   if (sandboxId === null || versionId === null || runId === null)
@@ -228,6 +336,8 @@ export async function handoffPlatform(input: {
     recordSha256,
     cutId: receipt.cutId,
     uploadedAt: new Date(input.deps.now()).toISOString(),
+    hiddenSha256,
+    hiddenSha256Version: 2,
   };
   return { ...record, recordPath: writePlatformRecord(record), files: files.length };
 }
@@ -319,11 +429,19 @@ export async function patchFrom(input: {
   readonly repo?: string | undefined;
   readonly allow?: readonly string[] | undefined;
   readonly deps: HostedDeps;
-}): Promise<{ readonly patch: Patch; readonly record: PlatformRecord; readonly files: number; readonly cutAgain: boolean }> {
+}): Promise<{
+  readonly patch: Patch;
+  readonly record: PlatformRecord;
+  readonly files: number;
+  readonly cutAgain: boolean;
+  readonly commitment: CommitmentCheck;
+}> {
   const base = platformUrl(input.platform, input.deps.env);
   const saved = signedIn(base, input.deps.env);
   const answer = await request<{
-    upload?: { recordSha256?: unknown };
+    submission?: { sandboxVersionId?: unknown };
+    origin?: unknown;
+    upload?: { recordSha256?: unknown } | null;
     files?: unknown;
   }>({
     base,
@@ -333,6 +451,10 @@ export async function patchFrom(input: {
     version: CARVEOUT_VERSION,
     fetchImpl: input.deps.fetchImpl,
   });
+  if (answer.origin === "starter" || (answer.upload === null && Array.isArray(answer.files)))
+    throw new PlatformError(
+      `Submission ${input.submissionId} is on a generated (starter) version, not a folder uploaded by carveout: its files are at the version's own paths and names, with no receipt to judge them by. Take them with the MCP tool get_submission_files, or GET …/sandboxes/submissions/${input.submissionId}/files/archive.`,
+    );
   const recordSha256 = answer.upload?.recordSha256;
   const files = answer.files;
   if (
@@ -347,6 +469,28 @@ export async function patchFrom(input: {
       `Submission ${input.submissionId} is on a folder this machine did not upload (no record under ${platformRecordDir()}): run patch --from where handoff --platform ran.`,
     );
   if (!existsSync(record.receipt)) throw new PlatformError(`${record.receipt}: the receipt of that hand-off is gone.`);
+  const versionId = typeof answer.submission?.sandboxVersionId === "string" ? answer.submission.sandboxVersionId : record.versionId;
+  let commitment: CommitmentCheck;
+  try {
+    const handout = await request<{ hiddenSha256?: unknown; hiddenSha256Version?: unknown }>({
+      base,
+      path: `/api/v1/orgs/${encodeURIComponent(saved.organizationId)}/sandboxes/versions/${encodeURIComponent(versionId)}/handout`,
+      token: saved.token,
+      client: CLIENT,
+      version: CARVEOUT_VERSION,
+      fetchImpl: input.deps.fetchImpl,
+    });
+    commitment = commitmentCheck(handout, record);
+  } catch (error) {
+    if (!(error instanceof PlatformError)) throw error;
+    const actual = record.hiddenSha256 ?? null;
+    commitment = { comparable: false, match: null, expected: null, actual, version: null, reason: `the handout of version ${versionId} could not be read (${error.message}); not compared` };
+  }
+  if (commitment.match === false)
+    throw new PlatformError(
+      `Version ${versionId}'s hidden suite on ${base} (${commitment.expected ?? "none"}) is not the acceptance tests uploaded from here (${commitment.actual ?? "none"}): the submission passed other tests than yours. Nothing was patched; read the version in the platform's web app.`,
+      { code: "commitment_mismatch" },
+    );
   const receipt = readReceipt(record.receipt);
   const scratch = mkdtempSync(join(tmpdir(), "carveout-from-"));
   try {
@@ -368,7 +512,7 @@ export async function patchFrom(input: {
       ...(input.repo === undefined ? {} : { repo: input.repo }),
       ...(input.allow === undefined ? {} : { allow: input.allow }),
     });
-    return { patch, record, files: files.length, cutAgain: !intact };
+    return { patch, record, files: files.length, cutAgain: !intact, commitment };
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }

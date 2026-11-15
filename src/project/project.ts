@@ -325,6 +325,12 @@ export interface ProjectInput {
   /** The public surface's declarations and type check, `carveout/surface/`. */
   readonly surface?: readonly { path: string; text: string }[];
   /**
+   * The caller writes `BOUNDARY.md` and `carveout.json` beside the project,
+   * as a cut does: the interface test's header and the README point to
+   * them. Absent (a platform's own build), they point to the stubs alone.
+   */
+  readonly boundaryIndex?: boolean;
+  /**
    * Hooks for a platform that hands the folder out under its own terms
    * (`ProjectHooks`). Absent, the folder is byte for byte what carveout
    * writes.
@@ -1028,11 +1034,15 @@ function interfaceTests(
   inbound: readonly BoundaryModule[],
   aliasedOf: (original: string) => string | null,
   entries: readonly string[],
+  /** BOUNDARY.md is written beside the project (`ProjectInput.boundaryIndex`). */
+  boundaryIndex = false,
 ): string {
   const lines = [
     "// The public surface: what code outside the slice imports from it in",
     "// the repository. Keep every one of these exports in place, or the",
-    "// change will not fit back; their types are in BOUNDARY.md.",
+    boundaryIndex
+      ? "// change will not fit back; their types are in BOUNDARY.md."
+      : "// change will not fit back; their types are in the .d.ts stubs.",
     'import assert from "node:assert/strict";',
     'import { test } from "node:test";',
     "",
@@ -1212,7 +1222,8 @@ export function testRunnerScript(
     '  ], { stdio: ["inherit", "pipe", "inherit"], encoding: "utf8", maxBuffer: 1024 * 1024 * 1024 });',
     '  const tap = result.stdout ?? "";',
     `  writeFileSync(${JSON.stringify(LAST_RUN_PATH)}, tap);`,
-    "  const failing = [...new Set([...tap.matchAll(/^\\s*not ok \\d+ - (.+?)(?: # .*)?$/gm)].map((m) => m[1]))];",
+    "  // A test marked todo or skipped (a `# TODO` or `# SKIP` directive) fails nothing.",
+    "  const failing = [...new Set([...tap.matchAll(/^\\s*not ok \\d+ - (.+?)(?: # (.*))?$/gm)].filter((m) => !/^(?:todo|skip)\\b/i.test(m[2] ?? \"\")).map((m) => m[1]))];",
     "  const gateFailed = /coverage does not meet threshold/.test(tap);",
     "  const fresh = failing.filter((name) => baseline === null || !baseline.has(name));",
     "  // node's own summary is the TAP's last such line: a test's output, which",
@@ -1227,7 +1238,11 @@ export function testRunnerScript(
     "  if (baseline !== null) surface.known += failing.filter((name) => / (keeps its public surface|loads)$/.test(name) && baseline.has(name)).length;",
     "  surface.checks += ownPass + ownFail;",
     "  surface.fail += ownFail;",
-    '  counted.push({ runner: "node:test", tests: count("tests") - ownPass - ownFail, pass: count("pass") - ownPass, fail: count("fail") - ownFail });',
+    "  // Tests marked todo or skipped are counted apart: node counts them among",
+    "  // its tests but never as passing, so `1 of 4` read as three failures.",
+    '  const todo = count("todo");',
+    '  const skipped = count("skipped");',
+    '  counted.push({ runner: "node:test", tests: count("tests") - ownPass - ownFail - todo - skipped, pass: count("pass") - ownPass, fail: count("fail") - ownFail, todo, skipped });',
     "  if (baseline !== null) notCounted += failing.length - fresh.length;",
     "  if (baseline !== null) {",
     "    const lines = tap.split(\"\\n\");",
@@ -1370,7 +1385,8 @@ export function testRunnerScript(
     '      const failing = [...new Set(results.filter((each) => each.status === "failed").map((each) => each.name))].sort();',
     "      const fresh = failing.filter((name) => baseline === null || !baseline.has(name));",
     `      appendFileSync(${JSON.stringify(LAST_RUN_PATH)}, failing.map((name, index) => \`not ok \${index + 1} - \${name}\\n\`).join(""));`,
-    '      counted.push({ runner: "vitest", tests: results.length, pass: results.filter((each) => each.status === "passed").length, fail: failing.length });',
+    '      const unrunStatus = new Set(["todo", "skipped", "pending"]);',
+    '      counted.push({ runner: "vitest", tests: results.filter((each) => !unrunStatus.has(each.status)).length, pass: results.filter((each) => each.status === "passed").length, fail: failing.length, todo: results.filter((each) => each.status === "todo").length, skipped: results.filter((each) => each.status === "skipped" || each.status === "pending").length });',
     "      if (baseline !== null) notCounted += failing.length - fresh.length;",
     "      if (fresh.length > 0) failed = true;",
     "      // A run that failed with no failing test: an error outside any test.",
@@ -1468,7 +1484,9 @@ const globRegExp = (glob) => {
     `  process.stdout.write(\`\\nThe repository's npm test runs only \${folder}/${coverage?.tests ?? ""}, so it would not run these, and they would cover nothing there. Move them:\\n\${unrun.map((path) => \`  \${path}\`).join("\\n")}\\n\`);`,
     "}",
     "// The counts, for `carveout check` and for whoever ran this.",
-    "const total = counted.reduce((sum, each) => ({ tests: sum.tests + each.tests, pass: sum.pass + each.pass }), { tests: 0, pass: 0 });",
+    "const total = counted.reduce((sum, each) => ({ tests: sum.tests + each.tests, pass: sum.pass + each.pass, todo: sum.todo + (each.todo ?? 0), skipped: sum.skipped + (each.skipped ?? 0) }), { tests: 0, pass: 0, todo: 0, skipped: 0 });",
+    "// Named only when there are any, so a run with none prints as it always did.",
+    'const unrunNote = [total.todo > 0 ? `${total.todo} todo` : "", total.skipped > 0 ? `${total.skipped} skipped` : ""].filter(Boolean).join(" and ");',
     "const shown = counted.filter((each) => each.tests > 0);",
     "const countLines = [",
     "  ...counted.map((each) => `# carveout ${each.runner} tests ${each.tests} pass ${each.pass} fail ${each.fail}\\n`),",
@@ -1480,7 +1498,7 @@ const globRegExp = (glob) => {
     `writeFileSync(${JSON.stringify(COUNTS_PATH)}, JSON.stringify({ counted, surface }) + "\\n");`,
     "if (counted.length > 0 || surface.checks > 0)",
     "  process.stdout.write(",
-    "    `\\nnpm test: ${total.pass} of ${total.tests} test(s) pass${shown.length > 1 ? ` (${shown.map((each) => `${each.runner} ${each.pass} of ${each.tests}`).join(\", \")})` : shown.length === 1 ? ` (${shown[0].runner})` : \"\"}${notCounted > 0 ? `; ${notCounted} failure(s) as before any edit, on the mocks, not counted` : \"\"}${surface.checks > 0 ? `; ${surface.checks - surface.fail} of ${surface.checks} check(s) of the public surface hold${surface.known > 0 ? ` (${surface.known} failing as before any edit, not counted)` : \"\"}` : \"\"}.\\n`,",
+    "    `\\nnpm test: ${total.pass} of ${total.tests} test(s) pass${shown.length > 1 ? ` (${shown.map((each) => `${each.runner} ${each.pass} of ${each.tests}`).join(\", \")})` : shown.length === 1 ? ` (${shown[0].runner})` : \"\"}${unrunNote === \"\" ? \"\" : `; ${unrunNote}, not counted`}${notCounted > 0 ? `; ${notCounted} failure(s) as before any edit, on the mocks, not counted` : \"\"}${surface.checks > 0 ? `; ${surface.checks - surface.fail} of ${surface.checks} check(s) of the public surface hold${surface.known > 0 ? ` (${surface.known} failing as before any edit, not counted)` : \"\"}` : \"\"}.\\n`,",
     "  );",
     "// The tests the contributor added that ran: a pass names them, so a",
     "// missing one shows.",
@@ -1536,6 +1554,7 @@ function readme(input: {
   rewrites: readonly ImportRewrite[];
   tests: readonly string[];
   coverage?: CoverageGate | undefined;
+  boundaryIndex?: boolean;
 }): string {
   const list = (items: readonly string[], empty: string) =>
     items.length === 0 ? [empty] : items.map((item) => `- \`${item}\``);
@@ -1639,7 +1658,9 @@ function readme(input: {
     "",
     `\`${SANDBOX_COMMANDS.test}\` builds the folder, then runs every test file in it (\`*.test.*\`, \`*.spec.*\`), the tests above and any you add, each on the runner it imports: a node:test test on its compiled \`.js\` (so run it through \`npm test\`), a Vitest test on its source. Tests that failed on the mocks before any edit, on either runner, are listed in \`${BASELINE_PATH}\` once the folder has been checked; the run prints in full only the failures that are not among them, and does not count them. Its last line counts the tests that pass, by runner, and apart from them the checks that the public surface keeps its exports and types. There is nothing to read in \`${TEST_RUNNER_PATH}\` beyond this.`,
     "",
-    "`BOUNDARY.md` is an index of the modules the slice imports from outside and of the exports outside code takes from it; the types are in the `.d.ts` stubs beside the mocks. `carveout.json` records the cut.",
+    input.boundaryIndex === true
+      ? "`BOUNDARY.md` is an index of the modules the slice imports from outside and of the exports outside code takes from it; the types are in the `.d.ts` stubs beside the mocks. `carveout.json` records the cut."
+      : "The types of the modules the slice imports from outside are in the `.d.ts` stubs beside the mocks.",
   ].join("\n")}\n`;
 }
 
@@ -1932,7 +1953,7 @@ export function generateProject(input: ProjectInput): GeneratedProject {
   const tests = [`${TESTS_DIR}/interface.test.ts`];
   add({
     path: tests[0] ?? "",
-    text: interfaceTests(input.contract.inbound, pathOf, entries),
+    text: interfaceTests(input.contract.inbound, pathOf, entries, input.boundaryIndex === true),
     class: "test-public",
     public: true,
   });
@@ -2118,6 +2139,7 @@ export function generateProject(input: ProjectInput): GeneratedProject {
       rewrites,
       tests,
       coverage: input.coverage,
+      boundaryIndex: input.boundaryIndex === true,
     }),
     class: "config",
     public: true,

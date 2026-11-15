@@ -80,6 +80,11 @@ export interface CarriedChange {
   /** Each changed file at its path on the other side, whole. */
   readonly files: readonly { readonly path: string; readonly text: string }[];
   readonly refused: readonly CarryRefusal[];
+  /**
+   * Files the change deletes, at their paths on the other side, sorted:
+   * only when the caller passed deletions (`ReverseInput.deleted`).
+   */
+  readonly deleted?: readonly string[];
 }
 
 /** How a line of new text is renamed into the other side's names, and back. */
@@ -368,6 +373,15 @@ export interface ReverseInput {
   readonly harness: readonly string[];
   /** The renaming the version was built with; carveout's by default. */
   readonly aliases?: AliasImplementation;
+  /**
+   * Files the submission deletes, at their paths in the version's project.
+   * Each lands as a deletion at its repository path (`CarriedChange.deleted`)
+   * when it is a file of the version and of the repository, outside the
+   * harness, and not also among the submitted files; otherwise it is
+   * refused. Whether a deletion may be made at all (a test, a fixture) is
+   * the caller's policy, as it is for an edit.
+   */
+  readonly deleted?: readonly string[];
 }
 
 /**
@@ -375,6 +389,31 @@ export interface ReverseInput {
  * repository at the pinned commit: merge-back's reverse path.
  */
 export function reverseSubmission(input: ReverseInput): CarriedChange {
+  const carried = reverseFiles(input);
+  if (input.deleted === undefined) return carried;
+  const { renameFile, invertAliasRules } = input.aliases ?? CURRENT_ALIASES;
+  const inverse = invertAliasRules(input.rules);
+  const repositoryPathOf = new Map(input.renames.map(({ from, to }) => [to, from]));
+  const harness = new Set(input.harness.map(stem));
+  const submitted = new Set(input.submitted.map((file) => file.path));
+  const refused: CarryRefusal[] = [...carried.refused];
+  const deleted = new Set<string>();
+  for (const path of [...new Set(input.deleted)].sort()) {
+    const refuse = (reason: string) => refused.push({ path, reason });
+    if (submitted.has(path)) refuse("The submission both changes and deletes this file.");
+    else if (harness.has(stem(path))) refuse("The submission deletes part of the sandbox's harness, which the repository does not have.");
+    else if (input.publicText(path) === null) refuse("The submission deletes a file the version does not have.");
+    else {
+      const toPath = repositoryPathOf.get(path) ?? renameFile({ path, text: "" }, inverse).path;
+      if (input.repositoryText(toPath) === null) refuse("The submission deletes a file the repository does not have at the pinned commit.");
+      else deleted.add(toPath);
+    }
+  }
+  return { files: carried.files, refused, deleted: [...deleted].sort() };
+}
+
+/** `reverseSubmission`'s files: each submitted one carried back, whole. */
+function reverseFiles(input: ReverseInput): CarriedChange {
   const { renameFile, invertAliasRules } = input.aliases ?? CURRENT_ALIASES;
   const inverse = invertAliasRules(input.rules);
   const repositoryPathOf = new Map(

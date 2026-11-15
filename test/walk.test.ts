@@ -257,7 +257,7 @@ test("when the budget cannot hold every test, the tests of the entry points' own
   const tight = walk(files, ["lib/a.ts"], { maxFiles: 4, maxDepth: 1 }, { tests: true });
   assert.deepEqual(tight.tests, ["lib/z.test.ts"]);
   // Named with the barrel it imports, which the slice holds.
-  assert.deepEqual(tight.testsLeft, [{ file: "lib/0b.test.ts", reason: "budget", imports: ["lib/index.ts"] }]);
+  assert.deepEqual(tight.testsLeft, [{ file: "lib/0b.test.ts", reason: "budget", imports: ["lib/index.ts"], runner: "node" }]);
   // With room for both, both come, in path order.
   const roomy = walk(files, ["lib/a.ts"], { maxFiles: 40, maxDepth: 1 }, { tests: true });
   assert.deepEqual(roomy.tests, ["lib/0b.test.ts", "lib/z.test.ts"]);
@@ -467,7 +467,9 @@ test("a test that reaches the slice through a chain of barrels comes along, the 
   assert.deepEqual(tested.testsLeft, []);
   // Not asked for, the test is named as one the folder does not run.
   const bare = walk(files, ["pkg/src/pricing/weight.ts"], undefined, { packageOf });
-  assert.deepEqual(bare.testsLeft, [{ file: "pkg/test/weight.test.ts", reason: "not-asked" }]);
+  assert.deepEqual(bare.testsLeft, [{ file: "pkg/test/weight.test.ts", reason: "not-asked", runner: "node" }]);
+  // Listed with its runner, and counted against no budget: the slice holds none of it.
+  assert.ok(!bare.included.includes("pkg/test/weight.test.ts"));
   // With the whole package, a barrel brings only the modules that supply
   // the names asked of it, not every module it re-exports.
   const whole = walk(files, ["pkg/src/pricing/weight.ts"], undefined, { packageOf, tests: true, wholePackage: true });
@@ -522,5 +524,5 @@ test("another package's test that imports the slice by its package's name, throu
     followWorkspaces: true,
   });
   // other.test.ts takes only a name the barrel does not forward from the slice.
-  assert.deepEqual(result.testsLeft, [{ file: "apps/shop/src/round.test.ts", reason: "other-package" }]);
+  assert.deepEqual(result.testsLeft, [{ file: "apps/shop/src/round.test.ts", reason: "other-package", runner: "node" }]);
 });

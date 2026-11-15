@@ -18,7 +18,7 @@ import { after, test } from "node:test";
 import { promisify } from "node:util";
 
 import { runAccount, type AccountDeps } from "../src/account.js";
-import { writeCredentials } from "../src/platform.js";
+import { PlatformError, request, sendRetrying, writeCredentials } from "../src/platform.js";
 
 const CLI = resolve(import.meta.dirname, "../src/cli.js");
 const ID = { client: "carveout", version: "9.9.9" };
@@ -50,9 +50,9 @@ interface Seen {
 
 /** A platform with just the routes the CLI calls. `polls` scripts the token endpoint's answers in order. */
 async function fakePlatform(
-  options: { polls?: string[]; orgs?: FakeOrg[]; expiresIn?: number; interval?: number; minimum?: string } = {},
+  options: { polls?: string[]; orgs?: FakeOrg[]; expiresIn?: number; interval?: number; minimum?: string; noScopes?: boolean } = {},
 ) {
-  const { polls = ["ok"], orgs = [ORGS.acme], expiresIn = 900, interval = 5, minimum } = options;
+  const { polls = ["ok"], orgs = [ORGS.acme], expiresIn = 900, interval = 5, minimum, noScopes = false } = options;
   const state = {
     url: "",
     requests: [] as Seen[],
@@ -134,6 +134,9 @@ async function fakePlatform(
       if (found === undefined) return send(404, { error: "Not found" });
       if (!/owner|admin/.test(found.role)) return send(403, { error: "Only owners and admins can manage API tokens." });
       if (body?.["client"] !== "carveout") return send(403, { error: "This sign-in was approved for another client.", code: "client_mismatch" });
+      // A platform older than requested scopes: its strict schema refuses the field.
+      if (noScopes && body?.["scopes"] !== undefined)
+        return send(400, { error: "Unrecognized key: \"scopes\"", code: "invalid_token_request" });
       if (bearer !== undefined) state.sessions.delete(bearer);
       state.tokens.set(SECRET, { organizationId: found.id, revoked: false });
       state.minted.push({ org: found.id, body });
@@ -232,7 +235,11 @@ test("login: pending, slow_down, approval; file written 600, other entries kept,
     assert.equal(statSync(dirname(credentials)).mode & 0o777, 0o700);
   }
   const mint = platform.state.requests.find((r) => r.path.endsWith("/tokens/cli"));
-  assert.deepEqual(mint?.body, { client: "carveout", label: "build-box" });
+  assert.deepEqual(mint?.body, {
+    client: "carveout",
+    label: "build-box",
+    scopes: ["workspace:read", "sandboxes:write", "submissions:write"],
+  });
   assert.equal(mint?.headers.authorization, `Bearer ${SESSION}`);
   for (const r of platform.state.requests) {
     assert.equal(r.headers["user-agent"], "carveout/9.9.9");
@@ -344,6 +351,92 @@ test("logout removes this CLI's entry only, and says the token is not revoked", 
   assert.equal(await runAccount("logout", [], ID, again), 0);
   assert.match(again.output, /Not signed in/);
   await platform.close();
+});
+
+test("login asks for carveout's scopes, and asks an older platform again without them", async () => {
+  const platform = await fakePlatform({ noScopes: true });
+  const w = world(platform.url, fresh());
+  assert.equal(await runAccount("login", [], ID, w), 0, w.errors);
+  const mints = platform.state.requests.filter((r) => r.path.endsWith("/tokens/cli"));
+  assert.equal(mints.length, 2);
+  assert.deepEqual(mints[0]?.body?.["scopes"], ["workspace:read", "sandboxes:write", "submissions:write"]);
+  assert.deepEqual(mints[1]?.body, { client: "carveout", label: "build-box" });
+  assert.match(w.output, /Signed in as Ada/);
+  await platform.close();
+});
+
+test("refusals a person acts on: quota, rate limit, credential kind, scope, carveout too old; a retryable 409 is sent again, bounded", async () => {
+  const answers: { status: number; body: Record<string, unknown>; headers?: Record<string, string> }[] = [];
+  const server = createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      const next = answers.shift() ?? { status: 200, body: { ok: true } };
+      res.writeHead(next.status, { "content-type": "application/json", ...(next.headers ?? {}) });
+      res.end(JSON.stringify(next.body));
+    });
+  });
+  await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const call = () => request({ base, path: "/x", client: "carveout", version: "0.4.1", token: "lnx_t" });
+  const refused = async (status: number, body: Record<string, unknown>, headers?: Record<string, string>) => {
+    answers.push({ status, body, ...(headers === undefined ? {} : { headers }) });
+    try {
+      await call();
+    } catch (error) {
+      assert.ok(error instanceof PlatformError);
+      return error;
+    }
+    throw new Error("not refused");
+  };
+  const quota = await refused(429, { error: "x", code: "quota_exceeded", kind: "evaluator_seconds", used: 10, limit: 10, resetsAt: "2026-12-01T00:00:00.000Z" }, { "retry-after": "60" });
+  assert.match(quota.message, /monthly evaluator time \(builds, imports and grading\) \(10 of 10\)\. It resets 2026-12-01T00:00:00\.000Z; nothing was queued/);
+  assert.equal(quota.retryAfter, 60);
+  const limited = await refused(429, { error: "x", code: "rate_limited", limit: 20, scope: "assignment", retryable: true }, { "retry-after": "30" });
+  assert.match(limited.message, /Rate limited \(20 attempts a day, per assignment\): try again in 30 s\. What was sent is kept\./);
+  assert.match((await refused(403, { error: "x", code: "workspace_credential" })).message, /takes a contributor credential/);
+  assert.match((await refused(403, { error: "x", code: "contributor_credential" })).message, /Sign in with a workspace token: `carveout login`/);
+  const scope = await refused(403, { error: "This credential lacks sandboxes:write.", code: "insufficient_scope" });
+  assert.match(scope.message, /^This credential lacks sandboxes:write\. The sign-in predates that scope: run `carveout login` again \(in Claude Code, .*\/mcp\)\.$/);
+  const old = await refused(422, { error: "x", code: "carveout_too_old", minimumVersion: "0.5.0", files: ["carveout.json"] });
+  assert.match(old.message, /needs a newer carveout: upgrade to at least 0\.5\.0 \(this is 0\.4\.1, and the folder was cut by an older one\)\. npm i -g carveout@latest/);
+  assert.equal(old.code, "carveout_too_old");
+  const upgrade = await refused(426, { error: "Too old; 0.5.0 or later." });
+  assert.match(upgrade.message, /upgrade to at least 0\.5\.0 \(this is 0\.4\.1\)/);
+
+  // 409 retryable: sent again after Retry-After, then answered.
+  const waits: number[] = [];
+  answers.push({ status: 409, body: { error: "busy", code: "run_limit", retryable: true }, headers: { "retry-after": "7" } }, { status: 200, body: { ok: true } });
+  let sends = 0;
+  const done = await sendRetrying(
+    () => {
+      sends += 1;
+      return call();
+    },
+    { sleep: async (ms) => waits.push(ms) },
+  );
+  assert.deepEqual(done, { ok: true });
+  assert.equal(sends, 2);
+  assert.deepEqual(waits, [7000]);
+  // Bounded: still refused after the attempts, and a 429 is never looped on.
+  for (let i = 0; i < 3; i += 1) answers.push({ status: 409, body: { error: "busy", code: "run_limit", retryable: true } });
+  await assert.rejects(sendRetrying(() => call(), { sleep: async () => {}, attempts: 3 }), /Still refused after 3 attempts/);
+  answers.push({ status: 429, body: { error: "x", code: "quota_exceeded" } });
+  sends = 0;
+  await assert.rejects(
+    sendRetrying(
+      () => {
+        sends += 1;
+        return call();
+      },
+      { sleep: async () => {} },
+    ),
+    /quota|model-token/,
+  );
+  assert.equal(sends, 1);
+  // A 409 that is not retryable is thrown at once.
+  answers.push({ status: 409, body: { error: "Held.", code: "step_held" } });
+  await assert.rejects(sendRetrying(() => call(), { sleep: async () => {} }), /Held\. \(step_held\)/);
+  await new Promise<void>((done2) => server.close(() => done2()));
 });
 
 test("426 names the minimum version; a broken credentials file is left alone", async () => {

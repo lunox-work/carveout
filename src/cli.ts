@@ -119,7 +119,8 @@ const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript r
       environment) and deleted tests; --allow <path|glob> lets one through.
       --from takes a passing submission's files from the platform, on a folder
       handoff --platform uploaded from here, and judges them the same way,
-      by the local receipt.
+      by the local receipt, once the version's hidden suite is the one
+      uploaded (its handout's hiddenSha256, when hiddenSha256Version is 2).
 
   carveout apply <dir> <patch-file> [--repo <checkout>] [--stubs] [--receipt <file>] [--json]
       Brings a patch for the repository at the cut's commit into <dir>, with its
@@ -196,6 +197,15 @@ widened. --copy <dir> copies a folder the code reads by name (migrations).
 A carveout.config.json at the repository's root sets the same for every cut.
 `;
 
+/** The tests marked todo or skipped, which the counts leave out: `; 3 todo, not counted`, or nothing. */
+function unrunOf(counts: TestCounts): string {
+  const parts = [
+    ...(counts.todo === undefined ? [] : [`${counts.todo} todo`]),
+    ...(counts.skipped === undefined ? [] : [`${counts.skipped} skipped`]),
+  ];
+  return parts.length === 0 ? "" : `; ${parts.join(" and ")}, not counted`;
+}
+
 /**
  * A run's counts as a sentence: the folder's tests (node:test's and
  * Vitest's), then carveout's own checks of the public surface, which are
@@ -215,7 +225,7 @@ function countsSentence(counts: TestCounts | undefined, edited: boolean): string
   const tests =
     counts.tests === 0 && counts.surface !== undefined
       ? ""
-      : ` ${counts.pass} of ${counts.tests} test(s) pass${edited ? "" : " before any edit"}${by}.`;
+      : ` ${counts.pass} of ${counts.tests} test(s) pass${edited ? "" : " before any edit"}${by}${unrunOf(counts)}.`;
   const surface =
     counts.surface === undefined
       ? ""
@@ -451,7 +461,13 @@ async function main(argv: readonly string[]) {
 
   /** `--platform`'s URL; undefined for the default. */
   const platformGiven = values.platform === undefined || values.platform === "" ? undefined : values.platform;
-  const hostedDeps = (): HostedDeps => ({ env: process.env, fetchImpl: fetch, now: Date.now });
+  const hostedDeps = (): HostedDeps => ({
+    env: process.env,
+    fetchImpl: fetch,
+    now: Date.now,
+    sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+    warn: (text) => process.stderr.write(text),
+  });
 
   switch (commandName) {
     case "where":
@@ -738,6 +754,8 @@ async function main(argv: readonly string[]) {
                         versionId: uploaded.versionId,
                         runId: uploaded.runId,
                         record: uploaded.recordPath,
+                        hiddenSha256: uploaded.hiddenSha256 ?? null,
+                        hiddenSha256Version: 2,
                       },
               }
             : {}),
@@ -796,6 +814,7 @@ async function main(argv: readonly string[]) {
             ? [
                 `Uploaded to ${uploaded.base}: version ${uploaded.versionId} of bounty ${uploaded.bountyId} (sandbox ${uploaded.sandboxId}, import run ${uploaded.runId}), ${uploaded.files} file(s) and ${accepted.length} acceptance test(s) in the folder's names. The receipt stayed here; the upload is recorded in ${uploaded.recordPath}.`,
                 "  The platform runs the folder's baseline (each acceptance test must fail on it). Publishing the version is a person's act in the platform's web app.",
+                `  Hidden suite commitment (hiddenSha256Version 2): ${uploaded.hiddenSha256 ?? "none"}. The version's handout shows the same hash once it is built; patch --from checks it.`,
                 "When a contributor's submission passes, from the repository's root: carveout patch --from <submission id> --output change.patch; read all of it; then git apply --3way change.patch on a branch, and let CI decide.",
                 "",
               ]
@@ -1164,6 +1183,7 @@ async function main(argv: readonly string[]) {
     case "patch": {
       const [dir] = positionals;
       let patch: Awaited<ReturnType<typeof patchProject>>;
+      let fromCommitment: Awaited<ReturnType<typeof patchFrom>>["commitment"] | undefined;
       if (values.from !== undefined) {
         if (dir !== undefined) fail("patch --from takes a submission id, not a folder.");
         let from: Awaited<ReturnType<typeof patchFrom>>;
@@ -1180,9 +1200,11 @@ async function main(argv: readonly string[]) {
           fail(`patch --from: ${error.message}`);
         }
         patch = from.patch;
+        fromCommitment = from.commitment;
         if (values.json !== true)
           process.stderr.write(
-            `carveout: submission ${values.from}: ${from.files} file(s) from ${from.record.base}, on the folder uploaded as version ${from.record.versionId}${from.cutAgain ? ", cut again from the receipt (the folder was gone or edited)" : ""}; judged by the receipt here.\n`,
+            `carveout: submission ${values.from}: ${from.files} file(s) from ${from.record.base}, on the folder uploaded as version ${from.record.versionId}${from.cutAgain ? ", cut again from the receipt (the folder was gone or edited)" : ""}; judged by the receipt here.\n` +
+              `carveout: hidden suite: ${from.commitment.reason}${from.commitment.comparable ? ` (${from.commitment.expected})` : ""}.\n`,
           );
       } else {
         if (dir === undefined) fail("patch needs the folder a cut wrote, or --from <submission id>.");
@@ -1254,7 +1276,7 @@ async function main(argv: readonly string[]) {
               : 0;
       if (values.json === true) {
         if (values.output !== undefined) writeFileSync(values.output, patch.diff);
-        print(patch);
+        print(fromCommitment === undefined ? patch : { ...patch, commitment: fromCommitment });
         process.exitCode = code;
         return;
       }

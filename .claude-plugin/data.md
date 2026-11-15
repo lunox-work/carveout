@@ -13,20 +13,32 @@
   `handoff --platform` uploads the hand-off folder (public, in pseudonyms: the
   files a contractor would get) and the `--accept` tests renamed into the
   folder's names; never the receipt, its table, or source outside the slice.
-  `patch --from` downloads a passing submission's changed files. What was
-  uploaded is recorded in `~/.carveout/platform/` on the same machine.
+  `patch --from` downloads a passing submission's changed files and reads the
+  version's handout (its public file list and the hidden suite's hash). What
+  was uploaded is recorded in `~/.carveout/platform/` on the same machine,
+  with the hash of the acceptance tests as uploaded.
 - **The bundled `lunox` MCP server:** in Claude Code it talks to
   platform.lunox.work only once the person signs in to it through `/mcp`.
   Its read tools (`list_*`, `get_*`) read the account and the workspace, with
   its bounties, repositories, sandboxes and runs. Its write tools run only
-  when the person asks for that action: a bounty posted or imported from a
-  GitHub issue (its title and text), a slice planned and cut from a
-  repository already connected to the workspace, a sandbox version built,
-  and a contractor's patch submitted for a verdict. `size_bounty`, `prepare`
-  and `retry` start model runs on the platform that count against the
-  workspace's monthly token limit. Approvals, publishing and merging happen
-  in the platform's web app, not through the plugin. The platform's privacy
-  policy is at https://platform.lunox.work/privacy.
+  when the person asks for that action: a bounty posted (its title and text)
+  or imported from a GitHub or Jira issue, a slice planned and cut from a
+  repository already connected to the workspace, a sandbox version built, a
+  contractor's changed files submitted for a verdict or graded again, a
+  contributor invited to a published version, and a passing submission's
+  files taken back. `upload_handoff` sends nothing: it answers the
+  `carveout login` and `carveout handoff --platform` commands, which upload
+  from the person's machine as above. `size_bounty`, `prepare` and `retry`
+  start model runs on the platform that count against the workspace's monthly
+  token limit. Confirming decisions, approving a price, acknowledging
+  disclosure findings, publishing and merging back happen in the platform's
+  web app, not through the plugin. The platform's privacy policy is at
+  https://platform.lunox.work/privacy.
+- **The `lunox-contribute` skill:** for a person invited to contribute, it
+  talks to platform.lunox.work only through the contributor MCP server they
+  add and sign in to themselves (`/mcp/contribute`), or their own `lnxc_`
+  token: it reads the version they were invited to and submits the files they
+  changed for a verdict.
 - **Personal data:** a public cut reads the repository's Git `user.name` and
   `user.email`, with its package, owner and remote names, to replace them with
   pseudonyms. The table that maps them back is kept in the maintainer's

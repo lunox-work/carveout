@@ -1821,6 +1821,8 @@ export async function computeCut(
       // No readable package.json: no gate.
     }
   const project = generateProject({
+    // This cut writes BOUNDARY.md and carveout.json beside it.
+    boundaryIndex: true,
     // A public folder names neither the checkout's path nor its folder.
     origin: settled.public
       ? { repository: null, name: projectName(null, entryPoints) }
@@ -2713,13 +2715,16 @@ export interface TestCounts {
   readonly runners?: Readonly<Record<string, { readonly tests: number; readonly pass: number; readonly fail: number }>>;
   /** carveout's own checks that the public surface keeps its exports and their types. */
   readonly surface?: { readonly checks: number; readonly fail: number };
+  /** Tests marked todo, and skipped ones, which `tests` leaves out; only when there are any. */
+  readonly todo?: number;
+  readonly skipped?: number;
 }
 
 /** The counts the runner wrote as JSON (`COUNTS_PATH`), or undefined when they do not read. */
 export function countsFromJson(text: string): TestCounts | undefined {
   try {
     const parsed = JSON.parse(text) as {
-      counted?: { runner?: unknown; tests?: unknown; pass?: unknown; fail?: unknown }[];
+      counted?: { runner?: unknown; tests?: unknown; pass?: unknown; fail?: unknown; todo?: unknown; skipped?: unknown }[];
       surface?: { checks?: unknown; fail?: unknown };
     };
     const number = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : 0);
@@ -2731,12 +2736,16 @@ export function countsFromJson(text: string): TestCounts | undefined {
     }
     const all = Object.values(runners);
     const checks = number(parsed.surface?.checks);
+    const todo = (parsed.counted ?? []).reduce((sum, each) => sum + number(each.todo), 0);
+    const skipped = (parsed.counted ?? []).reduce((sum, each) => sum + number(each.skipped), 0);
     return {
       tests: all.reduce((sum, each) => sum + each.tests, 0),
       pass: all.reduce((sum, each) => sum + each.pass, 0),
       fail: all.reduce((sum, each) => sum + each.fail, 0),
       runners,
       ...(checks > 0 ? { surface: { checks, fail: number(parsed.surface?.fail) } } : {}),
+      ...(todo > 0 ? { todo } : {}),
+      ...(skipped > 0 ? { skipped } : {}),
     };
   } catch {
     return undefined;
@@ -2898,11 +2907,13 @@ async function recordBaseline(
   const tap = existsSync(join(work, LAST_RUN_PATH))
     ? readFileSync(join(work, LAST_RUN_PATH), "utf8")
     : "";
+  // A test marked todo or skipped (a `# TODO` or `# SKIP` directive) fails
+  // nothing, and is no baseline failure.
   const failing = [
     ...new Set(
-      [...tap.matchAll(/^\s*not ok \d+ - (.+?)(?: # .*)?$/gm)].map(
-        (match) => match[1] ?? "",
-      ),
+      [...tap.matchAll(/^\s*not ok \d+ - (.+?)(?: # (.*))?$/gm)]
+        .filter((match) => !/^(?:todo|skip)\b/i.test(match[2] ?? ""))
+        .map((match) => match[1] ?? ""),
     ),
   ].sort(compare);
   if (failing.length === 0 || /coverage does not meet threshold/.test(tap))

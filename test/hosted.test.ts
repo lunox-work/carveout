@@ -9,6 +9,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -16,7 +17,16 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, test } from "node:test";
 import { CARVEOUT_VERSION, cutSlice, patchProject } from "../src/carve.js";
-import { findPlatformRecord, folderFiles, handoffPlatform, patchFrom, platformRecordDir, type HostedDeps } from "../src/hosted.js";
+import {
+  commitmentCheck,
+  findPlatformRecord,
+  folderFiles,
+  handoffPlatform,
+  patchFrom,
+  platformRecordDir,
+  stagedHiddenSha256,
+  type HostedDeps,
+} from "../src/hosted.js";
 import { PlatformError, saveCredential } from "../src/platform.js";
 import { readReceipt } from "../src/receipt.js";
 
@@ -52,6 +62,26 @@ let env: NodeJS.ProcessEnv = {};
 const seen: { method: string; url: string; headers: IncomingMessage["headers"]; body: string }[] = [];
 let submission: { path: string; text: string }[] = [];
 let uploadedRecordSha256 = "";
+/** The acceptance tests the fake platform was sent, which its handout commits to. */
+let uploadedTests: { path: string; text: string }[] = [];
+/** Answers the upload route gives before it takes one, by bounty id. */
+const uploadRefusals = new Map<string, { status: number; body: Record<string, unknown>; headers?: Record<string, string> }[]>();
+
+/**
+ * The platform's `hiddenCommitmentOf`, written again here from its
+ * description rather than imported from carveout, so the two are checked
+ * against each other.
+ */
+function platformCommitment(tests: { path: string; text: string }[]): string | null {
+  const hex = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
+  if (tests.length === 0) return null;
+  const records = tests.map((test) => ({ path: test.path, sha256: hex(test.text) }));
+  const lines = [...records]
+    .sort((a, b) => Buffer.compare(Buffer.from(a.path), Buffer.from(b.path)))
+    .map((record) => `${record.sha256}  ${record.path}\n`);
+  lines.push(`${hex(JSON.stringify(records.map((record) => record.path).sort()))}  calibration.kept\n`);
+  return hex(lines.join(""));
+}
 /** The manual hand-off's patch, which `patch --from` must reproduce. */
 let manualDiff = "";
 const CLI = join(import.meta.dirname, "../src/cli.js");
@@ -110,12 +140,35 @@ before(async () => {
       };
       if (req.headers.authorization !== "Bearer lnx_test") return send(401, { error: "Unauthorized." });
       if (req.method === "POST" && req.url === "/api/v1/orgs/org_1/sandboxes/uploads") {
-        uploadedRecordSha256 = (JSON.parse(body) as { carveout: { recordSha256: string } }).carveout.recordSha256;
+        const sent = JSON.parse(body) as { bountyId: string; carveout: { recordSha256: string }; acceptanceTests: { path: string; text: string }[] };
+        const refusal = uploadRefusals.get(sent.bountyId)?.shift();
+        if (refusal !== undefined) {
+          res.writeHead(refusal.status, { "Content-Type": "application/json", ...(refusal.headers ?? {}) });
+          return res.end(JSON.stringify(refusal.body));
+        }
+        uploadedRecordSha256 = sent.carveout.recordSha256;
+        uploadedTests = sent.acceptanceTests.map(({ path, text }) => ({ path, text }));
         return send(202, { sandbox: { id: "sbx_1" }, version: { id: "sbv_1" }, source: {}, run: { id: "arn_import" } });
       }
+      if (req.method === "GET" && req.url === "/api/v1/orgs/org_1/sandboxes/versions/sbv_1/handout")
+        return send(200, { versionId: "sbv_1", files: [], hiddenTests: uploadedTests.length, hiddenSha256: platformCommitment(uploadedTests), hiddenSha256Version: 2 });
+      if (req.method === "GET" && req.url === "/api/v1/orgs/org_1/sandboxes/versions/sbv_swapped/handout")
+        return send(200, { versionId: "sbv_swapped", files: [], hiddenTests: 1, hiddenSha256: platformCommitment([{ path: "x.test.ts", text: "other" }]), hiddenSha256Version: 2 });
+      if (req.method === "GET" && req.url === "/api/v1/orgs/org_1/sandboxes/versions/sbv_legacy/handout")
+        return send(200, { versionId: "sbv_legacy", files: [], hiddenTests: 1, hiddenSha256: "f".repeat(64), hiddenSha256Version: 1 });
+      const take = /^\/api\/v1\/orgs\/org_1\/sandboxes\/submissions\/(sbm_swapped|sbm_legacy)\/files$/.exec(req.url ?? "");
+      if (req.method === "GET" && take !== null)
+        return send(200, {
+          submission: { id: take[1], sandboxVersionId: take[1] === "sbm_swapped" ? "sbv_swapped" : "sbv_legacy", status: "passed", verdict: "passed" },
+          origin: "upload",
+          upload: { recordSha256: uploadedRecordSha256, carveoutVersion: "0.4.0" },
+          files: submission,
+        });
+      if (req.method === "GET" && req.url === "/api/v1/orgs/org_1/sandboxes/submissions/sbm_starter/files")
+        return send(200, { submission: { id: "sbm_starter", sandboxVersionId: "sbv_gen" }, origin: "starter", upload: null, files: [{ path: "src/a.ts", text: "x" }] });
       if (req.method === "GET" && req.url === "/api/v1/orgs/org_1/sandboxes/submissions/sbm_1/files")
         return send(200, {
-          submission: { id: "sbm_1", verdict: "passed" },
+          submission: { id: "sbm_1", sandboxVersionId: "sbv_1", verdict: "passed" },
           upload: { recordSha256: uploadedRecordSha256, carveoutVersion: "0.4.0" },
           files: submission,
         });
@@ -145,7 +198,15 @@ after(async () => {
   rmSync(scratch, { recursive: true, force: true });
 });
 
-const deps = (): HostedDeps => ({ env, fetchImpl: fetch, now: () => Date.parse("2026-11-12T00:00:00.000Z") });
+const slept: number[] = [];
+const warned: string[] = [];
+const deps = (): HostedDeps => ({
+  env,
+  fetchImpl: fetch,
+  now: () => Date.parse("2026-11-12T00:00:00.000Z"),
+  sleep: async (ms) => slept.push(ms),
+  warn: (text) => warned.push(text),
+});
 
 const cut = (name: string, more: object = {}) =>
   cutSlice({
@@ -218,6 +279,9 @@ test("handoff --platform uploads the folder and the acceptance test in the folde
   // What was uploaded is recorded here, never sent.
   const record = findPlatformRecord(body.carveout.recordSha256);
   assert.equal(record?.versionId, "sbv_1");
+  assert.equal(record?.hiddenSha256Version, 2);
+  assert.equal(record?.hiddenSha256, platformCommitment(body.acceptanceTests));
+  assert.equal(uploaded.hiddenSha256, record?.hiddenSha256);
   assert.equal(record?.receipt, made.receipt);
   assert.ok(existsSync(join(platformRecordDir(), `${receipt.cutId}.json`)));
 
@@ -232,6 +296,12 @@ test("handoff --platform uploads the folder and the acceptance test in the folde
   manualDiff = manual.diff;
   const from = await patchFrom({ platform: base, submissionId: "sbm_1", deps: deps() });
   assert.equal(from.cutAgain, false);
+  // The platform's hidden suite is the acceptance test uploaded: the hash recorded here is the handout's.
+  assert.deepEqual(
+    [from.commitment.comparable, from.commitment.match, from.commitment.version],
+    [true, true, 2],
+  );
+  assert.equal(from.commitment.actual, platformCommitment(uploadedTests));
   assert.equal(from.patch.diff, manual.diff);
   assert.deepEqual(
     [from.patch.changed, from.patch.added, from.patch.deleted, from.patch.refused, from.patch.boundary],
@@ -305,4 +375,75 @@ test("handoff --platform uploads only a public folder in pseudonyms, with accept
   // A binary file is never sent as text.
   writeFileSync(join(made.out, "logo.bin"), Buffer.from([0, 1, 2, 255]));
   assert.throws(() => folderFiles(made.out), /not UTF-8 text/);
+});
+
+test("stagedHiddenSha256 is the platform's version 2 commitment, byte for byte with duediligence's", () => {
+  // duediligence's bin/hash.mjs stagedHiddenSha256 on the same tests.
+  const tests = [
+    { path: "src/b/z.test.ts", text: "b\n" },
+    { path: "src/a.spec.ts", text: "a\n" },
+    { path: "src/\u00c4.test.ts", text: "\u00fc\n" },
+    { path: "src/Z.test.ts", text: "" },
+  ];
+  assert.equal(stagedHiddenSha256(tests), "31fc23166e4c31e8aad16fe7554b04e3f818a9197e2016c0140cedf1844ceb23");
+  assert.equal(stagedHiddenSha256(tests), platformCommitment(tests));
+  assert.equal(stagedHiddenSha256([...tests].reverse()), stagedHiddenSha256(tests), "order-free");
+  assert.equal(stagedHiddenSha256([]), null);
+  const hash = stagedHiddenSha256(tests);
+  assert.deepEqual(commitmentCheck({ hiddenSha256: hash, hiddenSha256Version: 2 }, { hiddenSha256: hash }).match, true);
+  assert.deepEqual(commitmentCheck({ hiddenSha256: "0".repeat(64), hiddenSha256Version: 2 }, { hiddenSha256: hash }).match, false);
+  const legacy = commitmentCheck({ hiddenSha256: hash, hiddenSha256Version: 1 }, { hiddenSha256: hash });
+  assert.deepEqual([legacy.comparable, legacy.match], [false, null]);
+  assert.match(legacy.reason, /hiddenSha256Version 1: .*not compared/);
+  assert.match(commitmentCheck({ hiddenSha256: hash, hiddenSha256Version: 3 }, { hiddenSha256: hash }).reason, /newer than this carveout computes/);
+  assert.match(commitmentCheck({ hiddenSha256: hash, hiddenSha256Version: 2 }, {}).reason, /did not keep the commitment/);
+});
+
+test("patch --from refuses a version whose hidden suite is not the one uploaded, says when it cannot compare, and refuses a starter submission", async () => {
+  assert.ok(uploadedTests.length > 0, "runs after the round trip");
+  await assert.rejects(
+    patchFrom({ platform: base, submissionId: "sbm_swapped", deps: deps() }),
+    (error: unknown) =>
+      error instanceof PlatformError && error.code === "commitment_mismatch" && /not the acceptance tests uploaded from here/.test(error.message),
+  );
+  const legacy = await patchFrom({ platform: base, submissionId: "sbm_legacy", deps: deps() });
+  assert.deepEqual([legacy.commitment.comparable, legacy.commitment.version], [false, 1]);
+  assert.equal(legacy.patch.diff, manualDiff);
+  const cli1 = await cli(["patch", "--from", "sbm_legacy", "--platform", base]);
+  assert.equal(cli1.status, 0, cli1.stderr);
+  assert.match(cli1.stderr, /hidden suite: hiddenSha256Version 1: .*not compared/);
+  const cli2 = await cli(["patch", "--from", "sbm_1", "--platform", base, "--json"]);
+  assert.equal((JSON.parse(cli2.stdout) as { commitment: { match: boolean } }).commitment.match, true);
+  await assert.rejects(patchFrom({ platform: base, submissionId: "sbm_starter", deps: deps() }), /generated \(starter\) version.*get_submission_files/);
+});
+
+test("handoff --platform sends a refused upload again after Retry-After under a new key, bounded, and stops on what a person must act on", async () => {
+  const made = await cut("retry");
+  assert.ok(made.receipt !== null);
+  const upload = (bountyId: string) =>
+    handoffPlatform({ platform: base, bountyId, folder: made.out, receiptPath: made.receipt ?? "", accepted: [{ path: ACCEPT, text: ACCEPT_TEXT }], deps: deps() });
+  const before = seen.length;
+  slept.length = 0;
+  uploadRefusals.set("bty_busy", [
+    { status: 409, body: { error: "The active analysis limit has been reached.", code: "run_limit" }, headers: { "Retry-After": "7" } },
+    { status: 409, body: { error: "In use.", code: "idempotency_key_in_use" } },
+  ]);
+  const done = await upload("bty_busy");
+  assert.equal(done.versionId, "sbv_1");
+  const posts = seen.slice(before).filter((call) => call.method === "POST");
+  assert.equal(posts.length, 3);
+  const keys = posts.map((call) => String(call.headers["idempotency-key"]));
+  assert.notEqual(keys[0], keys[1], "a refusal that stored nothing is sent under a new key");
+  assert.equal(keys[1], keys[2], "a key still in use is sent again under the same key");
+  assert.deepEqual(slept, [7000, 30000]);
+  assert.match(warned.join(""), /run_limit\); sending it again in 7 s \(attempt 2\)/);
+
+  uploadRefusals.set("bty_full", Array.from({ length: 4 }, () => ({ status: 409, body: { error: "Busy.", code: "run_limit", retryable: true } })));
+  await assert.rejects(upload("bty_full"), /Still refused after 4 attempts/);
+  uploadRefusals.set("bty_old", [{ status: 422, body: { error: "Old.", code: "carveout_too_old", minimumVersion: "9.0.0" } }]);
+  await assert.rejects(upload("bty_old"), (error: unknown) => error instanceof PlatformError && /upgrade to at least 9\.0\.0/.test(error.message));
+  uploadRefusals.set("bty_quota", [{ status: 429, body: { error: "x", code: "quota_exceeded", kind: "evaluator_seconds", resetsAt: "2026-12-01T00:00:00.000Z" } }]);
+  const sends = seen.length;
+  await assert.rejects(upload("bty_quota"), /monthly evaluator time/);
+  assert.equal(seen.slice(sends).filter((call) => call.method === "POST").length, 1, "a quota refusal is not looped on");
 });

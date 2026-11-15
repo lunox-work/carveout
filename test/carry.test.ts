@@ -493,3 +493,41 @@ test("a scoped rule's public name, added outside its scope, is refused, not land
     },
   );
 });
+
+test("a deletion carries back to the repository's path, and one it cannot place is refused", () => {
+  const copy = publicCopy();
+  const withHelper = new Map([...repository, ["src/acme/helper.ts", "export const acmeHelper = 1;\n"]]);
+  const base = {
+    publicText: (path: string) => (path === "src/shop/helper.ts" ? "export const shopHelper = 1;\n" : (copy.get(path) ?? null)),
+    repositoryText: (path: string) => withHelper.get(path) ?? null,
+    rules,
+    renames: [{ from: "src/acme/orders.ts", to: "src/shop/orders.ts" }],
+    harness: ["sandbox/mocks/ledger.ts"],
+  };
+  // Without deletions, the answer is as it always was: no `deleted` field.
+  assert.deepEqual(reverseSubmission({ ...base, submitted: [] }), { files: [], refused: [] });
+  // A file the build moved, and one the path rule renames, land at the repository's paths.
+  assert.deepEqual(reverseSubmission({ ...base, submitted: [], deleted: ["src/shop/orders.ts", "src/shop/helper.ts", "src/shop/helper.ts"] }), {
+    files: [],
+    refused: [],
+    deleted: ["src/acme/helper.ts", "src/acme/orders.ts"],
+  });
+  const refused = reverseSubmission({
+    ...base,
+    submitted: edit("    return ledger.sum();\n", "    return 0;\n"),
+    deleted: ["src/shop/orders.ts", "sandbox/mocks/ledger.js", "src/shop/nowhere.ts"],
+  });
+  assert.deepEqual(refused.deleted, []);
+  assert.deepEqual(
+    refused.refused.map(({ path, reason }) => [path, reason]),
+    [
+      ["sandbox/mocks/ledger.js", "The submission deletes part of the sandbox's harness, which the repository does not have."],
+      ["src/shop/nowhere.ts", "The submission deletes a file the version does not have."],
+      ["src/shop/orders.ts", "The submission both changes and deletes this file."],
+    ],
+  );
+  assert.equal(refused.files.length, 1, "the edit still carries");
+  // A file of the version the repository does not have at the pinned commit.
+  const gone = reverseSubmission({ ...base, repositoryText: () => null, submitted: [], deleted: ["src/shop/helper.ts"] });
+  assert.deepEqual(gone.refused, [{ path: "src/shop/helper.ts", reason: "The submission deletes a file the repository does not have at the pinned commit." }]);
+});

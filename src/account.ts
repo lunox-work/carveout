@@ -8,8 +8,11 @@
  *   POST /api/auth/device/code  {client_id}                          → device_code, user_code, verification_uri(_complete), expires_in, interval
  *   POST /api/auth/device/token {grant_type, device_code, client_id} → access_token (a session that may only mint this client's token)
  *   GET  /api/v1/me, GET /api/v1/me/orgs                               (with that session)
- *   POST /api/v1/orgs/:orgId/tokens/cli {client, label}               → { token, secret }: a 90-day lnx_ token; the session ends
- * The token is saved, never printed.
+ *   POST /api/v1/orgs/:orgId/tokens/cli {client, label, scopes}       → { token, secret }: a 90-day lnx_ token; the session ends
+ * The token is saved, never printed. `scopes` is CLI_SCOPES[client]; a
+ * platform that does not know one of them (400 `invalid_scope` or
+ * `invalid_token_request`) is asked again without, which grants its
+ * default set.
  */
 
 import { spawn } from "node:child_process";
@@ -20,6 +23,15 @@ import { parseArgs } from "node:util";
 import { credentialFor, credentialsPath, platformUrl, PlatformError, request, saveCredential, type RequestOptions } from "./platform.js";
 
 const GRANT = "urn:ietf:params:oauth:grant-type:device_code";
+/**
+ * The scopes each CLI asks for: sandbox-factory's CLI_CLIENTS
+ * (packages/core/src/scopes.ts), the most it may hold. carveout's cover
+ * `whoami` and reading a handout (workspace:read), `handoff --platform`
+ * (sandboxes:write) and `patch --from` (submissions:write).
+ */
+export const CLI_SCOPES: Readonly<Record<string, readonly string[]>> = {
+  carveout: ["workspace:read", "sandboxes:write", "submissions:write"],
+};
 const ADMIN_ROLES = new Set(["owner", "admin"]);
 
 export interface AccountDeps {
@@ -254,11 +266,24 @@ export async function login(argv: readonly string[], id: ClientId, deps: Account
     const label = String(deps.hostname() ?? "")
       .trim()
       .slice(0, 60);
-    minted = await asSession({
-      method: "POST",
-      path: `/api/v1/orgs/${encodeURIComponent(org.id)}/tokens/cli`,
-      body: label === "" ? { client } : { client, label },
-    });
+    const mint = (scopes: readonly string[] | undefined) =>
+      asSession<typeof minted>({
+        method: "POST",
+        path: `/api/v1/orgs/${encodeURIComponent(org.id)}/tokens/cli`,
+        body: { client, ...(label === "" ? {} : { label }), ...(scopes === undefined ? {} : { scopes }) },
+      });
+    const wanted = CLI_SCOPES[client];
+    try {
+      minted = await mint(wanted);
+    } catch (error) {
+      // An older platform refuses a scope it does not know yet; its default set is what login always had.
+      const unknownScope =
+        error instanceof PlatformError &&
+        error.status === 400 &&
+        (error.code === "invalid_scope" || error.code === "invalid_token_request");
+      if (wanted === undefined || !unknownScope) throw error;
+      minted = await mint(undefined);
+    }
   } catch (error) {
     // Minting ends the session; a sign-in that stopped short ends it here, best effort.
     await asSession({ method: "POST", path: "/api/auth/sign-out", body: {} }).catch(() => {});

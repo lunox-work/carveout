@@ -14,9 +14,10 @@ line is renamed by the table first, and only what the table leaves of an
 original line is learned (`learnedRenames`' optional `table`), so a text
 rule's words never rename a contributor's own; `reverseSubmission` refuses an
 added line left holding a public name the table renames back only in other
-files (`Renaming.stranded`, `STRANDED_NAME_REASON`). `src/pseudonyms/legacy/`
-holds that commit's `aliases.ts` and `vocabulary.ts` frozen, exported with a
-`V1` suffix (`legacy.ts`).
+files (`Renaming.stranded`, `STRANDED_NAME_REASON`), and carries deletions
+back when given them (`ReverseInput.deleted`, `CarriedChange.deleted`).
+`src/pseudonyms/legacy/` holds that commit's `aliases.ts` and `vocabulary.ts`
+frozen, exported with a `V1` suffix (`legacy.ts`).
 
 ## Where the forks differ from the platform
 

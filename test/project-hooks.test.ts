@@ -76,9 +76,27 @@ const text = (project: ReturnType<typeof generateProject>, path: string) =>
 test("without hooks, the folder is what carveout wrote before them", () => {
   const plain = generateProject(input);
   assert.deepEqual(plain.blockers, []);
-  // carveout 0.4.1's folder for this slice, before hooks existed.
-  assert.equal(digest(plain), "0296e8f53f4e74b2999b05d3af0bc63df3761fb15383cb6fc5a319c1d952a33f");
+  // carveout 0.4.1's folder for this slice was
+  // 0296e8f53f4e74b2999b05d3af0bc63df3761fb15383cb6fc5a319c1d952a33f. Since,
+  // carveout/test.js counts todo and skipped tests apart, and without
+  // `boundaryIndex` (no cut writes BOUNDARY.md beside it) the interface
+  // test's header and the README point to the stubs; checked against a
+  // build of 0.4.1, nothing else changed.
+  assert.equal(digest(plain), "e1ea67f5ea8c598a42c1be5ff85a0e4e10d4b8e6db118733b1b194760b18e232");
   assert.equal(digest(generateProject({ ...input, hooks: {} })), digest(plain));
+  assert.equal(digest(generateProject({ ...input, boundaryIndex: true })), "34e2a143cf55c0bd1299567e3b05bf40f6d4d0512bad67e8e7fc32e4f8c807b3");
+});
+
+test("BOUNDARY.md is named only when the caller writes it, as a cut does", () => {
+  const plain = generateProject(input);
+  const cut = generateProject({ ...input, boundaryIndex: true });
+  const changed = cut.files.filter((file) => text(plain, file.path) !== file.text).map((file) => file.path);
+  assert.deepEqual(changed, ["README.md", "carveout/tests/interface.test.ts"]);
+  assert.match(text(cut, "carveout/tests/interface.test.ts"), /their types are in BOUNDARY\.md\./);
+  assert.doesNotMatch(text(plain, "carveout/tests/interface.test.ts"), /BOUNDARY/);
+  assert.match(text(plain, "carveout/tests/interface.test.ts"), /their types are in the \.d\.ts stubs\./);
+  assert.doesNotMatch(text(plain, "README.md"), /BOUNDARY\.md|carveout\.json` records/);
+  assert.match(text(cut, "README.md"), /`BOUNDARY\.md` is an index/);
 });
 
 test("the hooks change what each names and nothing else", () => {
