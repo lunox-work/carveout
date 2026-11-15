@@ -9,7 +9,7 @@ graphify driver there with the TypeScript compiler alone.
 
 `src/pseudonyms/carry.ts` is the platform's
 `packages/core/src/sandbox/carry.ts` (commit f31d780), moved here verbatim but
-for a pluggable renaming (`aliases`), and, after 0.4.1 (unreleased): an added
+for a pluggable renaming (`aliases`), and, since 0.5.0: an added
 line is renamed by the table first, and only what the table leaves of an
 original line is learned (`learnedRenames`' optional `table`), so a text
 rule's words never rename a contributor's own; `reverseSubmission` refuses an
