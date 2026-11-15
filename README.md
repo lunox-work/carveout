@@ -8,6 +8,8 @@ Hand one part of a closed TypeScript repository to an outside contractor as a sl
 
 - **carveout**: Hand one part of a closed TypeScript repository to an outside contractor, contributor or untrusted agent, and take the work back, without showing them the rest. A slice is the files a change needs, at their repository paths, with every module it imports from the rest replaced by a .d.ts stub and a recording mock, so the folder installs, builds and tests on its own; a public one is written in pseudonyms. `handoff` cuts, checks and says whether the folder is ready, with a TASK.md of the work and when it is accepted; the work comes back as a patch that runs none of their code and holds CI, manifest and lockfile edits, tests bent to pass and new reach; `widen` and `refresh` keep a long job going. Use when someone wants to hand one part of a closed repository to someone outside it, cannot build the whole monorepo to change one part, wants to know what a file depends on and what depends on it, or wants a minimal reproduction of one module.
 
+- **lunox-contribute**: Work on a task you were invited to on the Lunox platform as an outside contributor: fetch the version's public project, implement it within its editable paths, preview and submit the changed files, and read the verdict from hidden tests you never see. Use when someone has a Lunox contribution or claim link, mentions lnxc_ tokens or the /mcp/contribute server, or asks to submit work to a Lunox sandbox they do not own.
+
 ## Install
 
 ```sh
@@ -17,9 +19,11 @@ claude plugin install carveout@carveout
 
 ## Requirements
 
-- **carveout-gate**: Node 22.12 or later, git and npm. Runs the carveout@0.4.1 CLI from npm.
+- **carveout-gate**: Node 22.12 or later, git and npm. Runs the carveout@0.5.0 CLI from npm.
 
-- **carveout**: Node 22.12 or later, git and npm; Docker to run a returned folder's code. Runs the carveout@0.4.1 CLI from npm; online cuts read the npm registry.
+- **carveout**: Node 22.12 or later, git and npm; Docker to run a returned folder's code. Runs the carveout@0.5.0 CLI from npm; online cuts read the npm registry.
+
+- **lunox-contribute**: Needs the Lunox contributor MCP server (https://platform.lunox.work/mcp/contribute) signed in as a contributor, or an lnxc_ contributor token for HTTP clients, and Node to run the project.
 
 ## Hosted mode
 
@@ -45,20 +49,32 @@ same URL as a remote HTTP server.
   `handoff --platform` uploads the hand-off folder (public, in pseudonyms: the
   files a contractor would get) and the `--accept` tests renamed into the
   folder's names; never the receipt, its table, or source outside the slice.
-  `patch --from` downloads a passing submission's changed files. What was
-  uploaded is recorded in `~/.carveout/platform/` on the same machine.
+  `patch --from` downloads a passing submission's changed files and reads the
+  version's handout (its public file list and the hidden suite's hash). What
+  was uploaded is recorded in `~/.carveout/platform/` on the same machine,
+  with the hash of the acceptance tests as uploaded.
 - **The bundled `lunox` MCP server:** in Claude Code it talks to
   platform.lunox.work only once the person signs in to it through `/mcp`.
   Its read tools (`list_*`, `get_*`) read the account and the workspace, with
   its bounties, repositories, sandboxes and runs. Its write tools run only
-  when the person asks for that action: a bounty posted or imported from a
-  GitHub issue (its title and text), a slice planned and cut from a
-  repository already connected to the workspace, a sandbox version built,
-  and a contractor's patch submitted for a verdict. `size_bounty`, `prepare`
-  and `retry` start model runs on the platform that count against the
-  workspace's monthly token limit. Approvals, publishing and merging happen
-  in the platform's web app, not through the plugin. The platform's privacy
-  policy is at https://platform.lunox.work/privacy.
+  when the person asks for that action: a bounty posted (its title and text)
+  or imported from a GitHub or Jira issue, a slice planned and cut from a
+  repository already connected to the workspace, a sandbox version built, a
+  contractor's changed files submitted for a verdict or graded again, a
+  contributor invited to a published version, and a passing submission's
+  files taken back. `upload_handoff` sends nothing: it answers the
+  `carveout login` and `carveout handoff --platform` commands, which upload
+  from the person's machine as above. `size_bounty`, `prepare` and `retry`
+  start model runs on the platform that count against the workspace's monthly
+  token limit. Confirming decisions, approving a price, acknowledging
+  disclosure findings, publishing and merging back happen in the platform's
+  web app, not through the plugin. The platform's privacy policy is at
+  https://platform.lunox.work/privacy.
+- **The `lunox-contribute` skill:** for a person invited to contribute, it
+  talks to platform.lunox.work only through the contributor MCP server they
+  add and sign in to themselves (`/mcp/contribute`), or their own `lnxc_`
+  token: it reads the version they were invited to and submits the files they
+  changed for a verdict.
 - **Personal data:** a public cut reads the repository's Git `user.name` and
   `user.email`, with its package, owner and remote names, to replace them with
   pseudonyms. The table that maps them back is kept in the maintainer's
