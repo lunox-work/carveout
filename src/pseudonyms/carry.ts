@@ -12,12 +12,24 @@
  *
  * - A line the change kept is the other side's line at the same place,
  *   byte for byte. A change that touches nothing carries to the original.
- * - A line the change added is renamed token by token, first by what the
- *   two originals' differing lines show the build renamed in this file
- *   (an import specifier, a package, an environment variable), then by the
- *   name table. It is refused unless renaming it back gives it again, so
- *   new text holding a name the side it was written on never shows (the
- *   repository's own names, in a contribution) cannot pass through.
+ * - A line the change added is renamed by the name table, then token by
+ *   token by what the two originals' differing lines show the build renamed
+ *   in this file beyond the table (an import specifier, a package, an
+ *   environment variable). It is refused unless renaming it back gives it
+ *   again, so new text holding a name the side it was written on never
+ *   shows (the repository's own names, in a contribution) cannot pass
+ *   through.
+ * - Only what the table leaves of an original line is learned. A text rule
+ *   renames several tokens at once (`wiki.orvanta.internal` to
+ *   `wiki.example.com`, `Orvanta Payments` to `Northwind Shop`); learned
+ *   word by word, its pairs (`example` to `orvanta`, `Shop` to `Payments`)
+ *   would rename a contributor's own `example` or `Shop` anywhere in the
+ *   file, and the round trip above would not notice. The table carries
+ *   such a rule whole instead, and only where all of it appears.
+ * - On the reverse path, an added line left holding a public name the
+ *   table renames back only in other files (a scoped rule, in a file
+ *   outside its scope, a new file included) is refused rather than landed
+ *   half renamed, unless the repository's own file already holds the name.
  * - A line the change added that imports the sandbox's harness (a mock, a
  *   stub), which the repository does not have, is refused.
  *
@@ -76,7 +88,20 @@ export interface Renaming {
   readonly back: (text: string, file: CarriedFile) => string;
   /** Whether a path, resolved on the side the change was made, is harness. */
   readonly isHarness?: (path: string) => boolean;
+  /**
+   * Why an added line, renamed, cannot land as it is (a name left in it the
+   * table renames only elsewhere); null when it can.
+   */
+  readonly stranded?: (renamed: string, file: CarriedFile) => string | null;
 }
+
+/**
+ * The reverse path's refusal of an added line left holding a public name
+ * the table renames back only in other files (`Renaming.stranded`). Fixed,
+ * so a caller can tell the table's limit from the contributor's doing.
+ */
+export const STRANDED_NAME_REASON =
+  "An added line uses a public name the table renames back only in other files, so it cannot be named back in this one.";
 
 /** More than this many lines changed in one file, and added lines are not matched to kept ones. */
 const MATCH_CELLS = 4_000_000;
@@ -133,19 +158,26 @@ export function tokensOf(line: string): string[] {
 }
 
 /**
- * What the two sides' originals show was renamed in this file: each token
- * that differs where the lines otherwise line up, from one side to the
- * other. A token renamed two ways is listed as ambiguous.
+ * What the two sides' originals show was renamed in this file beyond the
+ * name table: each token that differs where the lines otherwise line up,
+ * from a `from` line as `table` renames it to the `to` line. A token renamed
+ * two ways is listed as ambiguous. The keys are in `table`'s output, so the
+ * renames apply after it. Without `table`, every differing token is learned.
  */
 export function learnedRenames(
   from: readonly string[],
   to: readonly string[],
+  table: (line: string) => string = (line) => line,
 ): { renames: Map<string, string>; ambiguous: Set<string> } {
   const renames = new Map<string, string>();
   const ambiguous = new Set<string>();
-  from.forEach((line, index) => {
+  from.forEach((original, index) => {
     const other = to[index];
-    if (other === undefined || other === line) return;
+    if (other === undefined || other === original) return;
+    // What the table explains is not learned: a text rule's words, paired
+    // one by one, would rename a contributor's own words that equal them.
+    const line = table(original);
+    if (line === other) return;
     const a = tokensOf(line);
     const b = tokensOf(other);
     if (a.length !== b.length) return;
@@ -250,7 +282,9 @@ export function carryChange(
       );
       continue;
     }
-    const { renames, ambiguous } = learnedRenames(from, to);
+    const { renames, ambiguous } = learnedRenames(from, to, (line) =>
+      renaming.to(line, file),
+    );
     const back = new Map([...renames].map(([a, b]) => [b, a]));
     const edited = linesOf(file.edited);
     const kept = keptLines(from, edited);
@@ -262,24 +296,31 @@ export function carryChange(
         out.push(to[keptAt] as string);
         return;
       }
-      const tokens = tokensOf(line);
+      const tokens = tokensOf(renaming.to(line, file));
       if (tokens.some((token) => ambiguous.has(token))) {
         problems.add(
           "An added line uses a name the build renamed two ways in this file.",
         );
         return;
       }
-      const renamed = renaming.to(
-        tokens.map((token) => renames.get(token) ?? token).join(""),
+      const renamed = tokens
+        .map((token) => renames.get(token) ?? token)
+        .join("");
+      const again = renaming.back(
+        tokensOf(renamed)
+          .map((token) => back.get(token) ?? token)
+          .join(""),
         file,
       );
-      const again = tokensOf(renaming.back(renamed, file))
-        .map((token) => back.get(token) ?? token)
-        .join("");
       if (again !== line) {
         problems.add(
           "An added line holds a name the other side would read differently, so it does not map back.",
         );
+        return;
+      }
+      const stranded = renaming.stranded?.(renamed, file) ?? null;
+      if (stranded !== null) {
+        problems.add(stranded);
         return;
       }
       if (renaming.isHarness !== undefined)
@@ -357,6 +398,23 @@ export function reverseSubmission(input: ReverseInput): CarriedChange {
     back: (text, file) =>
       renameFile({ path: file.toPath, text }, input.rules).text,
     isHarness: (path) => harness.has(stem(path)),
+    stranded: (renamed, file) => {
+      for (const rule of inverse) {
+        // Every kind of rule matches only where its name appears whole.
+        if (!renamed.includes(rule.before)) continue;
+        const holds = (text: string) =>
+          renameFile({ path: file.toPath, text }, [{ ...rule, paths: [] }])
+            .text !== text;
+        if (!holds(renamed)) continue;
+        // In scope here, the table already had its chance at the name.
+        const here = renameFile({ path: file.toPath, text: renamed }, [rule]);
+        if (here.text !== renamed) continue;
+        // The repository's own file holds the name: it is that file's word.
+        if (file.toOriginal !== null && holds(file.toOriginal)) continue;
+        return STRANDED_NAME_REASON;
+      }
+      return null;
+    },
   });
 }
 

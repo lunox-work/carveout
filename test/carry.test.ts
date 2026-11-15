@@ -19,6 +19,7 @@ import {
   projectPathOf,
   resolveRelative,
   reverseSubmission,
+  STRANDED_NAME_REASON,
   tokensOf,
   type AliasRule,
 } from "../src/pseudonyms.js";
@@ -285,4 +286,210 @@ test("a version built with the old renaming carries back under it (ALIASES_V1), 
   // Where a repository file lands in the version, by the renaming it was built with.
   assert.equal(projectPathOf("packages/lunox-money/src/index.ts", [], pathRules), "packages/shop-money/src/index.ts");
   assert.equal(projectPathOf("packages/lunox-money/src/index.ts", [], pathRules, ALIASES_V1), "packages/shop-money/src/index.ts");
+});
+
+/**
+ * A repository, its version under `table` (no build transforms beyond the
+ * table), and a submission's reverse: for the text-rule and scope cases.
+ */
+function carryBack(
+  table: AliasRule[],
+  files: Record<string, string>,
+  submitted: Record<string, string>,
+) {
+  const aliased = applyAliases(
+    Object.entries(files).map(([path, text]) => ({ path, text })),
+    table,
+  );
+  assert.equal(aliased.ok, true, JSON.stringify(aliased.problems));
+  const version = new Map(aliased.files.map((file) => [file.path, file.text]));
+  const byPublic = new Map(aliased.renames.map(({ from, to }) => [to, from]));
+  return reverseSubmission({
+    submitted: Object.entries(submitted).map(([path, text]) => ({ path, text })),
+    publicText: (path) => version.get(path) ?? null,
+    repositoryText: (path) => files[byPublic.get(path) ?? path] ?? null,
+    rules: table,
+    renames: aliased.renames,
+    harness: [],
+  });
+}
+
+const added = (text: string, after: string, line: string) => {
+  assert.ok(text.includes(after));
+  return text.replace(after, `${after}${line}`);
+};
+
+test("a host rule carries whole: a contributor's own `example` or `com` is not renamed into the host's words", () => {
+  const table: AliasRule[] = [
+    { before: "wiki.orvanta.internal", after: "wiki.example.com", kind: "text", paths: [] },
+  ];
+  const repo = "// Docs live at wiki.orvanta.internal for the team.\nexport const answer = 42;\n";
+  const version = "// Docs live at wiki.example.com for the team.\nexport const answer = 42;\n";
+  // What a word-by-word reading of the originals would learn, and does not.
+  assert.equal(learnedRenames(linesOf(version), linesOf(repo)).renames.get("example"), "orvanta");
+  assert.deepEqual(
+    learnedRenames(linesOf(version), linesOf(repo), (line) => line.replace("wiki.example.com", "wiki.orvanta.internal")),
+    { renames: new Map(), ambiguous: new Set() },
+  );
+  const back = carryBack(
+    table,
+    { "src/docs.ts": repo },
+    {
+      "src/docs.ts": added(
+        version,
+        "export const answer = 42;\n",
+        "export const example = 'wiki';\n// com is a word too.\nexport const home = `https://wiki.example.com/home`;\n",
+      ),
+    },
+  );
+  // The line alone: it once came back as `export const orvanta = 'wiki';`.
+  assert.deepEqual(
+    carryBack(table, { "src/docs.ts": repo }, {
+      "src/docs.ts": added(version, "export const answer = 42;\n", "export const example = 'wiki';\n"),
+    }),
+    {
+      files: [{ path: "src/docs.ts", text: added(repo, "export const answer = 42;\n", "export const example = 'wiki';\n") }],
+      refused: [],
+    },
+  );
+  assert.deepEqual(back.refused, []);
+  assert.deepEqual(back.files, [
+    {
+      path: "src/docs.ts",
+      text: added(
+        repo,
+        "export const answer = 42;\n",
+        "export const example = 'wiki';\n// com is a word too.\nexport const home = `https://wiki.orvanta.internal/home`;\n",
+      ),
+    },
+  ]);
+});
+
+test("an email rule carries whole: `org` and `example` written by the contributor stay theirs", () => {
+  const table: AliasRule[] = [
+    { before: "ops@orvanta.io", after: "ops@example.org", kind: "text", paths: [] },
+  ];
+  const repo = "// Mail ops@orvanta.io when it breaks.\nexport const retries = 3;\n";
+  const version = "// Mail ops@example.org when it breaks.\nexport const retries = 3;\n";
+  const back = carryBack(
+    table,
+    { "src/ops.ts": repo },
+    {
+      "src/ops.ts": added(version, "export const retries = 3;\n", "export const org = { example: 1, io: 2 };\n// Or ops@example.org.\n"),
+    },
+  );
+  assert.deepEqual(back.refused, []);
+  assert.equal(
+    back.files[0]?.text,
+    added(repo, "export const retries = 3;\n", "export const org = { example: 1, io: 2 };\n// Or ops@orvanta.io.\n"),
+  );
+});
+
+test("a multi-word brand carries whole, and names derived from a text rule inside longer identifiers still carry back", () => {
+  const table: AliasRule[] = [
+    { before: "OrvantaPaymentsClient", after: "NorthwindShopClient", kind: "identifier", paths: [] },
+    { before: "Orvanta Payments", after: "Northwind Shop", kind: "text", paths: [] },
+    { before: "Kestrel", after: "Heron", kind: "text", paths: [] },
+  ];
+  const repo = [
+    "// Orvanta Payments settles every order.",
+    "export class OrvantaPaymentsClient {}",
+    "export class KestrelLedger {}",
+    "",
+  ].join("\n");
+  const back = carryBack(
+    table,
+    { "src/pay.ts": repo },
+    {
+      "src/pay.ts": [
+        "// Northwind Shop settles every order.",
+        "export class NorthwindShopClient {}",
+        "export class HeronLedger {}",
+        "export const Shop = 'cart';",
+        "export const Payments = Shop;",
+        "// Northwind Shop refunds too.",
+        "export const client = new NorthwindShopClient();",
+        "export class HeronLedgerFactory extends HeronLedger {}",
+        "",
+      ].join("\n"),
+    },
+  );
+  assert.deepEqual(back.refused, []);
+  assert.equal(
+    back.files[0]?.text,
+    [
+      "// Orvanta Payments settles every order.",
+      "export class OrvantaPaymentsClient {}",
+      "export class KestrelLedger {}",
+      "export const Shop = 'cart';",
+      "export const Payments = Shop;",
+      "// Orvanta Payments refunds too.",
+      "export const client = new OrvantaPaymentsClient();",
+      "export class KestrelLedgerFactory extends KestrelLedger {}",
+      "",
+    ].join("\n"),
+  );
+});
+
+test("a brand's single word, added alone, stays the contributor's", () => {
+  const table: AliasRule[] = [
+    { before: "Orvanta Payments", after: "Northwind Shop", kind: "text", paths: [] },
+  ];
+  const repo = "// Orvanta Payments settles every order.\n";
+  // It once came back as `export const Payments = 'cart';`.
+  assert.deepEqual(
+    carryBack(table, { "src/pay.ts": repo }, {
+      "src/pay.ts": "// Northwind Shop settles every order.\nexport const Shop = 'cart';\n",
+    }),
+    {
+      files: [{ path: "src/pay.ts", text: `${repo}export const Shop = 'cart';\n` }],
+      refused: [],
+    },
+  );
+});
+
+test("a scoped rule's public name, added outside its scope, is refused, not landed half renamed", () => {
+  const table: AliasRule[] = [
+    { before: "Client", after: "AcmeClient", kind: "identifier", paths: ["packages/a"] },
+  ];
+  const files = {
+    "packages/a/client.ts": "export class Client {}\n",
+    "packages/b/use.ts": "export const b = 1;\n",
+    "packages/c/natural.ts": "export const AcmeClient = 'theirs';\n",
+  };
+  // Inside the scope, a new file carries back.
+  const inside = carryBack(table, files, {
+    "packages/a/extra.ts": 'import { AcmeClient } from "./client";\nexport const c = new AcmeClient();\n',
+  });
+  assert.deepEqual(inside, {
+    files: [{ path: "packages/a/extra.ts", text: 'import { Client } from "./client";\nexport const c = new Client();\n' }],
+    refused: [],
+  });
+  // Outside it, a new file, or a line added to a file, is refused.
+  const fresh = carryBack(table, files, {
+    "packages/b/extra.ts": 'import { AcmeClient } from "../a/client";\n',
+  });
+  assert.deepEqual(fresh.files, []);
+  assert.equal(fresh.refused[0]?.path, "packages/b/extra.ts");
+  assert.deepEqual(fresh.refused, [{ path: "packages/b/extra.ts", reason: STRANDED_NAME_REASON }]);
+  const edited = carryBack(table, files, {
+    "packages/b/use.ts": "export const b = 1;\nexport type Kind = AcmeClient;\n",
+  });
+  assert.deepEqual(edited.files, []);
+  assert.deepEqual(edited.refused, [{ path: "packages/b/use.ts", reason: STRANDED_NAME_REASON }]);
+  // A file whose repository copy holds the name as its own word keeps it.
+  assert.deepEqual(
+    carryBack(table, files, {
+      "packages/c/natural.ts": "export const AcmeClient = 'theirs';\nexport const again = AcmeClient;\n",
+    }),
+    {
+      files: [
+        {
+          path: "packages/c/natural.ts",
+          text: "export const AcmeClient = 'theirs';\nexport const again = AcmeClient;\n",
+        },
+      ],
+      refused: [],
+    },
+  );
 });

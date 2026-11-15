@@ -523,7 +523,8 @@ Two more entries, same version:
   `invertAliasRules`, `renameFile`, `validateAliasRules`), the vocabulary
   (`scanVocabulary`, `workspaceVocabulary`, `vocabularyLeaks`, …), the draft
   (`draftPseudonyms`), carry-back (`carryChange`, `reverseSubmission`,
-  `forwardChange`, `projectPathOf`), `MOCK_RUNTIME`, `MOCK_RUNTIME_TYPES`, and
+  `forwardChange`, `projectPathOf`, `STRANDED_NAME_REASON`), `MOCK_RUNTIME`,
+  `MOCK_RUNTIME_TYPES`, and
   the platform's renaming before 0.3.0, frozen: `applyAliasesV1`,
   `renameFileV1`, `invertAliasRulesV1`, `validateAliasRulesV1`, `ALIASES_V1`
   (for carry-back), `workspaceVocabularyV1`, `termMatchesV1`,

@@ -7,10 +7,16 @@ pseudonyms (`src/pseudonyms`: aliases, vocabulary, draft) are carved out of
 `apps/worker/src/tools/slice`. The import graph (`src/graph.ts`) replaces the
 graphify driver there with the TypeScript compiler alone.
 
-`src/pseudonyms/carry.ts` is the platform's `packages/core/src/sandbox/carry.ts`
-(commit f31d780), moved here verbatim but for a pluggable renaming
-(`aliases`). `src/pseudonyms/legacy/` holds that commit's `aliases.ts` and
-`vocabulary.ts` frozen, exported with a `V1` suffix (`legacy.ts`).
+`src/pseudonyms/carry.ts` is the platform's
+`packages/core/src/sandbox/carry.ts` (commit f31d780), moved here verbatim but
+for a pluggable renaming (`aliases`), and, after 0.4.1 (unreleased): an added
+line is renamed by the table first, and only what the table leaves of an
+original line is learned (`learnedRenames`' optional `table`), so a text
+rule's words never rename a contributor's own; `reverseSubmission` refuses an
+added line left holding a public name the table renames back only in other
+files (`Renaming.stranded`, `STRANDED_NAME_REASON`). `src/pseudonyms/legacy/`
+holds that commit's `aliases.ts` and `vocabulary.ts` frozen, exported with a
+`V1` suffix (`legacy.ts`).
 
 ## Where the forks differ from the platform
 
