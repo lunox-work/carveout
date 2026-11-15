@@ -486,6 +486,11 @@ await analyse({ ...walk, commitSha, packageTypes?, widenLiterals? = true,
 importGraph(root, { copyPure?, files? })   // → SliceGraph, for many analyse({ graph })
 folderLayout(record)                        // → FolderLayout: harness, mocks, config, commands, tests
 layoutTestArgv(layout, path, runner?)       // → one test alone, TAP on stdout
+generateProject({ origin, manifest, contract, sources, stubs, dependencies,
+  knownSpecifiers, …, hooks? })
+// → { files, importRewrites, tests, blockers }: the folder `cut` writes, pure.
+//   hooks: { sourceMaps?, mockDefaults?: [{ module, path, implementation }],
+//   walkthrough?, packageVersion?, packageManager? }; none, byte for byte as before.
 ```
 
 `analyse` is what `cut` writes the folder from, on the same code path and

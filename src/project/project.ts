@@ -324,6 +324,41 @@ export interface ProjectInput {
   readonly liveEnvironment?: readonly string[];
   /** The public surface's declarations and type check, `carveout/surface/`. */
   readonly surface?: readonly { path: string; text: string }[];
+  /**
+   * Hooks for a platform that hands the folder out under its own terms
+   * (`ProjectHooks`). Absent, the folder is byte for byte what carveout
+   * writes.
+   */
+  readonly hooks?: ProjectHooks;
+}
+
+/**
+ * What a platform that builds on `generateProject` (Lunox's sandbox build,
+ * through `carveout/api`) changes in the folder, each optional:
+ *
+ * - `sourceMaps`: the build emits source maps beside its output, so a
+ *   stack or a debugger maps to the `.ts`; `.gitignore` keeps them out.
+ *   `patch` already reads a `.map` beside its source as build output.
+ * - `mockDefaults`: default behaviour for mocked calls, written into the
+ *   runtime of the cut module each names (its repository path) as
+ *   `fixture(path, implementation)` after the module's mock is made, in
+ *   `path` order; a test's `mockImplementation` still overrides it.
+ * - `walkthrough`: the text of `carveout/run.ts`, which `npm run dev`
+ *   runs, in place of the generated one that loads each entry point.
+ * - `packageVersion`, `packageManager`: the folder's `package.json`
+ *   `version` (else `0.0.0`) and its `packageManager` pin (else none),
+ *   written after `engines`.
+ */
+export interface ProjectHooks {
+  readonly sourceMaps?: boolean;
+  readonly mockDefaults?: readonly {
+    readonly module: string;
+    readonly path: string;
+    readonly implementation: string;
+  }[];
+  readonly walkthrough?: string;
+  readonly packageVersion?: string;
+  readonly packageManager?: string;
 }
 
 /**
@@ -583,12 +618,17 @@ function mockRuntimeFor(
   symbols: readonly BoundarySymbol[],
   blockers: ProjectBlocker[],
   stubText = "",
+  /** Default behaviour for some calls (`ProjectHooks.mockDefaults`). */
+  defaults: readonly { readonly path: string; readonly implementation: string }[] = [],
 ): string {
   const lines = [
     `// Generated runtime for the declarations in ${declarationPath(modulePath).split("/").pop() ?? ""}.`,
     `// Every value is a recording mock; see ${MOCK_RUNTIME_PATH} and the README.`,
-    `import { createMock } from "${relativeSpecifier(modulePath, MOCK_RUNTIME_PATH)}";`,
+    `import { ${defaults.length === 0 ? "createMock" : "createMock, fixture"} } from "${relativeSpecifier(modulePath, MOCK_RUNTIME_PATH)}";`,
     `const mock = createMock(${JSON.stringify(`module:${modulePath}`)});`,
+    ...[...defaults]
+      .sort((a, b) => compare(a.path, b.path))
+      .map((item) => `fixture(${JSON.stringify(item.path)}, ${item.implementation.trim()});`),
   ];
   let exported = 0;
   for (const symbol of [...symbols].sort((a, b) => compare(a.name, b.name))) {
@@ -824,6 +864,8 @@ const SAFE_COMPILER_KEYS: readonly string[] = [
  */
 export function projectCompilerOptions(
   options: Readonly<Record<string, unknown>> | undefined,
+  /** Emit source maps (`ProjectHooks.sourceMaps`). */
+  sourceMap = false,
 ): Record<string, unknown> {
   const carried: Record<string, unknown> = {};
   for (const key of SAFE_COMPILER_KEYS)
@@ -838,7 +880,7 @@ export function projectCompilerOptions(
     moduleResolution: bundler ? "Bundler" : "NodeNext",
     rootDir: ".",
     declaration: false,
-    sourceMap: false,
+    sourceMap,
     // A build that waives the stubs' implicit anys (`buildScript`) still
     // emits: those are errors tsc reports, and the folder's tests need the
     // JavaScript.
@@ -856,11 +898,13 @@ export function tsconfigFor(
   excluded: readonly string[] = [],
   /** Module names TypeScript finds by path: the folder's virtual modules. */
   paths: Readonly<Record<string, readonly string[]>> = {},
+  /** Emit source maps (`ProjectHooks.sourceMaps`). */
+  sourceMap = false,
 ) {
   return `${JSON.stringify(
     {
       compilerOptions: {
-        ...projectCompilerOptions(options),
+        ...projectCompilerOptions(options, sourceMap),
         types: [...types],
         ...(Object.keys(paths).length === 0 ? {} : { paths }),
       },
@@ -1605,6 +1649,7 @@ function readme(input: {
  */
 export function generateProject(input: ProjectInput): GeneratedProject {
   const toolchain = input.toolchain ?? SANDBOX_TOOLCHAIN;
+  const hooks = input.hooks ?? {};
   const blockers: ProjectBlocker[] = [];
   const rewrites: ImportRewrite[] = [];
   const files = new Map<string, GeneratedFile>();
@@ -1712,6 +1757,7 @@ export function generateProject(input: ProjectInput): GeneratedProject {
         module.symbols,
         blockers,
         stub.text,
+        hooks.mockDefaults?.filter((item) => item.module === module.module),
       ),
       class: "mock",
       public: true,
@@ -1876,7 +1922,7 @@ export function generateProject(input: ProjectInput): GeneratedProject {
     .sort(compare);
   add({
     path: RUN_PATH,
-    text: runScript(entries),
+    text: hooks.walkthrough ?? runScript(entries),
     class: "harness",
     public: true,
   });
@@ -1958,10 +2004,11 @@ export function generateProject(input: ProjectInput): GeneratedProject {
     text: `${JSON.stringify(
       {
         name: input.origin.name,
-        version: "0.0.0",
+        version: hooks.packageVersion ?? "0.0.0",
         private: true,
         type: "module",
         engines: { node: toolchain.nodeRange },
+        ...(hooks.packageManager === undefined ? {} : { packageManager: hooks.packageManager }),
         scripts,
         dependencies,
         devDependencies: { typescript: toolchain.typescript },
@@ -1988,6 +2035,7 @@ export function generateProject(input: ProjectInput): GeneratedProject {
           [`${name}/*`, [`./${dir}/index.d.ts`]],
         ]),
       ),
+      hooks.sourceMaps === true,
     ),
     class: "config",
     public: true,
@@ -2050,7 +2098,7 @@ export function generateProject(input: ProjectInput): GeneratedProject {
     path: ".gitignore",
     // The build's output for any source, a new one's too, and the test
     // run's record: none of it goes back.
-    text: `${["node_modules/", "*.js", "*.cjs", "*.mjs", "!carveout/**/*.js", "!vitest.config.mjs", ...kept, "*.tsbuildinfo", LAST_RUN_PATH, COUNTS_PATH, VITEST_REPORT_PATH, ".npm-cache/", ...emitted].join("\n")}\n`,
+    text: `${["node_modules/", "*.js", "*.cjs", "*.mjs", "!carveout/**/*.js", "!vitest.config.mjs", ...kept, "*.tsbuildinfo", LAST_RUN_PATH, COUNTS_PATH, VITEST_REPORT_PATH, ".npm-cache/", ...emitted, ...(hooks.sourceMaps === true ? ["*.map"] : [])].join("\n")}\n`,
     class: "config",
     public: true,
   });
