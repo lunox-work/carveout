@@ -1,0 +1,5 @@
+{"timestamp":"2026-11-01T10:00:00.000Z","type":"session_meta","payload":{"id":"0199bbbb-0000-7000-8000-000000000002","timestamp":"2026-11-01T10:00:00.000Z","cwd":"__ROOT__"}}
+{"timestamp":"2026-11-01T10:01:00.000Z","type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"command\": [\"bash\", \"-lc\", \"head -n 3 docs/notes.md\"], \"workdir\": \"__ROOT__\"}","call_id":"a1"}}
+{"timestamp":"2026-11-01T10:02:00.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"a1","output":"{\"output\": \"note line 1 about pricing\\nnote line 2 about pricing\\nnote line 3 about pricing\", \"metadata\": {\"exit_code\": 0}}"}}
+{"timestamp":"2026-11-01T10:03:00.000Z","type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":"*** Begin Patch\n*** Update File: src/util/format.ts\n@@\n export const fmt6 = \"6\";\n-export const fmt7 = \"7\";\n+export const fmt7 = \"7\";\n export const fmt8 = \"8\";\n*** End Patch\n","call_id":"a2"}}
+{"timestamp":"2026-11-01T10:04:00.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"a2","output":"Done!"}}
