@@ -92,6 +92,7 @@ test("shell reads: sed, head, tail, awk, cat, pipelines, grep, and only what a c
     // An output the tool cut short counts only the lines it held.
     const truncated = `<persisted-output>\nPreview (first 2KB):\n${quote(1)}\n${quote(2)}\n${quote(3)}\n...\n</persisted-output>`;
     assert.deepEqual(read("cat src/billing/quote.ts", truncated), [["src/billing/quote.ts", "1-3"]]);
+    assert.deepEqual(read("cat src/billing/quote.ts | head -40", truncated), [["src/billing/quote.ts", "1-3"]]);
     assert.deepEqual(read("cat /etc/hosts ../outside.ts"), []);
     assert.deepEqual(matchOutput(["alpha one", "}", "beta two", "alpha one"], "alpha one\n}\nbeta two"), [[1, 3]]);
   } finally {

@@ -380,7 +380,7 @@ $("rscrub").addEventListener("input", function (e) { stopReplay(); seekReplay(Nu
 var sliceable = sessions.filter(function (s) { return s.slice; });
 function drawSlice() {
   for (var i = 0; i < N; i++) {
-    if (sliceSel.copied.has(i)) outline(i, C.text, L.W[i] > 6 ? 1.5 : 1);
+    if (sliceSel.copied.has(i)) { ctx.fillStyle = "rgba(250,250,250,0.16)"; ctx.fillRect(L.X[i], L.Y[i], L.W[i], L.H[i]); outline(i, C.text, L.W[i] > 6 ? 1.5 : 1); }
     else if (sliceSel.stub.has(i)) outline(i, C.stub, 1, [3, 2]);
   }
 }

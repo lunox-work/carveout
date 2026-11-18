@@ -275,7 +275,9 @@ function callEvents(
       if (command === null) return [];
       const stdout = asString(result?.["stdout"]);
       const stderr = asString(result?.["stderr"]) ?? "";
-      const output = stdout === null ? text : `${stdout}\n${stderr}`;
+      // When the model was shown a preview of a long output (set aside in a
+      // file), the preview is what it saw, whatever stdout kept.
+      const output = stdout === null || /<persisted-output>|Output too large/.test(text) ? text : `${stdout}\n${stderr}`;
       return shellReads(command, call.cwd, output, ctx).map((read) => ({
         at,
         path: read.path,

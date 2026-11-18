@@ -529,8 +529,8 @@ export function shellReads(command: string, cwd: string | null, output: string |
             : candidate.ranges;
       ranges = unionRanges(ranges, total);
       if (cap !== null) ranges = cap(ranges, total);
-      else if (filtered || truncated) {
-        // Only what came back counts.
+      if ((filtered && cap === null) || truncated) {
+        // Only what came back counts: a filter's lines, or a cut-short output's.
         if (output === null) continue;
         ranges = matchOutput(lines, output, ranges);
       }
