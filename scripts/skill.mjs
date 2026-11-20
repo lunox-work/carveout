@@ -189,9 +189,10 @@ function pack(offline) {
 
 const PLUGIN_BRANCH = "claude-plugin";
 const PLUGIN_FILES = [".claude-plugin/icon.png", ".mcp.json", "LICENSE", "skills"];
-// plugin.json fields only the directory's listing reads. Claude Code warns on
-// them as unknown keys, so the branch's plugin.json drops them and its README
-// carries them as links, which the directory also reads.
+// plugin.json fields the directory's listing reads. Claude Code accepts them
+// (2.1.329's `claude plugin validate` checks only that each is https:// or
+// mailto:), so the branch's plugin.json keeps them, and its README repeats
+// them as links for readers.
 const LISTING_LINKS = { privacyPolicyUrl: "Privacy", documentationUrl: "Documentation", supportUrl: "Support" };
 
 function git(args, env = {}) {
@@ -223,10 +224,11 @@ function pluginReadme() {
     lines.push(`Without the plugin: \`claude mcp add --transport http lunox ${hosted}\`; other MCP clients take the`);
     lines.push("same URL as a remote HTTP server.", "");
   }
-  const data = spawnSync("git", ["show", "HEAD:.claude-plugin/data.md"], { cwd: ROOT, encoding: "utf8" });
-  if (data.status === 0) lines.push("## Data", "", data.stdout.trim(), "");
+  // Links before Data: the directory takes the first privacy link in the README as the plugin's policy.
   const links = Object.entries(LISTING_LINKS).filter(([key]) => plugin[key]);
   if (links.length > 0) lines.push("## Links", "", ...links.map(([key, label]) => `- [${label}](${plugin[key]})`), "");
+  const data = spawnSync("git", ["show", "HEAD:.claude-plugin/data.md"], { cwd: ROOT, encoding: "utf8" });
+  if (data.status === 0) lines.push("## Data", "", data.stdout.trim(), "");
   lines.push("## Source", "", `This branch holds only the plugin's files. The CLI, its documentation and the`);
   lines.push(`skills' source are on the main branch of ${plugin.repository}. License: ${plugin.license}.`, "");
   return lines.join("\n");
@@ -244,7 +246,6 @@ function pluginBranch(push) {
       else git(["update-index", "--add", "--cacheinfo", `${mode},${object},${path}`], env);
     }
     const manifest = JSON.parse(git(["show", "HEAD:.claude-plugin/plugin.json"]));
-    for (const key of Object.keys(LISTING_LINKS)) delete manifest[key];
     const json = spawnSync("git", ["hash-object", "-w", "--stdin"], { cwd: ROOT, input: `${JSON.stringify(manifest, null, 2)}\n`, encoding: "utf8" });
     if (json.status !== 0) return [`git hash-object: ${json.stderr.trim()}`];
     git(["update-index", "--add", "--cacheinfo", `100644,${json.stdout.trim()},.claude-plugin/plugin.json`], env);

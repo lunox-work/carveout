@@ -6,7 +6,7 @@
   unchanged and local. `carveout login` signs in to Lunox's hosted service at
   platform.lunox.work with a code approved in the browser, and stores a
   workspace API token in `~/.lunox/credentials` on the same machine (mode 600,
-  shared with duediligence); `logout` deletes it. `login`, `whoami`,
+  shared with bouncer); `logout` deletes it. `login`, `whoami`,
   `logout`, `handoff --platform` and `patch --from` are the only commands that
   talk to the platform. The CLI sends the token, its name and version, and,
   once at sign-in, the machine's host name to label the token.
@@ -32,8 +32,9 @@
   start model runs on the platform that count against the workspace's monthly
   token limit. Confirming decisions, approving a price, acknowledging
   disclosure findings, publishing and merging back happen in the platform's
-  web app, not through the plugin. The platform's privacy policy is at
-  https://platform.lunox.work/privacy.
+  web app, not through the plugin. The platform's privacy policy, which also
+  covers this plugin and the MCP server, is at
+  https://lunox.work/privacy/platform.
 - **The `lunox-contribute` skill:** for a person invited to contribute, it
   talks to platform.lunox.work only through the contributor MCP server they
   add and sign in to themselves (`/mcp/contribute`), or their own `lnxc_`
