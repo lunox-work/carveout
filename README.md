@@ -32,6 +32,12 @@ Claude Code signs in to it on first use (`/mcp`); signed out, the skills run loc
 Without the plugin: `claude mcp add --transport http lunox https://platform.lunox.work/mcp/carveout`; other MCP clients take the
 same URL as a remote HTTP server.
 
+## Links
+
+- [Privacy](https://lunox.work/privacy/platform)
+- [Documentation](https://github.com/lunox-work/carveout/blob/main/docs/REFERENCE.md)
+- [Support](https://github.com/lunox-work/carveout/issues)
+
 ## Data
 
 - **Sent off the machine:** an online cut asks registry.npmjs.org for the
@@ -42,7 +48,7 @@ same URL as a remote HTTP server.
   unchanged and local. `carveout login` signs in to Lunox's hosted service at
   platform.lunox.work with a code approved in the browser, and stores a
   workspace API token in `~/.lunox/credentials` on the same machine (mode 600,
-  shared with duediligence); `logout` deletes it. `login`, `whoami`,
+  shared with bouncer); `logout` deletes it. `login`, `whoami`,
   `logout`, `handoff --platform` and `patch --from` are the only commands that
   talk to the platform. The CLI sends the token, its name and version, and,
   once at sign-in, the machine's host name to label the token.
@@ -68,8 +74,9 @@ same URL as a remote HTTP server.
   start model runs on the platform that count against the workspace's monthly
   token limit. Confirming decisions, approving a price, acknowledging
   disclosure findings, publishing and merging back happen in the platform's
-  web app, not through the plugin. The platform's privacy policy is at
-  https://platform.lunox.work/privacy.
+  web app, not through the plugin. The platform's privacy policy, which also
+  covers this plugin and the MCP server, is at
+  https://lunox.work/privacy/platform.
 - **The `lunox-contribute` skill:** for a person invited to contribute, it
   talks to platform.lunox.work only through the contributor MCP server they
   add and sign in to themselves (`/mcp/contribute`), or their own `lnxc_`
@@ -83,12 +90,6 @@ same URL as a remote HTTP server.
   folders it writes, that receipt, the upload records and, after `login`, the
   token. What the platform keeps after sign-in is governed by its privacy
   policy.
-
-## Links
-
-- [Privacy](https://github.com/lunox-work/carveout/blob/main/PRIVACY.md)
-- [Documentation](https://github.com/lunox-work/carveout/blob/main/docs/REFERENCE.md)
-- [Support](https://github.com/lunox-work/carveout/issues)
 
 ## Source
 
