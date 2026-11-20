@@ -63,6 +63,7 @@
     "AGENTS.md",
     "NOTICE.md",
     "README.md",
+    "assets/src/fonts/",
     "skills/"
   ],
   "scripts": {

@@ -33,6 +33,7 @@
   <a href="#how-it-works">How it works</a> •
   <a href="#what-comes-back-and-what-is-held">What comes back</a> •
   <a href="#proof">Proof</a> •
+  <a href="#see-what-your-agent-saw">What your agent saw</a> •
   <a href="#commands">Commands</a> •
   <a href="#limits">Limits</a> •
   <a href="docs/REFERENCE.md">Reference</a>
@@ -255,6 +256,28 @@ agent once per stop:
 }
 ```
 
+## See what your agent saw
+
+<p align="center">
+  <img src="assets/map.gif" width="100%" alt="carveout map on sample data, labelled SAMPLE DATA: a treemap of a 1,930-file repository lights up file by file as the sessions replay, to 3.9% of its lines; then the repository tilts into a slab and the lines the agent saw lift out of it.">
+</p>
+
+```sh
+npx -y carveout map
+```
+
+Which lines of this repository your coding agents actually read, from
+Claude Code's and Codex's logs on your machine: a line counts only when a
+tool returned it, shell reads (`cat`, `sed -n`, `rg`) are counted apart as
+inferred, and edits are marked. One HTML file, opened locally: a treemap of
+every file, a replay of the sessions, the slice `plan` would cut for each
+change, and a share card in pseudonyms that is safe to post from a private
+repository. Nothing is uploaded. The recording above is `--demo` sample
+data, made up and labelled so; on this repository, the one session that
+built `map` saw 6.4% of its lines (6,741 of 105,768), and on sandbox-factory the one session on
+the same machine saw under 0.1%.
+[Options and method](docs/REFERENCE.md#also-what-your-agent-saw).
+
 ## Commands
 
 | Command                       | Does                                                                           |
@@ -270,13 +293,15 @@ agent once per stop:
 | `carveout widen <dir>`        | Cut again with more entry points, keeping the work                             |
 | `carveout impact`             | What a change reaches: importers, changed exports, tests to run                |
 | `carveout gate`               | Hold weakened tests, CI and config edits, and new suppressions                 |
+| `carveout map`                | Which lines your agents read, from their local logs: one page and a share card |
 | `carveout login`              | Optional: sign in to the Lunox platform; a token in `~/.lunox/credentials`     |
 | `carveout whoami`             | Print the account, workspace and token expiry signed in with                   |
 | `carveout logout`             | Delete the saved platform token                                                |
 
 Every option: [reference](docs/REFERENCE.md#commands). Only `login`, `whoami`,
 `logout`, `handoff --platform` and `patch --from` talk to the Lunox platform;
-every other command is local and needs no account.
+every other command is local and needs no account. `map` reads the agents'
+logs on this machine and uploads nothing.
 
 For a repository you will not connect to the platform, `carveout handoff
 <entry>... --accept <test>... --platform --bounty <id>` uploads the ready
@@ -325,7 +350,9 @@ the person:
 
 - what the change reaches before CI does: `carveout impact`;
 - a hold when it weakens or deletes a test, edits CI, configuration or
-  manifests, or adds suppressions: `carveout gate`, also as a Stop hook.
+  manifests, or adds suppressions: `carveout gate`, also as a Stop hook;
+- which lines of the repository its agents have read, from their local
+  logs: `carveout map`.
 
 For a slice, run `npx -y carveout plan <entry> --depth 1` first. Show the
 person what the slice would hold and what it cuts, and agree the entry
@@ -401,6 +428,10 @@ What to tell them, accurately:
   can still fail. The repository's CI decides.
 - `gate` names what a reviewer should read; it does not judge. A rewritten
   assertion may be the change that was asked for.
+- `map` reports what the logs on this machine show and nothing else: a
+  line counts when a tool returned it, shell reads are inferred and labelled
+  so, and it makes no claim about tokens or cost. Its share card is in
+  pseudonyms; it uploads nothing.
 
 ## License
 
