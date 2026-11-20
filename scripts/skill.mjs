@@ -177,7 +177,7 @@ const PLUGIN_FILES = [".claude-plugin/icon.png", "LICENSE", "skills"];
 // (2.1.329's `claude plugin validate` checks only that each is https:// or
 // mailto:), so the branch's plugin.json keeps them, and its README repeats
 // them as links for readers.
-const LISTING_LINKS = { privacyPolicyUrl: "Privacy", documentationUrl: "Documentation", supportUrl: "Support" };
+const LISTING_LINKS = { privacyPolicyUrl: "Privacy", termsOfServiceUrl: "Terms", documentationUrl: "Documentation", supportUrl: "Support" };
 
 function git(args, env = {}) {
   const result = spawnSync("git", args, { cwd: ROOT, encoding: "utf8", env: { ...process.env, ...env } });
@@ -197,6 +197,9 @@ function pluginReadme() {
     lines.push(`- **${fields.name}**: ${fields.description}`, "");
     if (fields.compatibility) needs.push(`- **${fields.name}**: ${fields.compatibility}`, "");
   }
+  // Example prompts (.claude-plugin/examples.md): the directory asks for at least three that work.
+  const examples = spawnSync("git", ["show", "HEAD:.claude-plugin/examples.md"], { cwd: ROOT, encoding: "utf8" });
+  if (examples.status === 0) lines.push("## Examples", "", examples.stdout.trim(), "");
   lines.push("## Install", "", "```sh", `claude plugin marketplace add ${plugin.repository.replace(/^https:\/\/github\.com\//, "")}`);
   lines.push(`claude plugin install ${plugin.name}@${market.name}`, "```", "");
   if (needs.length > 0) lines.push("## Requirements", "", ...needs);
