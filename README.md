@@ -8,6 +8,20 @@ Hand one part of a closed TypeScript repository to an outside contractor as a sl
 
 - **carveout**: Hand one part of a closed TypeScript repository to an outside contractor, contributor or untrusted agent, and take the work back, without showing them the rest. A slice is the files a change needs, at their repository paths, with every module it imports from the rest replaced by a .d.ts stub and a recording mock, so the folder installs, builds and tests on its own; a public one is written in pseudonyms. `handoff` cuts, checks and says whether the folder is ready, with a TASK.md of the work and when it is accepted; the work comes back as a patch that runs none of their code and holds CI, manifest and lockfile edits, tests bent to pass and new reach; `widen` and `refresh` keep a long job going. Use when someone wants to hand one part of a closed repository to someone outside it, cannot build the whole monorepo to change one part, wants to know what a file depends on and what depends on it, or wants a minimal reproduction of one module.
 
+## Examples
+
+- "Hand `src/billing/invoice.ts` to an outside contractor: cut a slice that
+  installs, builds and tests on its own, with a task to add VAT rounding."
+  The carveout skill plans the slice, cuts it into a folder with a TASK.md,
+  and says whether it is ready to hand off.
+- "The contractor sent back their folder. Check it and give me a patch I can
+  apply." The carveout skill turns the work into a patch, holding CI,
+  manifest and lockfile edits and tests bent to pass.
+- "My agent changed `packages/api`. What does the change reach, which tests
+  should I run, and did it weaken any test?" The carveout-gate skill runs
+  `impact` and `gate` and reports the files reached, the tests to run and any
+  weakened test or config edit.
+
 ## Install
 
 ```sh
@@ -24,6 +38,7 @@ claude plugin install carveout@carveout
 ## Links
 
 - [Privacy](https://lunox.work/privacy/platform)
+- [Terms](https://lunox.work/terms)
 - [Documentation](https://github.com/lunox-work/carveout/blob/main/docs/REFERENCE.md)
 - [Support](https://github.com/lunox-work/carveout/issues)
 
