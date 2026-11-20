@@ -15,8 +15,8 @@
 // `compatibility` at most 500, the body at most 500 lines, no symlinks,
 // every relative link resolves inside the skill's folder, and every
 // `<package>@x.y.z` pin and both .claude-plugin/ manifests carry
-// package.json's version. `.mcp.json` declares exactly one MCP server,
-// `lunox`, of type http at MCP_URL: the hosted platform the plugin bundles.
+// package.json's version. There is no `.mcp.json`: the plugin bundles no MCP
+// server for now (removed 2026-11-20; git history has the check for it).
 //
 // pack: a zip holding one top-level folder named after the skill, with
 // SKILL.md at its root. It refuses a pin that npm does not serve yet
@@ -43,8 +43,6 @@ const SKILLS = join(ROOT, "skills");
 const PKG = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
 const PIN = new RegExp(`\\b${PKG.name}@(\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?)`, "g");
 const MANIFESTS = [".claude-plugin/plugin.json", ".claude-plugin/marketplace.json"];
-/** The plugin's one MCP server (plugin-root .mcp.json, as Claude Code plugins declare them). */
-const MCP_URL = `https://platform.lunox.work/mcp/${PKG.name}`;
 
 /** Top-level YAML keys of the frontmatter, folded the way YAML folds plain and `>` scalars. */
 function frontmatter(text) {
@@ -123,23 +121,9 @@ function check() {
   return problems;
 }
 
-/** `.mcp.json`: present, JSON, and `{ "mcpServers": { "lunox": { "type": "http", "url": MCP_URL } } }` and nothing else. */
+/** No `.mcp.json`: the plugin bundles no MCP server for now. */
 function checkMcp() {
-  const path = join(ROOT, ".mcp.json");
-  if (!existsSync(path)) return [".mcp.json: missing (the plugin's lunox MCP server)"];
-  let mcp;
-  try {
-    mcp = JSON.parse(readFileSync(path, "utf8"));
-  } catch (error) {
-    return [`.mcp.json: not valid JSON (${error.message})`];
-  }
-  const want = `{ "mcpServers": { "lunox": { "type": "http", "url": "${MCP_URL}" } } }`;
-  const servers = mcp?.mcpServers;
-  const keys = (value) => (value !== null && typeof value === "object" && !Array.isArray(value) ? Object.keys(value).sort().join(",") : null);
-  if (keys(mcp) !== "mcpServers" || keys(servers) !== "lunox") return [`.mcp.json: must declare exactly the lunox server: ${want}`];
-  const { lunox } = servers;
-  if (keys(lunox) !== "type,url" || lunox.type !== "http" || lunox.url !== MCP_URL) return [`.mcp.json: lunox must be ${want}`];
-  return [];
+  return existsSync(join(ROOT, ".mcp.json")) ? [".mcp.json: the plugin bundles no MCP server for now; remove it"] : [];
 }
 
 function readJson(path) {
@@ -188,7 +172,7 @@ function pack(offline) {
 }
 
 const PLUGIN_BRANCH = "claude-plugin";
-const PLUGIN_FILES = [".claude-plugin/icon.png", ".mcp.json", "LICENSE", "skills"];
+const PLUGIN_FILES = [".claude-plugin/icon.png", "LICENSE", "skills"];
 // plugin.json fields the directory's listing reads. Claude Code accepts them
 // (2.1.329's `claude plugin validate` checks only that each is https:// or
 // mailto:), so the branch's plugin.json keeps them, and its README repeats

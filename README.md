@@ -128,16 +128,11 @@ npx skills add lunox-work/carveout -g
 
 In Claude Code, the repository is also a plugin marketplace:
 `/plugin marketplace add lunox-work/carveout`, then
-`/plugin install carveout@carveout`. It holds three skills:
-[`carveout`](skills/carveout/SKILL.md), the hand-off;
+`/plugin install carveout@carveout`. It holds two skills:
+[`carveout`](skills/carveout/SKILL.md), the hand-off; and
 [`carveout-gate`](skills/carveout-gate/SKILL.md), `impact` and `gate` for a
-change made in the repository; and
-[`lunox-contribute`](skills/lunox-contribute/SKILL.md), for someone invited to
-work on another workspace's version on the platform. The plugin also bundles
-the `lunox` MCP server (`.mcp.json`), Lunox's hosted platform: Claude Code asks
-you to sign in on first use (`/mcp`), and signed out the skills run locally as
-before. A contributor adds the contributor server themselves:
-`claude mcp add --transport http lunox-contribute https://platform.lunox.work/mcp/contribute`.
+change made in the repository. The plugin bundles no MCP server and asks for
+no sign-in.
 
 Then ask your coding agent (Claude Code, Codex, Cursor, or any agent that
 loads skills): _"hand `src/billing` to a contractor"_. It plans the slice,

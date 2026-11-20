@@ -67,24 +67,6 @@ folder edited; after merging one by hand, `refresh --resolved <path>`), and a
 patch after it carries the work alone; `widen --entry` cuts it wider, the work
 kept. The sections below are each step in full.
 
-## Hosted mode
-
-With the `lunox` MCP tools signed in (bundled; `/mcp` signs in), read with the
-`list_*`/`get_*` tools and write only when asked: a bounty (`post_bounty`,
-`import_github_issue`, `import_jira_issue`; `size_bounty` is a paid run), a
-slice of a connected repository (`plan_slice`, with `carryTests` on by default,
-`start_sandbox`, `cut_slice`, `prepare`), an unconnected repository's hand-off
-(`upload_handoff` answers the `carveout login` and `carveout handoff …
---platform … --bounty …` commands: run them in the person's checkout), verdicts
-(`judge`/`submit_patch`, `get_verdict`, one `retry`; `regrade` for `errored`),
-an invite (`create_contributor_invite`) and take-back (`get_submission_files`,
-or `carveout patch --from <submission id>`). Approving, acknowledging
-disclosure findings, publishing and merging back are a person's acts in the web
-app. Never ask for a token; on `insufficient_scope` (a sign-in older than the
-server's scopes), sign in again through `/mcp`. Each tool's rules, errors and
-limits: [references/hosted.md](references/hosted.md). Someone invited to
-contribute uses the `lunox-contribute` skill. Local mode, below, is the default.
-
 ## 1. Plan
 
 ```sh
