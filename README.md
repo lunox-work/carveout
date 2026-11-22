@@ -4,7 +4,7 @@ Hand one part of a closed TypeScript repository to an outside contractor as a sl
 
 ## Skills
 
-- **carveout-gate**: Check a change that an agent or a person made in a TypeScript repository before calling it done. `carveout impact` lists the files the change reaches, the exports whose type changed and the files that take them, and one command per package that runs just the affected tests. `carveout gate` holds weakened, skipped or deleted tests, rewritten assertions, edited CI, tsconfig, linter or test-runner configuration, new mocks of the code's own module, new suppressions such as @ts-ignore, and files outside an allowed scope; it also runs as a Claude Code Stop hook. Neither runs the repository's code unless asked. Use when someone or an agent changed a TypeScript repository and wants to know what it breaks, which tests to run, or whether the change weakened a test to make it pass.
+- **carveout-gate**: Check a change that an agent or a person made in a TypeScript repository before calling it done. `carveout impact` lists the files the change reaches, the exports whose type changed and the files that take them, and one command per package that runs just the affected tests. `carveout gate` holds weakened, skipped or deleted tests, rewritten assertions, edited CI, tsconfig, linter or test-runner configuration, new mocks of the code's own module, new suppressions such as @ts-ignore, and files outside an allowed scope; it also runs as a Claude Code Stop hook. Neither runs the repository's code unless asked. Use when someone or an agent changed a TypeScript repository and wants to know what it breaks, which tests to run, or whether the change weakened a test to make it pass. Also `carveout map`, for "what has my agent seen, or read, in this repo": the lines its local logs show it read, as one page.
 
 - **carveout**: Hand one part of a closed TypeScript repository to an outside contractor, contributor or untrusted agent, and take the work back, without showing them the rest. A slice is the files a change needs, at their repository paths, with every module it imports from the rest replaced by a .d.ts stub and a recording mock, so the folder installs, builds and tests on its own; a public one is written in pseudonyms. `handoff` cuts, checks and says whether the folder is ready, with a TASK.md of the work and when it is accepted; the work comes back as a patch that runs none of their code and holds CI, manifest and lockfile edits, tests bent to pass and new reach; `widen` and `refresh` keep a long job going. Use when someone wants to hand one part of a closed repository to someone outside it, cannot build the whole monorepo to change one part, wants to know what a file depends on and what depends on it, or wants a minimal reproduction of one module.
 
@@ -50,6 +50,11 @@ claude plugin install carveout@carveout
   versions and type declarations of the public packages the slice imports
   (package names and versions only). `--offline` skips it. Nothing else is
   sent unless the person signs in (below); there is no telemetry.
+- **`carveout map`** reads Claude Code's and Codex's session logs on the same
+  machine (`~/.claude/projects`, `~/.codex/sessions`) and the repository's file
+  list, and writes one HTML file there: paths, line counts and line ranges,
+  never file contents. It sends nothing; `--png` renders the share card with a
+  local browser.
 - **Lunox platform, only after sign-in:** without an account the CLI is
   unchanged and local. `carveout login` signs in to Lunox's hosted service at
   platform.lunox.work with a code approved in the browser, and stores a
