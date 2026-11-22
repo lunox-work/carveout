@@ -366,6 +366,7 @@ are found by name first, and the compiler confirms each one.
 | `carveout refresh <dir>`                  | Brings the repository's commits since the cut into the folder (the slice's packages and the modules it stubs), merged into the folder's own edits; an overlap is left as the folder had it and named (exit 7). The folder's base moves to those commits, file by file (the commit too once nothing is left at the old one): a patch after it carries the contributor's work alone and applies at HEAD. `--resolved <path>` takes an overlap the contributor merged by hand as resolved, a slice file or a copied folder's: refresh never writes over a `--copy` file the folder edited, and names it. For a job long enough that the repository moves.                                                                                                                                                                                                     |
 | `carveout widen <dir> --entry <path>...`  | Cuts the folder again with more entry points, every other bound as it was, and carries the contributor's work so far into it (a public folder keeps its names): for a change that needs a module the slice cut.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `carveout apply <dir> <patch>`            | Brings a patch for the repository into the folder, imports rewritten; `--stubs` adds the stubs it needs. A module the patch adds past the cut's reach joins the folder as an entry, with its tests. A slice file the folder edited gets the change merged in (three-way); where the two overlap it is left as the folder had it and named (exit 7). In a folder in pseudonyms, a name the cut never saw takes its term's placeholder when that maps back byte for byte; a name still left, or a file that would not map back, is named (exit 2). A change that brings a credential is refused whole.                                                                                                                                                                                                                                                       |
+| `carveout map`                            | Which lines of the repository the coding agents' local session logs show they saw, per file and session: one HTML page (treemap, replay, slice, carve, share card) or `--json`. Reads; uploads nothing. See [what your agent saw](#also-what-your-agent-saw). |
 | `carveout login`                          | Optional; with `whoami`, `logout`, `handoff --platform` and `patch --from`, the only commands that talk to the Lunox platform. Asks it for a device code (`POST /api/auth/device/code`, client `carveout`), prints the approval page with the code filled in (`--open` opens it), and polls at the interval the platform names, slower after `slow_down`, until the code is approved, denied or expires. Then mints a 90-day workspace token (`POST /api/v1/orgs/:orgId/tokens/cli`, asking for `workspace:read`, `sandboxes:write` and `submissions:write`; a platform that refuses the scopes is asked again without, and grants its default) in the workspace `--org <handle|id>` names, else the only one you own or administer, else the one you pick on a terminal, and saves it in `~/.lunox/credentials` (mode 600; `LUNOX_CREDENTIALS` moves it) under the platform's URL, beside duediligence's entry. Never prints the token. `--platform <url>` or `LUNOX_PLATFORM_URL` names another deployment (default `https://platform.lunox.work`).       |
 | `carveout whoami`                         | Prints the account, workspace, role and token expiry the saved token acts as. A token that expired or was revoked says to run `login` again.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `carveout logout`                         | Deletes the saved token. The platform has no route for a token to revoke itself, so it stays valid until it expires unless an owner or admin revokes it in the platform's web app.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
@@ -632,6 +633,99 @@ On a patch that came back from a slice, `git apply` it on a branch and run
 `carveout impact --base HEAD` (no `--run`) before anything runs it: it
 names the importers and tests the contractor never saw.
 
+## Also: what your agent saw
+
+`carveout map` shows which lines of the repository your coding agents put
+in front of the model, from their session logs on this machine, and writes
+one HTML file you can open, screen-record and share a card from:
+
+```sh
+carveout map                       # every session, writes carveout-map.html and opens it
+carveout map --session latest      # one session
+carveout map --since 7d --agent claude
+carveout map --json                # the numbers and each file's ranges
+carveout map --png card.png        # the share card, headless
+carveout map --slice src/billing/quote.ts   # a hand-off instead: copied, stubbed, not in the folder
+```
+
+| Option | Does |
+| --- | --- |
+| `--session <id\|latest>` | One session: its id or the start of it, or the one that ended last. |
+| `--since <span\|date>` | Sessions that ended since then: `7d`, `24h`, `2w`, `3m`, or a date. |
+| `--agent claude\|codex\|all` | Whose logs (default `all`). |
+| `--out <file>` | The page (default `carveout-map.html`). Not counted in the map. |
+| `--png <file>` | The share card at 1200×630, and at 1080×1350 beside it (`<file>-1080x1350.png`), in pseudonyms, rendered by an installed Chrome, Chromium, Edge or Brave (`CHROME_PATH` names another) or Playwright. Without one it says so and still writes the page. |
+| `--json` | The totals, each session's numbers, and each file seen with its ranges read, inferred and edited. Writes no page. |
+| `--slice <entry>...` | Maps what `carveout plan` with the hand-off's defaults would hold for these entries: copied, stubbed, not in the folder. |
+| `--was <path>` | An earlier path of this checkout (a moved clone): sessions logged there count. Worktrees count without it. |
+| `--no-open` | Writes the page without opening it (it never opens in CI or without a terminal). |
+| `--demo` | Sample data, made up and labelled `SAMPLE DATA` on every view and on the card, for trying the page. |
+
+**Where it looks.** Claude Code's `$CLAUDE_CONFIG_DIR/projects` (default
+`~/.claude/projects`; a session's subagents under `<session>/subagents`)
+and Codex's `$CODEX_HOME/sessions` and `archived_sessions` (default
+`~/.codex`). A session counts when it ran in the checkout, one of its
+worktrees or a `--was` path, or when its log names a path in one. With
+none found, the page and the command say where they looked.
+
+**What counts as seen.** Only what a tool returned: a call with no result
+or an error result is not counted.
+
+- Claude Code's `Read`: the lines its result says it returned (`startLine`,
+  `numLines`), else the call's `offset` and `limit`. `Grep` with
+  `output_mode: "content"`: the lines it printed, context included.
+  `Edit`, `MultiEdit` and `Write`: the hunks their result shows (a created
+  file whole), and of those the lines changed. `Glob` and `Grep`'s file
+  lists return names only and count no line.
+- Shell commands, Claude Code's `Bash` and every Codex read: `cat`, `nl`,
+  `less`, `head`, `tail`, `sed -n` ranges, `awk 'NR..'`, `grep`, `rg` and
+  `git show <rev>:<path>`, after `cd`, are parsed, not run. A pipeline or
+  an output the agent's tool cut short counts only the lines whose text
+  came back. These are **inferred**, drawn hatched and counted apart.
+- Codex's patches: `FileChange` and `patch_apply_begin` by their hunks,
+  `apply_patch` by where its hunks sit in the file now.
+
+**The numbers.** The repository's lines are those of its text files as Git
+lists them (tracked and untracked but not ignored), less lockfiles,
+binaries, minified and generated output and files over 1 MB. A file's seen
+lines are the union of every range across the calls and sessions in view,
+clamped to its length today (a range logged against an older version of
+the file is not traced through the edits since). The headline is lines
+seen over the repository's lines; the page and `--json` give read,
+inferred and edited apart. Nothing in it is an estimate of tokens or cost.
+
+**The views.** The map: a squarified treemap of every file, by lines and
+folder, each tile filled from the bottom by its share of lines seen (edited
+bright, read soft, inferred hatched, unseen grey); a click lists its
+ranges. Replay: the sessions' tool results in order. Slice: for the latest
+sessions that edited TypeScript, what `carveout plan` with the hand-off's
+defaults would cut for those files (copied outlined white, stubbed dashed),
+beside what the agent read; a statement of the two numbers, not a claim
+that the agent needed less. Carve: the repository as a slab the lit tiles
+lift out of, in a 7-second loop. Share: the card.
+
+**The share card** is written in pseudonyms by default: the repository's
+names (its packages', its remote's, its authors', the checkout's, the
+maintainer's Git identity, and `names` and `pseudonyms` in
+`carveout.config.json`) renamed as a public cut renames them, and a path
+segment the table cannot rename replaced whole, then scanned as a public
+cut's blocker scan reads (`looseLeaks`). Real names are a toggle on the
+page, local only. `--png` renders a page written with the pseudonyms alone.
+
+**What the page holds.** Paths, line counts, line ranges, tool names,
+times and, locally, sessions' titles: never a file's contents. It loads
+nothing from the network; its fonts are inline. `map` reads, writes the
+page, and uploads nothing.
+
+Measured on 2026-11-18, with this Mac's logs: this repository, 1 Claude
+Code session (the one that built `map`), 6,741 of 105,768 lines (6.4%), 36
+of 346 files, 14 edited, 3,101 of those lines inferred from shell commands.
+[sandbox-factory](https://github.com/lunox-work/sandbox-factory) at
+`4bba9f3`, 1 session with reads, 87 of 498,190 lines (<0.1%), all inferred.
+`carveout map` took about 1 s on each; a synthetic 50,000-file repository
+maps in 2 to 6 s (most of it counting lines), to a 0.6 MB page
+(`test/map.test.ts`).
+
 ## Tested on
 
 With the hand-off's flags (`--public --with-tests --whole-package
@@ -776,6 +870,12 @@ class, `never[]` under the relaxed `noImplicitAny`).
   and unignored files, without `.git` or ignored ones (a `.env`, say): a
   verify that needs history, or a package's install script (a generated
   client), takes `--verify-setup`, which runs with a network.
+- **What `map` can miss.** It counts what the logs on this machine show:
+  sessions run elsewhere, logs an agent deleted or compacted away, and
+  agents other than Claude Code and Codex are not in it. A file an agent
+  read through another file (a tool's saved output, a copy) is not traced
+  to the repository's. Shell reads are parsed, not run, and labelled
+  inferred. Ranges are clamped to each file as it is now.
 - **What `impact` can miss.** It follows imports, not runtime: a module
   loaded by a computed name, a file read by path, or configuration a test
   reads is not traced, and a test it does not list can still fail. Inside a

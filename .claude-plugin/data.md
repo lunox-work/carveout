@@ -4,6 +4,11 @@
   versions and type declarations of the public packages the slice imports
   (package names and versions only). `--offline` skips it. Nothing else is
   sent unless the person signs in (below); there is no telemetry.
+- **`carveout map`** reads Claude Code's and Codex's session logs on the same
+  machine (`~/.claude/projects`, `~/.codex/sessions`) and the repository's file
+  list, and writes one HTML file there: paths, line counts and line ranges,
+  never file contents. It sends nothing; `--png` renders the share card with a
+  local browser.
 - **Lunox platform, only after sign-in:** without an account the CLI is
   unchanged and local. `carveout login` signs in to Lunox's hosted service at
   platform.lunox.work with a code approved in the browser, and stores a

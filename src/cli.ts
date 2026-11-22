@@ -44,6 +44,10 @@ import { trustedCut, writeReceipt } from "./receipt.js";
 import { runAccount } from "./account.js";
 import { handoffPlatform, patchFrom, type HostedDeps } from "./hosted.js";
 import { PlatformError } from "./platform.js";
+import { buildMap } from "./map/index.js";
+import { renderMapHtml } from "./map/html.js";
+import { formatPercent, parseSince } from "./map/model.js";
+import { CARD_SIZES, openFile, renderCardPng } from "./map/png.js";
 
 const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript repository.
 
@@ -167,6 +171,20 @@ const USAGE = `carveout ${CARVEOUT_VERSION}: carve a slice out of a TypeScript r
       them. --depth bounds the hops (default: all). --run runs those commands
       in the repository, one at a time, with your environment; exits 2 if one
       fails. Without --run nothing of the repository is run.
+
+  carveout map  [--session <id|latest>] [--since <7d|date>] [--agent claude|codex|all]
+                 [--slice <entry>...] [--out <file>] [--png <file>] [--json] [--no-open]
+                 [--was <old path>]... [--demo]
+      Which lines of this repository your coding agents saw, from their local
+      session logs (Claude Code's ~/.claude/projects, Codex's ~/.codex/sessions):
+      per file, the line ranges a tool returned, those inferred from shell
+      commands, and those edited, per session and across them. Writes one
+      self-contained HTML file (default carveout-map.html: a treemap, a replay,
+      the slice of each change, the carve, and a share card in pseudonyms)
+      and opens it. --json prints the numbers and ranges instead. --png
+      renders the share card (1200x630, and 1080x1350 beside it) with an
+      installed Chrome or Playwright. --slice maps a hand-off of the entries
+      instead: copied, stubbed, not in the folder. Reads; uploads nothing.
 
   carveout where
       The folder fetched package types are cached in (CARVEOUT_HOME).
@@ -377,6 +395,14 @@ async function main(argv: readonly string[]) {
       bounty: { type: "string" },
       title: { type: "string" },
       from: { type: "string" },
+      session: { type: "string" },
+      since: { type: "string" },
+      agent: { type: "string" },
+      png: { type: "string" },
+      slice: { type: "boolean" },
+      open: { type: "boolean" },
+      demo: { type: "boolean" },
+      was: { type: "string", multiple: true },
     },
   });
   // With negated flags read, `--no-receipt` comes back as `receipt: false`
@@ -1589,6 +1615,66 @@ async function main(argv: readonly string[]) {
               )}\n`,
         );
       if (gate.refused.length > 0) process.exitCode = values.hook === true ? 2 : 6;
+      return;
+    }
+
+    case "map": {
+      const agent = values.agent ?? "all";
+      if (agent !== "claude" && agent !== "codex" && agent !== "all") fail(`--agent takes claude, codex or all, not ${agent}.`);
+      const since = values.since === undefined ? undefined : parseSince(values.since);
+      if (since === null) fail(`--since takes a span (7d, 24h, 2w) or a date, not ${values.since}.`);
+      if (values.slice === true && positionals.length === 0) fail("map --slice needs at least one entry point.");
+      if (values.slice !== true && positionals.length > 0) fail(`map takes no positional arguments; did you mean --slice ${positionals.join(" ")}?`);
+      const began = Date.now();
+      const result = buildMap({
+        root: repo,
+        agent,
+        ...(values.session === undefined ? {} : { session: values.session }),
+        ...(since === undefined ? {} : { since }),
+        ...(values.slice === true ? { slice: positionals } : {}),
+        ...(values.was === undefined ? {} : { was: values.was }),
+        ...(values.demo === true ? { demo: true } : {}),
+      });
+      if (values.json === true) {
+        print(result.json);
+        return;
+      }
+      const { page } = result;
+      const out = resolve(values.out ?? "carveout-map.html");
+      const html = renderMapHtml(page);
+      writeFileSync(out, html);
+      const n = page.totals;
+      const counted = page.sessions.filter((session) => session.events.length > 0).length;
+      const lines: string[] = [];
+      if (page.empty !== null)
+        lines.push(
+          `carveout map: no ${agent === "all" ? "Claude Code or Codex" : agent === "claude" ? "Claude Code" : "Codex"} session found that read this repository. Looked in:`,
+          list(page.empty),
+        );
+      else
+        lines.push(
+          `carveout map: ${page.agentLabel} ${page.agentLabel === "Your agents" ? "have" : "has"} seen ${formatPercent(n.percent)} of this repo${page.demo ? " (sample data, not measured)" : ""}.`,
+          `  ${n.seenLines.toLocaleString("en-GB")} of ${n.lines.toLocaleString("en-GB")} lines, ${n.filesSeen.toLocaleString("en-GB")} of ${n.files.toLocaleString("en-GB")} files; ${n.filesEdited} edited; ${counted} session(s).`,
+          ...(n.inferredLines > 0 ? [`  ${n.inferredLines.toLocaleString("en-GB")} of those lines are inferred from shell commands (cat, sed, grep), not a file tool.`] : []),
+          ...(page.handoff === null ? [] : [`  The hand-off of ${positionals.join(", ")}: ${page.handoff.files} file(s) copied, ${page.handoff.stub.length} stubbed, ${formatPercent(page.handoff.percent)} of the repo's lines.`]),
+          `  Method: ${page.methodNote}.`,
+        );
+      const shown = (path: string) => (relative(process.cwd(), path).startsWith("..") ? path : relative(process.cwd(), path));
+      lines.push(`Wrote ${shown(out)} (${(html.length / 1024 / 1024).toFixed(1)} MB) in ${((Date.now() - began) / 1000).toFixed(1)} s. Paths and line ranges only; nothing was uploaded.`);
+      if (values.png !== undefined) {
+        const share = renderMapHtml({ ...page, shareOnly: true });
+        const landscape = resolve(values.png);
+        const portrait = landscape.replace(/(\.png)?$/i, "-1080x1350.png");
+        const [lw, lh] = CARD_SIZES.landscape;
+        const [pw, ph] = CARD_SIZES.portrait;
+        const first = await renderCardPng(share, landscape, lw, lh);
+        if (first.ok) {
+          const second = await renderCardPng(share, portrait, pw, ph);
+          lines.push(`Share card: ${shown(landscape)} (1200x630)${second.ok ? ` and ${shown(portrait)} (1080x1350)` : ""}, names in pseudonyms.`);
+        } else lines.push(`No PNG: ${first.reason} The share card is in the HTML (Share, then Download PNG).`);
+      }
+      process.stdout.write(`${lines.join("\n")}\n`);
+      if (values.open !== false && process.stdout.isTTY === true && process.env["CI"] === undefined) openFile(out);
       return;
     }
 

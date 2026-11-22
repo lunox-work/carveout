@@ -11,7 +11,8 @@ description: >-
   runs as a Claude Code Stop hook. Neither runs the repository's code unless
   asked. Use when someone or an agent changed a TypeScript repository and wants
   to know what it breaks, which tests to run, or whether the change weakened a
-  test to make it pass.
+  test to make it pass. Also `carveout map`, for "what has my agent seen, or
+  read, in this repo": the lines its local logs show it read, as one page.
 license: MIT
 compatibility: >-
   Node 22.12 or later, git and npm. Runs the carveout@0.5.0 CLI from npm.
@@ -82,10 +83,33 @@ once they agree. Never change their settings unasked.
 }
 ```
 
+## What the agent saw: `carveout map`
+
+When the person asks what their coding agent has seen, read or touched in
+this repository, run:
+
+```sh
+carveout map [--session <id|latest>] [--since 7d] [--agent claude|codex|all] [--json] [--no-open]
+```
+
+It reads Claude Code's and Codex's session logs on this machine (never
+uploads), and writes `carveout-map.html` and opens it: a treemap of the
+repository lit by the lines a tool returned, a replay, the slice of each
+change, and a share card in pseudonyms. Report the headline as it prints it
+("Claude has seen 6.4% of this repo: 6,741 of 105,768 lines, 36 files,
+14 edited, 1 session"), and say how much of it is inferred from shell
+commands. It measures what entered the agent's context, not tokens or
+cost: do not say the agent wasted anything or that a slice would have been
+cheaper. With no session found it says where it looked; say that. Use
+`--json` when you need the per-file ranges yourself, and `--no-open` when
+the person is not at this machine.
+
 ## Limits
 
 - **Test runners.** `node:test`, Vitest and Jest tests are named and run with
   their runner; another runner falls back to the package's whole `npm test`.
+- **`map` sees only this machine's logs.** Sessions elsewhere, deleted logs
+  and other agents are not in it; shell reads are parsed, not run.
 - **`impact` traces imports, not runtime.** A module loaded by a computed name,
   a file read by path or configuration a test reads is not traced. Inside a
   module it follows the identifiers each top-level statement names, erring

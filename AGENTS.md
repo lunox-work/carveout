@@ -17,7 +17,9 @@ the person:
 
 - what the change reaches before CI does: `carveout impact`;
 - a hold when it weakens or deletes a test, edits CI, configuration or
-  manifests, or adds suppressions: `carveout gate`, also as a Stop hook.
+  manifests, or adds suppressions: `carveout gate`, also as a Stop hook;
+- which lines of the repository its agents have read, from their local
+  logs: `carveout map`.
 
 For a slice, run `npx -y carveout plan <entry> --depth 1` first. Show the
 person what the slice would hold and what it cuts, and agree the entry
@@ -93,3 +95,7 @@ What to tell them, accurately:
   can still fail. The repository's CI decides.
 - `gate` names what a reviewer should read; it does not judge. A rewritten
   assertion may be the change that was asked for.
+- `map` reports what the logs on this machine show and nothing else: a
+  line counts when a tool returned it, shell reads are inferred and labelled
+  so, and it makes no claim about tokens or cost. Its share card is in
+  pseudonyms; it uploads nothing.

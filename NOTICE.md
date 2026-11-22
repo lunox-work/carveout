@@ -57,3 +57,10 @@ carveout's behaviour is kept in each case; `carveout/extract` and
 - Draft: made-up placeholders first, a tail word per extra word of a term
   (`contoso-labs`), restyled to each spelling, and an earlier cut's
   placeholders kept (`preferred`).
+
+## Fonts
+
+`assets/src/fonts` holds DM Sans and DM Mono (Colophon Foundry) and Space
+Grotesk (Florian Karsten), each under the SIL Open Font License 1.1, as
+published by Fontsource. The package ships them so `carveout map` can inline
+them into the page it writes.
